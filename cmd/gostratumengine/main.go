@@ -79,6 +79,7 @@ func main() {
 	// Start metrics API
 	api := metrics.NewAPIServer(cfg.APIPort, cfg.PoolName, stats)
 	api.SetSessionProvider(eng.Sessions)
+	api.SetMetricsHandler(eng.MetricsHandler)
 	if err := api.Start(); err != nil {
 		logger.Fatal("metrics API start: %v", err)
 	}

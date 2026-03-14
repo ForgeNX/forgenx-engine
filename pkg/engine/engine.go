@@ -15,6 +15,7 @@ import (
         "os"
         "path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mmfpsolutions/gostratumengine/pkg/config"
 	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
@@ -27,6 +28,8 @@ type Engine struct {
 	runners map[string]*CoinRunner
 	stats   *metrics.Stats
 	logger  *logging.Logger
+	startTime time.Time
+        poolName string
 }
 
 // New creates a new Engine from the given configuration.
@@ -35,6 +38,8 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 		runners: make(map[string]*CoinRunner),
 		stats:   stats,
 		logger:  logging.New(logging.ModuleEngine),
+	        startTime: time.Now(),
+	        poolName: cfg.PoolName,
 	}
 
 	for symbol, coinCfg := range cfg.Coins {

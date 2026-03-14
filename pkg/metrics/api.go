@@ -56,6 +56,8 @@ type APIServer struct {
 	sessionProvider SessionProvider
 	server          *http.Server
 	logger          *logging.Logger
+	startTime 	time.Time
+	metricsHandler  http.HandlerFunc
 }
 
 // NewAPIServer creates a new metrics API server.
@@ -65,7 +67,12 @@ func NewAPIServer(port int, poolName string, stats *Stats) *APIServer {
 		poolName: poolName,
 		stats:    stats,
 		logger:   logging.New(logging.ModuleMetrics),
+		startTime: time.Now(),
 	}
+}
+
+func (a *APIServer) SetMetricsHandler(h http.HandlerFunc) {
+        a.metricsHandler = h
 }
 
 // SetSessionProvider sets the callback for retrieving active sessions.
@@ -76,9 +83,10 @@ func (a *APIServer) SetSessionProvider(sp SessionProvider) {
 // Start begins serving the metrics API.
 func (a *APIServer) Start() error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/stats", a.handleStats)
-	mux.HandleFunc("/api/v1/miners", a.handleMiners)
-	mux.HandleFunc("/api/v1/health", a.handleHealth)
+	mux.HandleFunc("/stats", a.handleStats)
+	mux.HandleFunc("/miners", a.handleMiners)
+	mux.HandleFunc("/health", a.handleHealth)
+	mux.HandleFunc("/metrics", a.metricsHandler)
 
 	a.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", a.port),
@@ -169,4 +177,24 @@ func (a *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (a *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+
+        miners := 0
+        if a.sessionProvider != nil {
+                sessions := a.sessionProvider()
+                for _, list := range sessions {
+                        miners += len(list)
+                }
+        }
+
+        response := map[string]interface{}{
+                "pool_name":        a.poolName,
+                "uptime_seconds":   time.Since(a.startTime).Seconds(),
+                "miners_connected": miners,
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
 }

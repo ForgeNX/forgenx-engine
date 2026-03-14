@@ -26,17 +26,26 @@ import (
 //go:embed AUTHORS
 var authorsFile string
 
+type shareWork struct {
+    t    time.Time
+    diff float64
+}
+
 // CoinRunner manages the complete mining pipeline for a single coin.
 type CoinRunner struct {
-	symbol    string
-	coin      coin.Coin
-	rpcClient *noderpc.Client
-	jobMgr    *JobManager
-	validator *ShareValidator
-	server    *stratum.Server
-	zmqSub    *noderpc.ZMQSubscriber
-	stats     *metrics.Stats
-	logger    *logging.Logger
+	symbol          string
+	coin            coin.Coin
+	rpcClient       *noderpc.Client
+	jobMgr          *JobManager
+	validator       *ShareValidator
+	server          *stratum.Server
+	zmqSub          *noderpc.ZMQSubscriber
+	stats           *metrics.Stats
+	logger          *logging.Logger
+        acceptedShares  int64
+        totalDifficulty float64
+        startTime       time.Time
+	recentShares 	[]shareWork
 }
 
 // NewCoinRunner creates and wires up all components for a single coin.
@@ -73,6 +82,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		rpcClient: rpcClient,
 		stats:     stats,
 		logger:    logging.New(logging.ModuleEngine),
+		startTime: time.Now(),
 	}
 
 	// Create stratum server
@@ -123,7 +133,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 	// Create share validator
 	staleGrace := time.Duration(cfg.Stratum.StaleShareGrace) * time.Second
 	lowDiffGrace := time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second
-	validator := NewShareValidator(c, jobMgr, rpcClient, stats, soloMode, staleGrace, lowDiffGrace)
+	validator := NewShareValidator(c, jobMgr, rpcClient, stats, runner, soloMode, staleGrace, lowDiffGrace)
 	runner.validator = validator
 
 	// Wire share handler: stratum server calls validator
@@ -294,4 +304,30 @@ func loadDonationAddress(symbol, network string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no donation address for %s/%s in AUTHORS", symbol, network)
+}
+
+func (r *CoinRunner) Hashrate() float64 {
+
+        cutoff := time.Now().Add(-60 * time.Second)
+
+        var diffSum float64
+        var filtered []shareWork
+
+        for _, s := range r.recentShares {
+                if s.t.After(cutoff) {
+                        diffSum += s.diff
+                        filtered = append(filtered, s)
+                }
+        }
+
+        // keep only recent shares
+        r.recentShares = filtered
+
+        if diffSum == 0 {
+                return 0
+        }
+
+        hashes := diffSum * 4294967296
+
+        return (hashes / 60) / 1e12
 }
