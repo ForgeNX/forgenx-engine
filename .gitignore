@@ -31,7 +31,7 @@ go.work.sum
 config.json
 
 # Engine binary
-gostratumengine
+/gostratumengine
 
 # Logs
 *.log
@@ -54,7 +54,7 @@ CLAUDE.md
 # .vscode/
 
 # compiled binaries
-gostratumengine
+/gostratumengine
 
 # backup files
 *.backup
