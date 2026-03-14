@@ -308,7 +308,7 @@ func loadDonationAddress(symbol, network string) (string, error) {
 
 func (r *CoinRunner) Hashrate() float64 {
 
-        cutoff := time.Now().Add(-60 * time.Second)
+        cutoff := time.Now().Add(-300 * time.Second)
 
         var diffSum float64
         var filtered []shareWork
