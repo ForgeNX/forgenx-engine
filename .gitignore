@@ -30,6 +30,13 @@ go.work.sum
 # User config (contains credentials)
 config.json
 
+# Engine binary
+gostratumengine
+
+# Logs
+*.log
+logs/
+
 # Internal design documents
 design-documents/
 
