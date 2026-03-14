@@ -52,3 +52,10 @@ CLAUDE.md
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# compiled binaries
+gostratumengine
+
+# backup files
+*.backup
+config.backup.json

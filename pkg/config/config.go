@@ -253,7 +253,7 @@ func validate(cfg *Config) error {
 	}
 
 	if enabledCount == 0 {
-		return fmt.Errorf("no coins are enabled")
+	        // Allow zero coins — they may be loaded dynamically from /pool/coins
 	}
 
 	return nil

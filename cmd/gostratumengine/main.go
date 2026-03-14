@@ -74,6 +74,8 @@ func main() {
 		logger.Fatal("engine start: %v", err)
 	}
 
+	eng.WatchCoins("/home/forge/pool/coins", cfg.Donation)
+
 	// Start metrics API
 	api := metrics.NewAPIServer(cfg.APIPort, cfg.PoolName, stats)
 	api.SetSessionProvider(eng.Sessions)
