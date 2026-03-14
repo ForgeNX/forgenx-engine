@@ -11,6 +11,10 @@ package engine
 
 import (
 	"fmt"
+        "encoding/json"
+        "os"
+        "path/filepath"
+	"strings"
 
 	"github.com/mmfpsolutions/gostratumengine/pkg/config"
 	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
@@ -47,7 +51,7 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 	}
 
 	if len(e.runners) == 0 {
-		return nil, fmt.Errorf("no coins initialized")
+	    e.logger.Info("no coins configured at startup — waiting for configs")
 	}
 
 	return e, nil
@@ -55,21 +59,25 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 
 // Start begins all coin runners.
 func (e *Engine) Start() error {
-	var started []string
+    var started []string
 
-	for symbol, runner := range e.runners {
-		if err := runner.Start(); err != nil {
-			// Stop any runners that already started
-			for _, s := range started {
-				e.runners[s].Stop()
-			}
-			return fmt.Errorf("starting %s: %w", symbol, err)
-		}
-		started = append(started, symbol)
-	}
+    for symbol, runner := range e.runners {
+        if err := runner.Start(); err != nil {
+            // Stop any runners that already started
+            for _, s := range started {
+                e.runners[s].Stop()
+            }
+            return fmt.Errorf("starting %s: %w", symbol, err)
+        }
+        started = append(started, symbol)
+    }
 
-	e.logger.Info("engine started with %d coin(s)", len(e.runners))
-	return nil
+    e.logger.Info("engine started with %d coin(s)", len(e.runners))
+
+    // NEW: scan existing coin configs
+    e.LoadExistingCoinConfigs("/home/forge/pool/coins", config.DonationConfig{})
+
+    return nil
 }
 
 // Stop shuts down all coin runners.
@@ -93,9 +101,89 @@ func (e *Engine) RunnerCount() int {
 
 // Sessions returns all active sessions grouped by coin symbol.
 func (e *Engine) Sessions() map[string][]stratum.SessionInfo {
-	result := make(map[string][]stratum.SessionInfo)
-	for symbol, runner := range e.runners {
-		result[symbol] = runner.Sessions()
-	}
-	return result
+    result := make(map[string][]stratum.SessionInfo)
+    for symbol, runner := range e.runners {
+        result[symbol] = runner.Sessions()
+    }
+    return result
+}
+
+
+// StartCoin dynamically starts a new coin runner.
+func (e *Engine) StartCoin(symbol string, coinCfg *config.CoinConfig, donation config.DonationConfig) error {
+    if _, exists := e.runners[symbol]; exists {
+        return fmt.Errorf("%s already running", symbol)
+    }
+
+    runner, err := NewCoinRunner(symbol, *coinCfg, donation, e.stats)
+    if err != nil {
+        return err
+    }
+
+    if err := runner.Start(); err != nil {
+        return err
+    }
+
+    e.runners[symbol] = runner
+    e.logger.Info("[%s] dynamically started", symbol)
+
+    return nil
+}
+
+// StopCoin dynamically stops a running coin runner.
+func (e *Engine) StopCoin(symbol string) {
+    runner, exists := e.runners[symbol]
+    if !exists {
+        return
+    }
+
+    e.logger.Info("[%s] stopping pool", symbol)
+    runner.Stop()
+
+    delete(e.runners, symbol)
+}
+
+// ReloadCoin stops and restarts a coin runner.
+func (e *Engine) ReloadCoin(symbol string, coinCfg *config.CoinConfig, donation config.DonationConfig) error {
+    e.StopCoin(symbol)
+    return e.StartCoin(symbol, coinCfg, donation)
+}
+
+// LoadExistingCoinConfigs scans the coin config directory and starts pools for existing configs.
+func (e *Engine) LoadExistingCoinConfigs(dir string, donation config.DonationConfig) {
+
+    files, err := os.ReadDir(dir)
+    if err != nil {
+        e.logger.Warn("could not scan coin config directory: %v", err)
+        return
+    }
+
+    for _, file := range files {
+
+        if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+            continue
+        }
+
+        path := filepath.Join(dir, file.Name())
+
+        data, err := os.ReadFile(path)
+        if err != nil {
+            e.logger.Warn("failed reading %s: %v", file.Name(), err)
+            continue
+        }
+
+        var coinCfg config.CoinConfig
+        if err := json.Unmarshal(data, &coinCfg); err != nil {
+            e.logger.Warn("invalid config %s: %v", file.Name(), err)
+            continue
+        }
+
+	symbol := strings.ToUpper(strings.TrimSuffix(file.Name(), filepath.Ext(file.Name())))
+
+        e.logger.Info("[%s] existing config detected — starting pool", symbol)
+
+        if err := e.StartCoin(symbol, &coinCfg, donation); err != nil {
+            e.logger.Warn("[%s] failed to start: %v", symbol, err)
+        }
+    }
 }
