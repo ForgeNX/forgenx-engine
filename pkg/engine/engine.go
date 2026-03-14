@@ -142,8 +142,9 @@ func (e *Engine) StopCoin(symbol string) {
         return
     }
 
-    e.logger.Info("[%s] stopping pool", symbol)
     runner.Stop()
+
+    e.logger.Info("[%s] pool stopped", symbol)
 
     delete(e.runners, symbol)
 }

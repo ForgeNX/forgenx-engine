@@ -32,9 +32,9 @@ func (e *Engine) WatchCoins(dir string, donation config.DonationConfig) error {
 			case event := <-watcher.Events:
 
 			        // Only react to CREATE, WRITE, REMOVE
-			        if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove) == 0 {
-			                continue
-			        }
+				if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
+				        continue
+				}
 
 				if !strings.HasSuffix(event.Name, ".json") {
 					continue
@@ -78,11 +78,11 @@ func (e *Engine) WatchCoins(dir string, donation config.DonationConfig) error {
 				        }
 				}
 
-				if event.Op&fsnotify.Remove == fsnotify.Remove {
+				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 
-					e.logger.Info("[%s] config removed — stopping pool", symbol)
+				        e.logger.Info("[%s] config removed — stopping pool", symbol)
 
-					e.StopCoin(symbol)
+				        e.StopCoin(symbol)
 				}
 
 			case err := <-watcher.Errors:
