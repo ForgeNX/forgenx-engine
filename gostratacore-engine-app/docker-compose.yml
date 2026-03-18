@@ -1,0 +1,21 @@
+version: "3"
+
+services:
+
+  gostratacore-engine:
+
+    container_name: gostratacore-engine
+
+    build: .
+
+    restart: unless-stopped
+
+    ports:
+      - "3333:3333"
+      - "8080:8080"
+
+    volumes:
+      - gostratacore-data:/pool
+
+volumes:
+  gostratacore-data:

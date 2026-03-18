@@ -1,0 +1,22 @@
+{
+  "id": "gostratacore-engine",
+  "name": "GoStrataCore Engine",
+  "version": "1.0.0",
+  "description": "Dynamic multi-coin Stratum mining engine for StratumOS.",
+  "maintainer": "GoStrataCore",
+  "website": "https://github.com/GoStrataCore",
+  "category": "Infrastructure",
+  "icon": "icon.png",
+  "ports": [
+    {
+      "name": "Stratum",
+      "port": 3333,
+      "protocol": "tcp"
+    },
+    {
+      "name": "Metrics",
+      "port": 8080,
+      "protocol": "tcp"
+    }
+  ]
+}
