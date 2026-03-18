@@ -80,7 +80,7 @@ func (e *Engine) Start() error {
     e.logger.Info("engine started with %d coin(s)", len(e.runners))
 
     // NEW: scan existing coin configs
-    e.LoadExistingCoinConfigs("/home/forge/pool/coins", config.DonationConfig{})
+    e.LoadExistingCoinConfigs("/pool/coins", config.DonationConfig{})
 
     return nil
 }
