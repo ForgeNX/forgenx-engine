@@ -1,0 +1,20 @@
+services:
+  engine:
+    image: gostratumengine-test
+    container_name: engine
+    restart: unless-stopped
+
+    ports:
+      - "3335:3335"
+      - "8080:8080"
+
+    volumes:
+      - /home/forge/pool:/pool
+      - /home/forge/gostratumengine/config.json:/app/config.json
+
+    networks:
+      - fractal-net   # 👈 ONLY THIS
+
+networks:
+  fractal-net:
+    external: true

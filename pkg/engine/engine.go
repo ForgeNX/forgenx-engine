@@ -186,10 +186,7 @@ func (e *Engine) LoadExistingCoinConfigs(dir string, donation config.DonationCon
 
 	symbol := strings.ToUpper(strings.TrimSuffix(file.Name(), filepath.Ext(file.Name())))
 
-        e.logger.Info("[%s] existing config detected — starting pool", symbol)
+        e.handleCoinConfig(symbol, &coinCfg, donation)
 
-        if err := e.StartCoin(symbol, &coinCfg, donation); err != nil {
-            e.logger.Warn("[%s] failed to start: %v", symbol, err)
-        }
     }
 }

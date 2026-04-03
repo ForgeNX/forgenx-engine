@@ -65,17 +65,7 @@ func (e *Engine) WatchCoins(dir string, donation config.DonationConfig) error {
 				                continue
 				        }
 
-				        if _, exists := e.runners[symbol]; exists {
-
-				                e.logger.Info("[%s] config changed — reloading pool", symbol)
-				                e.ReloadCoin(symbol, cfg, donation)
-
-				        } else {
-
-				                e.logger.Info("[%s] config detected — starting pool", symbol)
-				                e.StartCoin(symbol, cfg, donation)
-
-				        }
+                                        e.handleCoinConfig(symbol, cfg, donation)
 				}
 
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
@@ -108,4 +98,33 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
+
+        if !cfg.Enabled {
+                e.logger.Info("[%s] disabled — stopping pool", symbol)
+                e.StopCoin(symbol)
+                return
+        }
+
+        if !cfg.IbdComplete {
+                e.logger.Info("[%s] waiting for IBD — stopping pool if running", symbol)
+                e.StopCoin(symbol)
+                return
+        }
+
+        if !cfg.NodeOnline {
+                e.logger.Info("[%s] node offline — stopping pool", symbol)
+                e.StopCoin(symbol)
+                return
+        }
+
+        if _, exists := e.runners[symbol]; exists {
+                e.logger.Info("[%s] config valid — reloading pool", symbol)
+                e.ReloadCoin(symbol, cfg, donation)
+        } else {
+                e.logger.Info("[%s] config valid — starting pool", symbol)
+                e.StartCoin(symbol, cfg, donation)
+        }
 }
