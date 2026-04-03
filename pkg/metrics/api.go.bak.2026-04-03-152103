@@ -58,11 +58,6 @@ type APIServer struct {
 	logger          *logging.Logger
 	startTime 	time.Time
 	metricsHandler  http.HandlerFunc
-        fleetHandler http.HandlerFunc
-}
-
-func (a *APIServer) SetFleetHandler(h http.HandlerFunc) {
-    a.fleetHandler = h
 }
 
 // NewAPIServer creates a new metrics API server.
@@ -87,40 +82,26 @@ func (a *APIServer) SetSessionProvider(sp SessionProvider) {
 
 // Start begins serving the metrics API.
 func (a *APIServer) Start() error {
-        mux := http.NewServeMux()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/stats", a.handleStats)
+	mux.HandleFunc("/miners", a.handleMiners)
+	mux.HandleFunc("/health", a.handleHealth)
+	mux.HandleFunc("/metrics", a.metricsHandler)
 
-        // Existing endpoints
-        mux.HandleFunc("/stats", a.handleStats)
-        mux.HandleFunc("/miners", a.handleMiners)
-        mux.HandleFunc("/health", a.handleHealth)
-        mux.HandleFunc("/metrics", a.metricsHandler)
+	a.server = &http.Server{
+		Addr:    fmt.Sprintf(":%d", a.port),
+		Handler: mux,
+	}
 
-        // 🔥 NEW: Engine Fleet API
-        mux.HandleFunc("/api/engine/fleet", func(w http.ResponseWriter, r *http.Request) {
-            if a.fleetHandler != nil {
-                a.fleetHandler(w, r)
-                return
-            }
-            http.Error(w, "fleet handler not set", http.StatusInternalServerError)
-        })
+	a.logger.Info("Metrics API listening on :%d", a.port)
 
-        // 🔥 NEW: Serve UI
-        mux.Handle("/", http.FileServer(http.Dir("./static")))
+	go func() {
+		if err := a.server.ListenAndServe(); err != http.ErrServerClosed {
+			a.logger.Error("metrics API error: %v", err)
+		}
+	}()
 
-        a.server = &http.Server{
-                Addr:    fmt.Sprintf(":%d", a.port),
-                Handler: mux,
-        }
-
-        a.logger.Info("Metrics API listening on :%d", a.port)
-
-        go func() {
-                if err := a.server.ListenAndServe(); err != http.ErrServerClosed {
-                        a.logger.Error("metrics API error: %v", err)
-                }
-        }()
-
-        return nil
+	return nil
 }
 
 // Stop shuts down the API server.

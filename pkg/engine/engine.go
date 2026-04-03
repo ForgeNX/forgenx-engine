@@ -12,6 +12,7 @@ package engine
 import (
 	"fmt"
         "encoding/json"
+        "net/http"
         "os"
         "path/filepath"
 	"strings"
@@ -186,7 +187,30 @@ func (e *Engine) LoadExistingCoinConfigs(dir string, donation config.DonationCon
 
 	symbol := strings.ToUpper(strings.TrimSuffix(file.Name(), filepath.Ext(file.Name())))
 
+        // 🔥 NEW: check owner_app exists
+        if coinCfg.OwnerApp != "" {
+            appPath := "/var/lib/5tratumos/apps/" + coinCfg.OwnerApp
+
+            if _, err := os.Stat(appPath); os.IsNotExist(err) {
+                e.logger.Info("[%s] owner app missing — deleting stale config", symbol)
+
+                os.Remove(path)
+                continue
+            }
+        }
+
         e.handleCoinConfig(symbol, &coinCfg, donation)
 
     }
+}
+
+func (e *Engine) HandleFleet(w http.ResponseWriter, r *http.Request) {
+    resp := map[string]interface{}{
+        "total_hashrate": 0,
+        "total_workers":  0,
+        "coins":          []interface{}{},
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(resp)
 }

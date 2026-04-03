@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GoStratum Engine</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #0b0f14;
+      color: #fff;
+      padding: 20px;
+    }
+
+    .card {
+      background: #111827;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .title {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .value {
+      font-size: 32px;
+      font-weight: bold;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+
+    .coin {
+      margin-top: 10px;
+      padding: 10px;
+      background: #1f2937;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="card">
+  <div class="title">Fleet Hashrate</div>
+
+  <div class="row">
+    <div>
+      <div class="value" id="hashrate">0.00</div>
+      <div>TH/s</div>
+    </div>
+
+    <div>
+      <div class="value" id="workers">0</div>
+      <div>Workers</div>
+    </div>
+  </div>
+
+  <div id="coins"></div>
+</div>
+
+<script>
+async function update() {
+  try {
+    const res = await fetch("/api/engine/fleet");
+    const data = await res.json();
+
+    document.getElementById("hashrate").textContent = data.total_hashrate.toFixed(2);
+    document.getElementById("workers").textContent = data.total_workers;
+
+    const container = document.getElementById("coins");
+    container.innerHTML = "";
+
+    data.coins.forEach(c => {
+      const div = document.createElement("div");
+      div.className = "coin";
+
+      div.innerHTML = `
+        <strong>${c.symbol}</strong><br>
+        ${c.hashrate.toFixed(2)} TH/s • ${c.workers} workers<br>
+        Status: ${c.status}
+      `;
+
+      container.appendChild(div);
+    });
+
+  } catch (e) {
+    console.error("Failed to fetch fleet", e);
+  }
+}
+
+setInterval(update, 3000);
+update();
+</script>
+
+</body>
+</html>

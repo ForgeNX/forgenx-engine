@@ -45,7 +45,6 @@ type CoinConfig struct {
 	TemplateRefreshInterval int                  `json:"template_refresh_interval"`
         IbdComplete             bool                 `json:"ibd_complete"`
         NodeOnline              bool                 `json:"node_online"`
-        OwnerApp                string               `json:"owner_app,omitempty"`
 }
 
 // NodeConfig holds blockchain node connection settings.

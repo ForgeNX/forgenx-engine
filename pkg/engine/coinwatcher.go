@@ -102,29 +102,37 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 
 func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
 
-        if !cfg.Enabled {
-                e.logger.Info("[%s] disabled — stopping pool", symbol)
-                e.StopCoin(symbol)
-                return
-        }
+    if !cfg.Enabled {
+        e.logger.Info("[%s] disabled — stopping pool", symbol)
+        e.StopCoin(symbol)
+        return
+    }
 
-        if !cfg.IbdComplete {
-                e.logger.Info("[%s] waiting for IBD — stopping pool if running", symbol)
-                e.StopCoin(symbol)
-                return
-        }
-
-        if !cfg.NodeOnline {
-                e.logger.Info("[%s] node offline — stopping pool", symbol)
-                e.StopCoin(symbol)
-                return
-        }
-
+    if !cfg.IbdComplete {
         if _, exists := e.runners[symbol]; exists {
-                e.logger.Info("[%s] config valid — reloading pool", symbol)
-                e.ReloadCoin(symbol, cfg, donation)
+            e.logger.Info("[%s] node syncing (IBD) — stopping pool", symbol)
+            e.StopCoin(symbol)
         } else {
-                e.logger.Info("[%s] config valid — starting pool", symbol)
-                e.StartCoin(symbol, cfg, donation)
+            e.logger.Info("[%s] node syncing (IBD) — pool not started", symbol)
         }
+        return
+    }
+
+    if !cfg.NodeOnline {
+        if _, exists := e.runners[symbol]; exists {
+            e.logger.Info("[%s] node offline (RPC unreachable) — stopping pool", symbol)
+            e.StopCoin(symbol)
+        } else {
+            e.logger.Info("[%s] node offline (RPC unreachable) — pool not started", symbol)
+        }
+        return
+    }
+
+    if _, exists := e.runners[symbol]; exists {
+        e.logger.Info("[%s] config valid — reloading pool", symbol)
+        e.ReloadCoin(symbol, cfg, donation)
+    } else {
+        e.logger.Info("[%s] config valid — starting pool", symbol)
+        e.StartCoin(symbol, cfg, donation)
+    }
 }
