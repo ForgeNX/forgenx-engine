@@ -11,6 +11,7 @@ FROM alpine:3.19
 WORKDIR /app
 
 COPY --from=builder /app/gostratumengine /app/gostratumengine
+COPY static ./static
 
 RUN mkdir -p /pool/coins
 

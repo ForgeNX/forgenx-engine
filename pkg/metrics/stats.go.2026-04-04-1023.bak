@@ -43,7 +43,6 @@ type CoinStats struct {
 	LastBlockHash    string    `json:"last_block_hash,omitempty"`
 	LastBlockHeight  int64     `json:"last_block_height,omitempty"`
 	LastBlockTime    time.Time `json:"last_block_time,omitempty"`
-        SyncProgress     float64   `json:"sync_progress"`
 	mu               sync.Mutex
 }
 
@@ -53,36 +52,6 @@ type Stats struct {
 	workers   map[string]map[string]*WorkerStats // coin symbol -> worker name -> stats
 	mu        sync.RWMutex
 	startedAt time.Time
-}
-
-// Stats new section for sync status and percentage.
-func (s *Stats) SetSyncProgress(symbol string, progress float64) {
-        s.mu.RLock()
-        coin, ok := s.coins[symbol]
-        s.mu.RUnlock()
-
-        if !ok {
-                return
-        }
-
-        coin.mu.Lock()
-        coin.SyncProgress = progress
-        coin.mu.Unlock()
-}
-
-func (s *Stats) GetCoinsSnapshot() map[string]CoinStats {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
-
-    snapshot := make(map[string]CoinStats)
-
-    for symbol, coin := range s.coins {
-        coin.mu.Lock()
-        snapshot[symbol] = *coin
-        coin.mu.Unlock()
-    }
-
-    return snapshot
 }
 
 // NewStats creates a new Stats instance.

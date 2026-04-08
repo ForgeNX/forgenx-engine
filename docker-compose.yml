@@ -11,6 +11,7 @@ services:
     volumes:
       - /home/forge/pool:/pool
       - /home/forge/gostratumengine/config.json:/app/config.json
+      - /var/lib/5tratumos/apps:/var/lib/5tratumos/apps
 
     networks:
       - fractal-net   # 👈 ONLY THIS

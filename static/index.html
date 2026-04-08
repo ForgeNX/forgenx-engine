@@ -1,99 +1,578 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>GoStratum Engine</title>
-  <style>
-    body {
-      font-family: Arial;
-      background: #0b0f14;
-      color: #fff;
-      padding: 20px;
-    }
+<meta charset="UTF-8">
+<title>GoStratumEngine X</title>
 
-    .card {
-      background: #111827;
-      border-radius: 10px;
-      padding: 20px;
-      margin-bottom: 20px;
-    }
+<style>
 
-    .title {
-      font-size: 18px;
-      margin-bottom: 10px;
-    }
+/* GLOBAL */
+body {
+    margin: 0;
+    font-family: Inter, Arial;
+    background: radial-gradient(circle at top, #020409, #000000);
+    color: #e6edf3;
+}
 
-    .value {
-      font-size: 32px;
-      font-weight: bold;
-    }
+/* MUCH softer ambient lighting */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(0,212,255,0.05), transparent 50%),
+        radial-gradient(circle at 80% 40%, rgba(168,85,247,0.05), transparent 50%),
+        radial-gradient(circle at 60% 80%, rgba(255,0,128,0.04), transparent 50%);
+    z-index: -1;
+}
 
-    .row {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 10px;
-    }
+.container { padding:20px; }
 
-    .coin {
-      margin-top: 10px;
-      padding: 10px;
-      background: #1f2937;
-      border-radius: 6px;
-    }
-  </style>
+.header {
+    font-size:22px;
+    margin-bottom:20px;
+    color:#00d4ff;
+    display:flex;
+    align-items:center;
+    gap:10px;
+}
+
+/* GRID */
+.grid {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:20px;
+}
+
+/* CARD */
+.card {
+    position: relative;
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid transparent;
+    background:
+        linear-gradient(#000, #000) padding-box,
+        linear-gradient(90deg, #00d4ff, #a855f7, #ff0080) border-box;
+
+    /* depth */
+    box-shadow:
+        0 0 0.5px rgba(255,255,255,0.1),
+        0 0 12px rgba(0,0,0,0.8);
+}
+
+.card:hover {
+    box-shadow:
+        0 0 6px rgba(0,212,255,0.4),
+        0 0 12px rgba(168,85,247,0.3),
+        0 0 18px rgba(255,0,128,0.2);
+}
+
+/* ANIMATED FLOW */
+.bar {
+    height:6px;
+    background:#1f2937;
+    border-radius:10px;
+    overflow:hidden;
+    margin-top:8px;
+}
+
+.fill {
+    height:100%;
+    width:100%;
+    background:linear-gradient(90deg,#00d4ff,#a855f7,#ff0080);
+    background-size:200% 100%;
+    animation: flow 3s linear infinite;
+}
+
+@keyframes flow {
+    0% {background-position:0%;}
+    100% {background-position:200%;}
+}
+
+/* TEXT */
+.title { font-size:11px; color:#8b949e; }
+.big { font-size:30px; font-weight:bold; }
+.small { font-size:12px; color:#6b7280; }
+
+/* ROW */
+.row {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
+
+/* COINS */
+.coin-row {
+    margin-top:10px;
+}
+
+.coin-row:first-of-type {
+    margin-top: 30px;
+}
+
+.coin-name, .coin-value {
+    color:#ffffff;
+    font-size:13px;
+}
+
+/* STATUS */
+.status {
+    background: linear-gradient(90deg,#a855f7,#ec4899);
+    font-size:10px;
+    padding:4px 10px;
+    border-radius:20px;
+}
+
+/* MINING */
+.mining-row {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:20px;
+    margin-top:15px;
+}
+
+.stats {
+    display:flex;
+    gap:12px;
+}
+
+.stat-box {
+    flex:1;
+    background:rgba(255,255,255,0.03);
+    border-radius:12px;
+    padding:12px;
+    text-align:center;
+}
+
+/* ADVANCED GRID */
+.panel-grid {
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:20px;
+    margin-top:20px;
+}
+
+/* HEALTH */
+.health {
+    font-size:26px;
+    font-weight:bold;
+    color:#10b981;
+}
+
+/* ALERT */
+.alert {
+    color:#f59e0b;
+}
+
+/* FEED */
+.feed {
+    max-height:120px;
+    overflow:auto;
+    font-size:12px;
+    color:#9ca3af;
+}
+
+/* BUTTON */
+.btn {
+    background:#1f2937;
+    padding:6px 10px;
+    border-radius:8px;
+    font-size:11px;
+}
+
+.pool-card {
+    margin-top:15px;
+    padding:16px;
+    border-radius:14px;
+    border:1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.015);
+}
+
+/* TOP SPLIT */
+.pool-grid {
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:20px;
+    margin-top:10px;
+}
+
+/* RIGHT STATS */
+.stats {
+    display:flex;
+    gap:10px;
+}
+
+.stat-box {
+    flex:1;
+    background: rgba(255,255,255,0.02);
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+}
+
+/* METRICS ROW */
+.metrics-row {
+    display:grid;                      /* 🔥 change from flex */
+    grid-template-columns: repeat(4, 1fr);
+    gap:12px;
+    margin-top:14px;
+}
+
+.metric-box {
+    flex:1;
+    background: rgba(255,255,255,0.02);
+    padding:12px;
+    border-radius:10px;
+    min-height:70px;   /* keeps them consistent height */
+}
+
+/* ACTIVITY */
+.activity-box {
+    margin-top:14px;
+    padding:12px;
+    border-radius:10px;
+    background: rgba(0,0,0,0.4);
+}
+
+</style>
 </head>
 
 <body>
 
+<div class="container">
+
+<div class="header">🚀 GoStratumEngine X</div>
+
+<div class="grid">
+
+<!-- FLEET -->
 <div class="card">
-  <div class="title">Fleet Hashrate</div>
-
-  <div class="row">
-    <div>
-      <div class="value" id="hashrate">0.00</div>
-      <div>TH/s</div>
+    <div class="row">
+        <div>
+            <div class="medium">FLEET HASHRATE</div>
+            <div class="small">Total hashrate across all GoStrateCore App Pools</div>
+            <div id="fleetHashrate" class="medium">0.00 TH/s</div>
+        </div>
+        <div id="fleetWorkers" class="small">0 workers</div>
     </div>
 
-    <div>
-      <div class="value" id="workers">0</div>
-      <div>Workers</div>
-    </div>
-  </div>
+    <div class="bar"><div class="fill"></div></div>
 
-  <div id="coins"></div>
+    <div class="coins">
+
+        <div class="coin-row">
+            <div class="row">
+                <div class="coin-name">Bitcoin (BTC)</div>
+                <div id="workers-BTC" class="coin-value">0 workers</div>
+            </div>
+            <div class="bar"></div>
+        </div>
+
+        <div class="coin-row">
+            <div class="row">
+                <div class="coin-name">Bitcoin Cash (BCH)</div>
+                <div id="workers-BCH" class="coin-value">0 workers</div>
+            </div>
+            <div class="bar"></div>
+        </div>
+
+        <div class="coin-row">
+            <div class="row">
+                <div class="coin-name">Bitcoin Cash II (BC2)</div>
+                <div id="workers-BC2" class="coin-value">0 workers</div>
+            </div>
+            <div class="bar"></div>
+        </div>
+
+        <div class="coin-row">
+            <div class="row">
+                <div class="coin-name">Digibyte (DGB)</div>
+                <div id="workers-DGB" class="coin-value">0 workers</div>
+            </div>
+            <div class="bar"></div>
+        </div>
+
+        <div class="coin-row">
+            <div class="row">
+                <div class="coin-name">eCash (XEC)</div>
+                <div id="workers-XEC" class="coin-value">0 workers</div>
+            </div>
+            <div class="bar"></div>
+        </div>
+
+        <div class="coin-row">
+            <div class="row">
+                <div class="coin-name">Fractal Bitcoin (FB)</div>
+                <div id="workers-FB" class="coin-value">0 workers</div>
+            </div>
+            <div class="bar"></div>
+        </div>
+
+    </div>
+</div>
+
+<!-- WORKERS -->
+<div class="card">
+    <div class="row">
+        <div>
+            <div class="title">WORKERS</div>
+            <div id="workerSummary" class="small">No active workers</div>
+        </div>
+        <div class="btn">Reset</div>
+    </div>
+</div>
+
+</div>
+
+<!-- MINING -->
+<div class="card" style="margin-top:20px;">
+
+<div class="row">
+    <div>
+        <div class="title">MINING OVERVIEW</div>
+        <div class="small">Live pool state</div>
+    </div>
+</div>
+
+<div class="pool-card">
+
+    <div class="row">
+        <div>GoDigibyte (DGB)</div>
+        <div class="status">LIVE</div>
+    </div>
+
+    <div class="pool-grid">
+
+        <!-- SYNC -->
+        <div>
+<div id="syncText" class="small">Loading...</div>
+<div class="bar">
+    <div id="syncBar" class="fill" style="width:0%"></div>
+</div>
+        </div>
+
+        <!-- STATS -->
+        <div class="stats">
+            <div class="stat-box">
+                <div class="small">HASHRATE</div>
+                <div id="dgbHash">-</div>
+            </div>
+            <div class="stat-box">
+                <div class="small">WORKERS</div>
+                <div id="dgbWorkers">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="small">BEST SHARE</div>
+                <div id="dgbBest">-</div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="metrics-row">
+
+        <div class="metric-box">
+            <div class="title">POOL HEALTH</div>
+            <div id="dgbHealth" class="health">100%</div>
+        </div>
+
+        <div class="metric-box">
+            <div class="title">EFFICIENCY</div>
+            <div id="dgbEfficiency" class="big">0.00</div>
+        </div>
+
+        <div class="metric-box">
+            <div class="title">NETWORK</div>
+            <div class="small">Difficulty</div>
+            <div id="difficulty">0</div>
+            <div class="small">Height</div>
+            <div id="height">0</div>
+        </div>
+
+        <div class="metric-box">
+            <div class="title">ALERTS</div>
+            <div id="alerts" class="alert">No issues</div>
+        </div>
+
+    </div>
+
+    <div class="activity-box">
+        <div class="title">LIVE ACTIVITY</div>
+        <div id="activityFeed" class="feed">Loading...</div>
+    </div>
+
+</div>
+
+
+<div class="pool-card">
+
+    <div class="row">
+        <div>GoFractal (FB)</div>
+        <div class="status">LIVE</div>
+    </div>
+
+    <div class="pool-grid">
+
+        <!-- SYNC -->
+        <div>
+<div id="fbSyncText" class="small">Loading...</div>
+<div class="bar">
+    <div id="fbSyncBar" class="fill" style="width:0%"></div>
+</div>
+        </div>
+
+        <!-- STATS -->
+        <div class="stats">
+            <div class="stat-box">
+                <div class="small">HASHRATE</div>
+                <div id="fbHash">-</div>
+            </div>
+            <div class="stat-box">
+                <div class="small">WORKERS</div>
+                <div id="fbWorkers">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="small">BEST SHARE</div>
+                <div id="fbBest">-</div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="metrics-row">
+
+        <div class="metric-box">
+            <div class="title">POOL HEALTH</div>
+            <div id="fbHealth" class="health">100%</div>
+        </div>
+
+        <div class="metric-box">
+            <div class="title">EFFICIENCY</div>
+            <div id="fbEfficiency" class="big">0.00</div>
+        </div>
+
+        <div class="metric-box">
+            <div class="title">NETWORK</div>
+            <div class="small">Difficulty</div>
+            <div id="fbDifficulty">-</div>
+            <div class="small">Height</div>
+            <div id="fbHeight">-</div>
+        </div>
+
+        <div class="metric-box">
+            <div class="title">ALERTS</div>
+            <div id="fbAlerts" class="alert">No issues</div>
+        </div>
+
+    </div>
+
+    <div class="activity-box">
+        <div class="title">LIVE ACTIVITY</div>
+        <div id="fbActivityFeed" class="feed">Syncing...</div>
+    </div>
+
+</div>
+
+</div>
+
 </div>
 
 <script>
-async function update() {
-  try {
-    const res = await fetch("/api/engine/fleet");
-    const data = await res.json();
 
-    document.getElementById("hashrate").textContent = data.total_hashrate.toFixed(2);
-    document.getElementById("workers").textContent = data.total_workers;
-
-    const container = document.getElementById("coins");
-    container.innerHTML = "";
-
-    data.coins.forEach(c => {
-      const div = document.createElement("div");
-      div.className = "coin";
-
-      div.innerHTML = `
-        <strong>${c.symbol}</strong><br>
-        ${c.hashrate.toFixed(2)} TH/s • ${c.workers} workers<br>
-        Status: ${c.status}
-      `;
-
-      container.appendChild(div);
-    });
-
-  } catch (e) {
-    console.error("Failed to fetch fleet", e);
-  }
+function formatHashrate(h) {
+    if (!h) return "0 TH/s";
+    return h.toFixed(2) + " TH/s";
 }
 
-setInterval(update, 3000);
-update();
+async function loadDashboard() {
+    try {
+        const data = await fetch('/api/engine/fleet').then(r => r.json());
+
+        const coins = data.coins || [];
+
+        let totalWorkers = data.total_workers || 0;
+        let totalHash = data.total_hashrate || 0;
+
+        // ===== FLEET =====
+        document.getElementById("fleetWorkers").innerText = totalWorkers + " workers";
+        document.getElementById("fleetHashrate").innerText = formatHashrate(totalHash);
+
+        document.getElementById("workerSummary").innerText =
+            totalWorkers ? totalWorkers + " active workers" : "No active workers";
+
+        ["BTC","BCH","BC2","DGB","XEC","FB"].forEach(c => {
+            const el = document.getElementById("workers-" + c);
+            if (el) el.innerText = "0 TH/s • 0 workers";
+        });
+
+        coins.forEach(c => {
+            const el = document.getElementById("workers-" + c.symbol);
+            if (el) {
+                el.innerText =
+                    formatHashrate(c.hashrate) + " • " + c.workers + " workers";
+            }
+        });
+
+// ===== PANELS =====
+
+// helper to safely get coin
+function getCoin(symbol) {
+    return coins.find(c => c.symbol === symbol) || {
+        symbol,
+        workers: 0,
+        hashrate: 0,
+        sync_progress: 0
+    };
+}
+
+// 🔥 unified panel updater (includes sync fix)
+function updatePanel(coin, ids) {
+    const progress = coin.sync_progress || 0;
+
+    // sync %
+    let pct = progress * 100;
+    let display = pct < 1 ? pct.toFixed(2) : pct.toFixed(0);
+
+    document.getElementById(ids.syncTextId).innerText =
+        "Syncing " + display + "%";
+
+    // progress bar
+    if (ids.syncBarId) {
+        document.getElementById(ids.syncBarId).style.width =
+            pct + "%";
+    }
+
+    // workers + hashrate
+    if (ids.workersId) {
+        document.getElementById(ids.workersId).innerText =
+            coin.workers + " workers";
+    }
+
+    if (ids.hashId) {
+        document.getElementById(ids.hashId).innerText =
+            formatHashrate(coin.hashrate);
+    }
+}
+
+// ===== DGB =====
+updatePanel(getCoin("DGB"), {
+    syncTextId: "syncText",
+    syncBarId: "syncBar",
+    workersId: "dgbWorkers",
+    hashId: "dgbHash"
+});
+
+// ===== FB =====
+updatePanel(getCoin("FB"), {
+    syncTextId: "fbSyncText",
+    syncBarId: "fbSyncBar",
+    workersId: "fbWorkers",
+    hashId: "fbHash"
+});
+
+setInterval(loadDashboard, 3000);
+loadDashboard();
+
 </script>
 
 </body>

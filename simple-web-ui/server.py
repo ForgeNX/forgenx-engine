@@ -263,16 +263,22 @@ setInterval(refresh, 10000);
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(HTML_PAGE.encode())
+            try:
+                with open("index.html", "rb") as f:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(f.read())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
 
         elif self.path.startswith('/api/'):
             # Proxy /api/<endpoint> to the Go API at /api/v1/<endpoint>
             endpoint = self.path[len('/api/'):]
             try:
-                url = f"{API_BASE}/api/v1/{endpoint}"
+                url = f"{API_BASE}/api/{endpoint}"
                 resp = urllib.request.urlopen(url, timeout=5)
                 data = resp.read()
                 self.send_response(200)

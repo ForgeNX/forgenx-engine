@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GoStratumEngine X</title>
+
+<style>
+
+/* GLOBAL */
+body {
+    margin: 0;
+    font-family: Inter, Arial;
+    background: radial-gradient(circle at top, #020409, #000000);
+    color: #e6edf3;
+}
+
+/* subtle ambient glow */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(0,212,255,0.05), transparent 50%),
+        radial-gradient(circle at 80% 40%, rgba(168,85,247,0.05), transparent 50%),
+        radial-gradient(circle at 60% 80%, rgba(255,0,128,0.04), transparent 50%);
+    z-index: -1;
+}
+
+.container { padding:20px; }
+
+.header {
+    font-size:22px;
+    margin-bottom:20px;
+    color:#00d4ff;
+}
+
+/* GRID */
+.grid {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:20px;
+}
+
+/* CARD */
+.card {
+    border-radius:16px;
+    padding:16px;
+    border:1px solid transparent;
+    background:
+        linear-gradient(#000, #000) padding-box,
+        linear-gradient(90deg,#00d4ff,#a855f7,#ff0080) border-box;
+}
+
+/* TEXT */
+.medium { font-size:16px; }
+.big { font-size:28px; font-weight:bold; }
+.small { font-size:12px; color:#6b7280; }
+
+/* ROW */
+.row {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
+
+/* BAR */
+.bar {
+    height:6px;
+    background:#1f2937;
+    border-radius:10px;
+    margin-top:8px;
+    overflow:hidden;
+}
+
+.fill {
+    height:100%;
+    width:100%;
+    background:linear-gradient(90deg,#00d4ff,#a855f7,#ff0080);
+}
+
+/* COINS */
+.coin-row { margin-top:10px; }
+.coin-name, .coin-value {
+    color:#ffffff;
+    font-size:13px;
+}
+
+/* STATUS */
+.status {
+    background:linear-gradient(90deg,#a855f7,#ec4899);
+    font-size:10px;
+    padding:4px 10px;
+    border-radius:20px;
+}
+
+/* POOLS */
+.pool-card {
+    margin-top:15px;
+    padding:16px;
+    border-radius:14px;
+    background:rgba(255,255,255,0.02);
+}
+
+/* STATS */
+.stats {
+    display:flex;
+    gap:10px;
+    margin-top:10px;
+}
+
+.stat-box {
+    flex:1;
+    background:rgba(255,255,255,0.03);
+    padding:10px;
+    border-radius:10px;
+    text-align:center;
+}
+
+/* TABLE */
+table {
+    width:100%;
+    border-collapse:collapse;
+    margin-top:10px;
+}
+
+td, th {
+    padding:8px;
+    border-bottom:1px solid #222;
+    font-size:12px;
+}
+
+/* ACTIVITY */
+.activity-box {
+    margin-top:14px;
+    padding:12px;
+    background:rgba(0,0,0,0.4);
+    border-radius:10px;
+}
+
+.feed {
+    font-size:12px;
+    color:#9ca3af;
+}
+
+.btn {
+    background:#1f2937;
+    padding:6px 10px;
+    border-radius:8px;
+    font-size:11px;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">🚀 GoStratumEngine X</div>
+
+<div class="grid">
+
+<!-- FLEET -->
+<div class="card">
+    <div class="row">
+        <div>
+            <div class="medium">FLEET HASHRATE</div>
+            <div id="fleetHashrate" class="big">0.00 TH/s</div>
+        </div>
+        <div id="fleetWorkers" class="small">0 workers</div>
+    </div>
+
+    <div class="bar"><div class="fill"></div></div>
+
+    <div id="coinContainer"></div>
+</div>
+
+<!-- WORKERS -->
+<div class="card">
+    <div class="row">
+        <div>
+            <div class="medium">WORKERS</div>
+            <div id="workerSummary" class="small">No active workers</div>
+        </div>
+        <div class="btn">Reset</div>
+    </div>
+</div>
+
+</div>
+
+<!-- POOLS -->
+<div class="card" style="margin-top:20px;">
+    <div class="medium">POOLS</div>
+    <div id="poolsContainer"></div>
+</div>
+
+<!-- MINERS -->
+<div class="card" style="margin-top:20px;">
+    <div class="medium">MINERS</div>
+    <div id="minersTable"></div>
+</div>
+
+<!-- ACTIVITY -->
+<div class="card" style="margin-top:20px;">
+    <div class="medium">LIVE ACTIVITY</div>
+    <div id="activityFeed" class="feed">Loading...</div>
+</div>
+
+</div>
+
+<script>
+
+/* FORMAT HASHRATE */
+function formatHashrate(h) {
+    if (h > 1e12) return (h/1e12).toFixed(2)+" TH/s";
+    if (h > 1e9) return (h/1e9).toFixed(2)+" GH/s";
+    if (h > 1e6) return (h/1e6).toFixed(2)+" MH/s";
+    if (h > 1e3) return (h/1e3).toFixed(2)+" KH/s";
+    return h.toFixed(2)+" H/s";
+}
+
+async function loadDashboard() {
+    try {
+        const res = await fetch("/api/engine/fleet");
+        const data = await res.json();
+
+        const coins = data.coins || [];
+
+        let totalWorkers = data.total_workers || 0;
+        let totalHash = data.total_hashrate || 0;
+
+        /* ===== FLEET ===== */
+        document.getElementById("fleetWorkers").innerText =
+            totalWorkers + " workers";
+
+        document.getElementById("fleetHashrate").innerText =
+            totalHash.toFixed(2) + " TH/s";
+
+        document.getElementById("workerSummary").innerText =
+            totalWorkers ? totalWorkers + " active workers" : "No active workers";
+
+        /* ===== COINS ===== */
+        const coinContainer = document.getElementById("coinContainer");
+        coinContainer.innerHTML = "";
+
+        coins.forEach(c => {
+
+            const percent = totalHash > 0
+                ? (c.hashrate / totalHash) * 100
+                : 0;
+
+            coinContainer.innerHTML += `
+                <div class="coin-row">
+                    <div class="row">
+                        <div class="coin-name">${c.symbol}</div>
+                        <div class="coin-value">
+                            ${c.hashrate.toFixed(2)} TH/s • ${c.workers} workers
+                        </div>
+                    </div>
+                    <div class="bar">
+                        <div class="fill" style="width:${percent}%"></div>
+                    </div>
+                </div>
+            `;
+        });
+
+        /* ===== POOLS ===== */
+        const poolsContainer = document.getElementById("poolsContainer");
+        poolsContainer.innerHTML = "";
+
+        coins.forEach(c => {
+            poolsContainer.innerHTML += `
+                <div class="pool-card">
+                    <div class="row">
+                        <div>${c.symbol}</div>
+                        <div class="status">${c.status}</div>
+                    </div>
+
+                    <div class="bar">
+                        <div class="fill"></div>
+                    </div>
+
+                    <div class="stats">
+                        <div class="stat-box">
+                            <div class="small">HASHRATE</div>
+                            ${c.hashrate.toFixed(2)} TH/s
+                        </div>
+                        <div class="stat-box">
+                            <div class="small">WORKERS</div>
+                            ${c.workers}
+                        </div>
+                        <div class="stat-box">
+                            <div class="small">STATUS</div>
+                            ${c.status}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        /* ===== MINERS (NOT AVAILABLE YET) ===== */
+        document.getElementById("minersTable").innerHTML =
+            "<div class='small'>Miner data not available from engine</div>";
+
+        /* ===== ACTIVITY ===== */
+        let feed = coins.map(c =>
+            `${c.symbol} → ${c.workers} workers active`
+        );
+
+        document.getElementById("activityFeed").innerHTML =
+            feed.join("<br>");
+
+    } catch (e) {
+        console.log("Dashboard error:", e);
+    }
+}
+
+setInterval(loadDashboard, 3000);
+loadDashboard();
+
+</script>
+
+</body>
+</html>

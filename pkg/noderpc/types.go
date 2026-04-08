@@ -101,9 +101,11 @@ type RTTData struct {
 
 // BlockchainInfo is the response from getblockchaininfo.
 type BlockchainInfo struct {
-	Chain         string  `json:"chain"`
-	Blocks        int64   `json:"blocks"`
-	Headers       int64   `json:"headers"`
-	BestBlockHash string  `json:"bestblockhash"`
-	Difficulty    float64 `json:"difficulty"`
+        Chain                   string  `json:"chain"`
+        Blocks                  int64   `json:"blocks"`
+        Headers                 int64   `json:"headers"`
+        BestBlockHash           string  `json:"bestblockhash"`
+        Difficulty              float64 `json:"difficulty"`
+        VerificationProgress    float64 `json:"verificationprogress"`
+        InitialBlockDownload    bool    `json:"initialblockdownload"`
 }

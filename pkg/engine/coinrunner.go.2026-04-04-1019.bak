@@ -85,9 +85,6 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		startTime: time.Now(),
 	}
 
-// 🔥 CRITICAL: Register coin in stats immediately
-stats.InitCoin(symbol)
-
 	// Create stratum server
 	var vardiffCfg *stratum.VarDiffConfig
 	if cfg.VarDiff.Enabled {
@@ -269,38 +266,8 @@ func (cr *CoinRunner) Start() error {
 		}
 	}
 
-        cr.logger.Info("[%s] coin runner started", cr.symbol)
-
-        // Start sync monitoring loop
-        go func() {
-                for {
-                        info, err := cr.rpcClient.GetBlockchainInfo()
-                        if err == nil {
-
-                                progress := info.VerificationProgress
-
-                                // clamp edge case
-                                if progress > 0.999 {
-                                        progress = 1
-                                }
-
-                                // store sync progress
-                                cr.stats.SetSyncProgress(cr.symbol, progress)
-
-                                // optional logging while syncing
-                                if info.InitialBlockDownload {
-                                        cr.logger.Info("[%s] syncing %.2f%%",
-                                                cr.symbol,
-                                                progress*100,
-                                        )
-                                }
-                        }
-
-                        time.Sleep(10 * time.Second)
-                }
-        }()
-
-        return nil
+	cr.logger.Info("[%s] coin runner started", cr.symbol)
+	return nil
 }
 
 // Stop shuts down the coin mining pipeline.
