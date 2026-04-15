@@ -71,11 +71,15 @@ func main() {
 		logger.Fatal("engine initialization: %v", err)
 	}
 
-	if err := eng.Start(); err != nil {
-		logger.Fatal("engine start: %v", err)
+	if err := os.MkdirAll(engine.CoinsDir, 0755); err != nil {
+        	logger.Fatal("failed to create coins directory: %v", err)
 	}
 
-	eng.WatchCoins("/pool/coins", cfg.Donation)
+	if err := eng.Start(); err != nil {
+        	logger.Fatal("engine start: %v", err)
+	}
+
+	eng.WatchCoins(engine.CoinsDir, cfg.Donation)
 
 	// Start metrics API
 	api := metrics.NewAPIServer(cfg.APIPort, cfg.PoolName, stats)

@@ -24,6 +24,8 @@ import (
 	"github.com/mmfpsolutions/gostratumengine/pkg/stratum"
 )
 
+const CoinsDir = "/pool/coins"
+
 // Engine is the top-level orchestrator that manages all coin runners.
 type Engine struct {
 	runners map[string]*CoinRunner
@@ -81,7 +83,7 @@ func (e *Engine) Start() error {
     e.logger.Info("engine started with %d coin(s)", len(e.runners))
 
     // NEW: scan existing coin configs
-    e.LoadExistingCoinConfigs("/pool/coins", config.DonationConfig{})
+    e.LoadExistingCoinConfigs(CoinsDir, config.DonationConfig{})
 
     return nil
 }
