@@ -1,4 +1,4 @@
-module github.com/mmfpsolutions/gostratumengine
+module github.com/ForgeNX/forgenx-engine
 
 go 1.25.2
 
