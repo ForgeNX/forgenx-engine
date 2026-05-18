@@ -1,4 +1,4 @@
-APP_NAME := gostratumengine
+APP_NAME := forgenx-engine
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -48,11 +48,3 @@ lint:
 ## clean: Remove build artifacts
 clean:
 	rm -rf bin/
-
-## help: Show this help
-help:
-	@echo "GoStratumEngine - Open Source Stratum V1 Engine"
-	@echo ""
-	@echo "Usage: make [target]"
-	@echo ""
-	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
