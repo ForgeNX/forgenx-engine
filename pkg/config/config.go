@@ -1,4 +1,4 @@
-/*
+	/*
  * Copyright 2026 Scott Walter, MMFP Solutions LLC
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"os"
 
-	coinpkg "github.com/mmfpsolutions/gostratumengine/pkg/coin"
+		coinpkg "github.com/ForgeNX/forgenx-engine/pkg/coin"
 )
 
 // Config is the top-level configuration for GoStratumEngine.
