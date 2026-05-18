@@ -1,4 +1,4 @@
-/*
+		/*
  * Copyright 2026 Scott Walter, MMFP Solutions LLC
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
-	"github.com/mmfpsolutions/gostratumengine/pkg/stratum"
+		"github.com/ForgeNX/forgenx-engine/pkg/logging"
+		"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 // SessionProvider returns active sessions grouped by coin symbol.
