@@ -17,7 +17,7 @@ import (
 		coinpkg "github.com/ForgeNX/forgenx-engine/pkg/coin"
 )
 
-// Config is the top-level configuration for GoStratumEngine.
+// Config is the top-level configuration for ForgeNX.
 type Config struct {
 	PoolName string                `json:"pool_name"`
 	LogLevel string                `json:"log_level"`
@@ -121,7 +121,7 @@ func Load(path string) (*Config, error) {
 
 func applyDefaults(cfg *Config) {
 	if cfg.PoolName == "" {
-		cfg.PoolName = "GoStratumEngine"
+		cfg.PoolName = "ForgeNX"
 	}
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
@@ -154,7 +154,7 @@ func applyDefaults(cfg *Config) {
 			coin.Stratum.LowDiffShareGrace = 5
 		}
 		if coin.Mining.CoinbaseText == "" {
-			coin.Mining.CoinbaseText = "GoStratumEngine"
+			coin.Mining.CoinbaseText = "ForgeNX"
 		}
 		if coin.Mining.ExtraNonceSize == 0 {
 			coin.Mining.ExtraNonceSize = 8
