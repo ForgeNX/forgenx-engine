@@ -15,7 +15,7 @@ import (
 	"math"
 	"math/big"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 )
 
 // RTT filter coefficients for each time window.

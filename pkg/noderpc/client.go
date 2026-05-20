@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 )
 
 // Client is a JSON-RPC 1.0 HTTP client for communicating with blockchain nodes.

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/mmfpsolutions/gostratumengine/pkg/config"
-        "github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/config"
+        "github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 )
 
 func (e *Engine) WatchCoins(dir string, donation config.DonationConfig) error {

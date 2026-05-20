@@ -13,8 +13,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/coinbase"
-	"github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/coinbase"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 )
 
 // DigiByte implements the Coin interface for DGB.

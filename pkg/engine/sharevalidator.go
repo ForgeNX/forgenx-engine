@@ -16,12 +16,12 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/coin"
-	"github.com/mmfpsolutions/gostratumengine/pkg/coinbase"
-	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
-	"github.com/mmfpsolutions/gostratumengine/pkg/metrics"
-	"github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
-	"github.com/mmfpsolutions/gostratumengine/pkg/stratum"
+	"github.com/ForgeNX/forgenx-engine/pkg/coin"
+	"github.com/ForgeNX/forgenx-engine/pkg/coinbase"
+	"github.com/ForgeNX/forgenx-engine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 // ecashBlockCooldown is the duration after submitting an eCash block

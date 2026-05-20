@@ -14,8 +14,8 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/coinbase"
-	"github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/coinbase"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 )
 
 // Coin defines coin-specific behavior for mining operations.

@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/coin"
-	"github.com/mmfpsolutions/gostratumengine/pkg/config"
-	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
-	"github.com/mmfpsolutions/gostratumengine/pkg/metrics"
-	"github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
-	"github.com/mmfpsolutions/gostratumengine/pkg/stratum"
+	"github.com/ForgeNX/forgenx-engine/pkg/coin"
+	"github.com/ForgeNX/forgenx-engine/pkg/config"
+	"github.com/ForgeNX/forgenx-engine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 //go:embed AUTHORS

@@ -13,8 +13,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/coinbase"
-	"github.com/mmfpsolutions/gostratumengine/pkg/noderpc"
+	"github.com/ForgeNX/forgenx-engine/pkg/coinbase"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 )
 
 // Bitcoin implements the Coin interface for BTC.

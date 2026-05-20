@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	"github.com/go-zeromq/zmq4"
-	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 )
 
 // ZMQSubscriber listens for hashblock notifications from a blockchain node via ZMQ.

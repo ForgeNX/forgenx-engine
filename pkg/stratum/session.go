@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mmfpsolutions/gostratumengine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 )
 
 // SessionState represents the state of a miner session.
