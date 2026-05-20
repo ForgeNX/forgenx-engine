@@ -241,7 +241,7 @@ body::before {
 
 <div class="container">
 
-<div class="header">🚀 GoStratumEngine X</div>
+<div class="header">ForgeNX Engine</div>
 
 <div class="grid">
 
@@ -569,6 +569,14 @@ updatePanel(getCoin("FB"), {
     workersId: "fbWorkers",
     hashId: "fbHash"
 });
+
+    } catch (err) {
+        console.error("Failed to load engine dashboard", err);
+        document.getElementById("workerSummary").innerText = "Dashboard API unavailable";
+        document.getElementById("activityFeed").innerText = "Waiting for engine data...";
+        document.getElementById("fbActivityFeed").innerText = "Waiting for engine data...";
+    }
+}
 
 setInterval(loadDashboard, 3000);
 loadDashboard();

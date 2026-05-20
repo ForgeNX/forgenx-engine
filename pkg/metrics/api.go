@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 		"github.com/ForgeNX/forgenx-engine/pkg/logging"
@@ -105,7 +107,10 @@ func (a *APIServer) Start() error {
         })
 
         // 🔥 NEW: Serve UI
-        mux.Handle("/", http.FileServer(http.Dir("./static")))
+        staticDir := resolveStaticDir()
+        staticFiles := http.FileServer(http.Dir(staticDir))
+        mux.Handle("/", staticFiles)
+        mux.Handle("/static/", http.StripPrefix("/static/", staticFiles))
 
         a.server = &http.Server{
                 Addr:    fmt.Sprintf(":%d", a.port),
@@ -121,6 +126,21 @@ func (a *APIServer) Start() error {
         }()
 
         return nil
+}
+
+func resolveStaticDir() string {
+	if _, err := os.Stat("static/index.html"); err == nil {
+		return "static"
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Join(filepath.Dir(exe), "static")
+		if _, statErr := os.Stat(filepath.Join(dir, "index.html")); statErr == nil {
+			return dir
+		}
+	}
+
+	return "static"
 }
 
 // Stop shuts down the API server.
