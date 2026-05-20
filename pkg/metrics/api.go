@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 		"github.com/ForgeNX/forgenx-engine/pkg/logging"
@@ -108,9 +109,7 @@ func (a *APIServer) Start() error {
 
         // 🔥 NEW: Serve UI
         staticDir := resolveStaticDir()
-        staticFiles := http.FileServer(http.Dir(staticDir))
-        mux.Handle("/", staticFiles)
-        mux.Handle("/static/", http.StripPrefix("/static/", staticFiles))
+        mux.Handle("/", serveStaticUI(staticDir))
 
         a.server = &http.Server{
                 Addr:    fmt.Sprintf(":%d", a.port),
@@ -141,6 +140,37 @@ func resolveStaticDir() string {
 	}
 
 	return "static"
+}
+
+func serveStaticUI(staticDir string) http.Handler {
+	fileServer := http.FileServer(http.Dir(staticDir))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		requestPath := strings.TrimPrefix(r.URL.Path, "/")
+		requestPath = strings.TrimPrefix(requestPath, "static/")
+
+		if requestPath == "" {
+			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
+			return
+		}
+
+		fullPath := filepath.Join(staticDir, filepath.Clean(requestPath))
+		if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+			if strings.HasPrefix(r.URL.Path, "/static/") {
+				r = r.Clone(r.Context())
+				r.URL.Path = "/" + requestPath
+			}
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
+	})
 }
 
 // Stop shuts down the API server.
