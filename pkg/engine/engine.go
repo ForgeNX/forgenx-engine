@@ -192,7 +192,7 @@ func (e *Engine) LoadExistingCoinConfigs(dir string, donation config.DonationCon
 
         // 🔥 owner_app check with retry
         if coinCfg.OwnerApp != "" {
-            appPath := "/var/lib/5tratumos/apps/" + coinCfg.OwnerApp
+            appPath := "/opt/forgenx/apps/" + coinCfg.OwnerApp
 
             exists := false
 
