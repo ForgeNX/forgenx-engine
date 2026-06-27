@@ -1,29 +1,31 @@
-# GoStratumEngine Authors & Donation Addresses
+# ForgeNX Engine Authors & Donation Addresses
 #
 # This file is embedded into the binary at compile time.
 # When donation is enabled in config.json, a small percentage of each
 # block reward is donated to the project authors listed below.
 #
-# This code was developed by Scott Walter, MMFP Solutions LLC
-# <scott {at} mmfpsolution {dot} io>
+# ForgeNX Engine — developed by ForgeNX
 # Format: SYMBOL NETWORK ADDRESS
 # Lines starting with # are comments. Blank lines are ignored.
 # The first matching SYMBOL+NETWORK entry is used.
 
 # Bitcoin (BTC)
-BTC mainnet bc1qxfju0ynhkt2muq9jaqj2nh78yg5qgmpk5kl00v
+BTC mainnet bc1quadcyq7ucvtwwe5r80enwarf625ga320d9y6kt
 BTC testnet mgGsP6XUSy6YBfJJ8r4o5B9ZjEq1R5inRV
 
 # Bitcoin Cash (BCH)
-BCH mainnet bitcoincash:qr7tknknndvdh8jyq0v9qzectcmx5zgqlvhqncystt
+BCH mainnet bitcoincash:qrms9qaetpa4ssg8mxz7qtvke2cjrcdr9yt8c9pwky
 BCH testnet bchtest:qqjhdmjy2yfxynjys0n6hggnx32pgvheegntrkmvqu
 
 # DigiByte (DGB)
-DGB mainnet D8HCqTxncZkSvejbhx7ByLXAPSrEpaBzZ5
+DGB mainnet DHGNWdRFhHRRkxshdSEs9gqWfDMpNBE9RF
 DGB testnet dgbt1q087z5hmn78fegv8nw7wmx8wxtppr8c59aa03yl
 
 # eCash (XEC)
-XEC mainnet ecash:qpyryen4uqy79s2qum3aq9t7pv8ge67fxsxrvjftfn
+XEC mainnet ecash:qpzd9mhmlq3f0tgemshdmcfzsnxgclz0gvn2ndzk0r
 
 # Bitcoin II (BC2)
-BC2 mainnet 1HNH8hUJatNNcHQwNa7yBmueraBCJLLAkG
+BC2 mainnet bc1qhadjk5725qc9rgeva955ehlrcqnsqdqd8aa3qu
+
+# Fractal Bitcoin (FB)
+FB mainnet bc1quw6px6ghgttu7xvevz27enxmmqaskrdh2ug0v0
