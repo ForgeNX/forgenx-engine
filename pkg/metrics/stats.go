@@ -44,6 +44,7 @@ type CoinStats struct {
 	LastBlockHeight  int64     `json:"last_block_height,omitempty"`
 	LastBlockTime    time.Time `json:"last_block_time,omitempty"`
         SyncProgress     float64   `json:"sync_progress"`
+	MaxPoolHashrate  float64   `json:"max_pool_hashrate"`
 	mu               sync.Mutex
 }
 
@@ -56,6 +57,21 @@ type Stats struct {
 }
 
 // Stats new section for sync status and percentage.
+// UpdateMaxPoolHashrate updates the peak pool hashrate if current exceeds stored max.
+func (s *Stats) UpdateMaxPoolHashrate(symbol string, current float64) {
+	s.mu.RLock()
+	coin, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	coin.mu.Lock()
+	if current > coin.MaxPoolHashrate {
+		coin.MaxPoolHashrate = current
+	}
+	coin.mu.Unlock()
+}
+
 func (s *Stats) SetSyncProgress(symbol string, progress float64) {
         s.mu.RLock()
         coin, ok := s.coins[symbol]

@@ -231,7 +231,7 @@ func (e *Engine) HandleFleet(w http.ResponseWriter, r *http.Request) {
         totalWorkers += len(list)
     }
 
-    totalHashrate := 0.0 // still placeholder
+    totalHashrate := 0.0
 
     coins := []map[string]interface{}{}
 
@@ -247,11 +247,19 @@ func (e *Engine) HandleFleet(w http.ResponseWriter, r *http.Request) {
             workers = len(list)
         }
 
+        hashrate := 0.0
+        if runner, ok := e.runners[symbol]; ok {
+            hashrate = runner.Hashrate()
+            e.stats.UpdateMaxPoolHashrate(symbol, hashrate)
+            totalHashrate += hashrate
+        }
+
         coins = append(coins, map[string]interface{}{
             "symbol":        symbol,
             "workers":       workers,
-            "hashrate":      0,
+            "hashrate":        hashrate,
             "sync_progress": stats.SyncProgress,
+			"max_pool_hashrate": stats.MaxPoolHashrate,
         })
 
         seen[symbol] = true

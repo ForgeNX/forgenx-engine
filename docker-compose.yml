@@ -1,6 +1,6 @@
 services:
   engine:
-    image: gostratumengine-test
+    image: forgenx-engine:latest
     container_name: engine
     restart: unless-stopped
 
