@@ -256,13 +256,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
-						// Block assembly/submission requires the full transaction set from
-						// the originating template (template.Transactions). That set isn't
-						// threaded through JobTemplate today — wire this in a follow-up
-						// patch (submitSV2Block) before relying on SV2 to find real blocks.
-						// Until then this is a CONNECTIVITY-ONLY deployment: shares are
-						// validated and accepted correctly, but a found block will be
-						// logged, not submitted.
+						submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, symbol)
 					}
 				},
 			}
@@ -543,6 +537,66 @@ func loadOrGenerateAuthorityKey(symbol string) (*stratumv2.AuthorityKeypair, err
 		return nil, fmt.Errorf("save sv2 authority keypair to %s: %w", keyPath, err)
 	}
 	return kp, nil
+}
+
+// submitSV2Block assembles and submits a solved block found via an SV2
+// share, mirroring sharevalidator.go's proven V1 block-assembly path:
+// BuildHeader -> coin.BuildBlock() -> rpcClient.SubmitBlock(). No new
+// block-serialization logic — reuses the same coin.Coin interface method
+// V1 already uses, just fed from SV2's data shapes (stratumv2.JobTemplate /
+// Channel / share fields) instead of V1's.
+func submitSV2Block(
+	runner *CoinRunner,
+	c coin.Coin,
+	rpcClient *noderpc.Client,
+	jobMgr *JobManager,
+	job *stratumv2.JobTemplate,
+	ch *stratumv2.Channel,
+	share *stratumv2.MsgSubmitSharesStandardFields,
+	symbol string,
+) {
+	// Resolve this channel's own coinbase (solo mode) or fall back to the
+	// template's shared coinbase (pool mode) — same precedence rule
+	// session.go's channelMerkleRoot() uses, kept consistent here so the
+	// block we submit pays out to the same address the channel mined for.
+	coinb1, coinb2 := job.Coinbase1, job.Coinbase2
+	if oc1, oc2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = oc1, oc2
+	}
+
+	coinbaseTx := make([]byte, 0, len(coinb1)+4+len(coinb2))
+	coinbaseTx = append(coinbaseTx, coinb1...)
+	coinbaseTx = append(coinbaseTx, ch.Extranonce1Bytes()...)
+	coinbaseTx = append(coinbaseTx, coinb2...)
+
+	coinbaseHash := stratumv2.CoinbaseHashForTemplate(coinb1, ch.Extranonce1Bytes(), nil, coinb2)
+	merkleRoot := stratumv2.ComputeMerkleRoot(coinbaseHash, job.MerkleBranch)
+
+	header := stratumv2.BuildHeader(share.Version, job.PrevHash, merkleRoot, share.NTime, job.NBits, share.Nonce)
+
+	// The coin's BuildBlock needs the ORIGINAL *noderpc.BlockTemplate
+	// (for its full Transactions list) — not stratumv2.JobTemplate,
+	// which intentionally doesn't carry that. Fetch it fresh from the
+	// JobManager rather than threading it through every SV2 call site.
+	template := jobMgr.LatestTemplate()
+	if template == nil {
+		runner.logger.Error("[%s] SV2 block submission: no template available", symbol)
+		return
+	}
+
+	blockHex, err := c.BuildBlock(header[:], coinbaseTx, template)
+	if err != nil {
+		runner.logger.Error("[%s] SV2 building block: %v", symbol, err)
+		return
+	}
+
+	if err := rpcClient.SubmitBlock(blockHex); err != nil {
+		runner.logger.Error("[%s] SV2 submitting block: %v", symbol, err)
+		return
+	}
+
+	runner.logger.Info("[%s] *** SV2 BLOCK SUBMITTED *** height=%d worker=%q",
+		symbol, job.Height, ch.UserIdentity())
 }
 
 func (r *CoinRunner) Hashrate() float64 {
