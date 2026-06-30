@@ -62,7 +62,8 @@ type MsgSetupConnectionFields struct {
 	MinVersion      uint16
 	MaxVersion      uint16
 	Flags           uint32
-	Endpoint        string // STR0_255 "host:port" the miner is connecting to
+	EndpointHost    string // STR0_255 — ASCII hostname or IP the client is connecting to
+	EndpointPort    uint16 // connecting port value
 	Vendor          string // STR0_255
 	HardwareVersion string // STR0_255
 	Firmware        string // STR0_255
@@ -70,9 +71,15 @@ type MsgSetupConnectionFields struct {
 }
 
 // DecodeSetupConnection parses a SetupConnection payload.
+//
+// Wire order per sv2-spec 03-Protocol-Overview.md §3.6.1:
+//
+//	protocol(1) + min_version(2) + max_version(2) + flags(4) +
+//	endpoint_host(STR0_255) + endpoint_port(2) +
+//	vendor(STR0_255) + hardware_version(STR0_255) + firmware(STR0_255) + device_id(STR0_255)
 func DecodeSetupConnection(payload []byte) (*MsgSetupConnectionFields, error) {
-	if len(payload) < 8 {
-		return nil, errShort("SetupConnection", len(payload), 8)
+	if len(payload) < 9 {
+		return nil, errShort("SetupConnection", len(payload), 9)
 	}
 	m := &MsgSetupConnectionFields{}
 	m.Protocol = Protocol(payload[0])
@@ -84,10 +91,16 @@ func DecodeSetupConnection(payload []byte) (*MsgSetupConnectionFields, error) {
 	var consumed int
 	var err error
 
-	if m.Endpoint, consumed, err = decodeSTR0_255(payload, offset); err != nil {
+	if m.EndpointHost, consumed, err = decodeSTR0_255(payload, offset); err != nil {
 		return nil, err
 	}
 	offset += consumed
+
+	if offset+2 > len(payload) {
+		return nil, errShort("SetupConnection endpoint_port", len(payload), offset+2)
+	}
+	m.EndpointPort = getU16LE(payload, offset)
+	offset += 2
 
 	if m.Vendor, consumed, err = decodeSTR0_255(payload, offset); err != nil {
 		return nil, err
