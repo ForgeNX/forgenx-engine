@@ -93,12 +93,13 @@ type Session struct {
 	once    sync.Once
 }
 
-// newSession wraps an already-handshaked conn in a Session.
-func newSession(conn net.Conn, onShare shareSubmitCallback, coinbaseBuilder CoinbaseBuilderFunc) *Session {
+// newSession wraps an already-handshaked conn, plus its transport-phase
+// ciphers, in a Session.
+func newSession(conn net.Conn, send, recv *sv2TransportCipher, onShare shareSubmitCallback, coinbaseBuilder CoinbaseBuilderFunc) *Session {
 	return &Session{
 		id:              conn.RemoteAddr().String(),
 		conn:            conn,
-		codec:           NewCodec(conn),
+		codec:           NewCodec(conn, send, recv),
 		channels:        make(map[uint32]*Channel),
 		onShare:         onShare,
 		coinbaseBuilder: coinbaseBuilder,

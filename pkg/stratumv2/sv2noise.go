@@ -378,78 +378,6 @@ func (c *sv2TransportCipher) open(ciphertext []byte) ([]byte, error) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// sv2NoiseConn — net.Conn wrapper using the transport-phase ciphers.
-//
-// SV2 framing for ENCRYPTED messages: a 2-byte LE length prefix per the spec's
-// NOISE_FRAME_HEADER_SIZE, followed by that many ciphertext bytes (which
-// includes the 16-byte AEAD tag).
-// ──────────────────────────────────────────────────────────────────────────────
-
-type sv2NoiseConn struct {
-	conn net.Conn
-	send *sv2TransportCipher // encrypts our outgoing messages (c2 on responder side)
-	recv *sv2TransportCipher // decrypts incoming messages (c1 on responder side)
-	buf  []byte
-}
-
-const sv2NoiseFrameMaxPayload = 65519 // leaves room for the 16-byte tag within a uint16 ciphertext length
-
-func (c *sv2NoiseConn) Write(plaintext []byte) (int, error) {
-	total := 0
-	for len(plaintext) > 0 {
-		chunk := plaintext
-		if len(chunk) > sv2NoiseFrameMaxPayload {
-			chunk = plaintext[:sv2NoiseFrameMaxPayload]
-		}
-		ct := c.send.seal(chunk)
-		var hdr [2]byte
-		binary.LittleEndian.PutUint16(hdr[:], uint16(len(ct)))
-		if _, err := c.conn.Write(hdr[:]); err != nil {
-			return total, err
-		}
-		if _, err := c.conn.Write(ct); err != nil {
-			return total, err
-		}
-		total += len(chunk)
-		plaintext = plaintext[len(chunk):]
-	}
-	return total, nil
-}
-
-func (c *sv2NoiseConn) Read(p []byte) (int, error) {
-	if len(c.buf) > 0 {
-		n := copy(p, c.buf)
-		c.buf = c.buf[n:]
-		return n, nil
-	}
-	var hdr [2]byte
-	if _, err := io.ReadFull(c.conn, hdr[:]); err != nil {
-		return 0, err
-	}
-	ctLen := binary.LittleEndian.Uint16(hdr[:])
-	ct := make([]byte, ctLen)
-	if _, err := io.ReadFull(c.conn, ct); err != nil {
-		return 0, err
-	}
-	plaintext, err := c.recv.open(ct)
-	if err != nil {
-		return 0, err
-	}
-	n := copy(p, plaintext)
-	if n < len(plaintext) {
-		c.buf = plaintext[n:]
-	}
-	return n, nil
-}
-
-func (c *sv2NoiseConn) Close() error                       { return c.conn.Close() }
-func (c *sv2NoiseConn) LocalAddr() net.Addr                { return c.conn.LocalAddr() }
-func (c *sv2NoiseConn) RemoteAddr() net.Addr               { return c.conn.RemoteAddr() }
-func (c *sv2NoiseConn) SetDeadline(t time.Time) error      { return c.conn.SetDeadline(t) }
-func (c *sv2NoiseConn) SetReadDeadline(t time.Time) error  { return c.conn.SetReadDeadline(t) }
-func (c *sv2NoiseConn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
-
-// ──────────────────────────────────────────────────────────────────────────────
 // PerformSV2ServerHandshake — the real, spec-correct SV2 responder handshake.
 //
 // Single round trip:
@@ -466,10 +394,17 @@ func (c *sv2NoiseConn) SetWriteDeadline(t time.Time) error { return c.conn.SetWr
 // server identity; clients without one (like the Bitaxe today) skip
 // verification but still require a syntactically valid signed certificate to
 // parse the response correctly.
-func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *AuthorityKeypair) (net.Conn, error) {
+//
+// Returns the two transport-phase ciphers directly (NOT a wrapped net.Conn —
+// see codec.go's header comment for why: SV2's encrypted wire framing has no
+// length prefix, so the message codec must hold the ciphers itself to know
+// how many bytes to read at each step). Pass these to NewCodec along with
+// the original (still-plaintext-at-the-TCP-level, but now post-handshake)
+// conn to build a working Codec for the transport phase.
+func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *AuthorityKeypair) (send, recv *sv2TransportCipher, err error) {
 	deadline := time.Now().Add(handshakeTimeoutSeconds * time.Second)
 	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer conn.SetDeadline(time.Time{})
 
@@ -478,7 +413,7 @@ func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *A
 	// ── Receive: <- e (64-byte EllSwift ephemeral pubkey from initiator) ─────
 	var theirEphemeral [ellswiftEncodingSize]byte
 	if _, err := io.ReadFull(conn, theirEphemeral[:]); err != nil {
-		return nil, fmt.Errorf("sv2 handshake: read initiator ephemeral: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: read initiator ephemeral: %w", err)
 	}
 
 	// Step 4.5.1.2 (Responder): MixHash(e.public_key), then DecryptAndHash([])
@@ -486,13 +421,13 @@ func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *A
 	// protocol still requires this hash-advancing call.
 	hs.mixHash(theirEphemeral[:])
 	if _, err := hs.decryptAndHash(nil); err != nil {
-		return nil, fmt.Errorf("sv2 handshake: decrypt_and_hash(empty): %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: decrypt_and_hash(empty): %w", err)
 	}
 
 	// ── Generate our own ephemeral keypair for this handshake ────────────────
 	ourEphemeralPriv, ourEphemeralEllSwift, err := ellswift.EllswiftCreate()
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: generate ephemeral: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: generate ephemeral: %w", err)
 	}
 
 	// Step 4.5.2.1 (Responder): append e.public_key (ElligatorSwift, 64 bytes)
@@ -506,31 +441,31 @@ func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *A
 	// Uses the real BIP-324 tagged-hash shared secret, NOT a raw X-coordinate.
 	eeShared, err := bip324EllswiftXDH(theirEphemeral, ourEphemeralEllSwift, ourEphemeralPriv)
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: ee ECDH: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: ee ECDH: %w", err)
 	}
 	if err := hs.mixKey(eeShared[:]); err != nil {
-		return nil, fmt.Errorf("sv2 handshake: mixKey(ee): %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: mixKey(ee): %w", err)
 	}
 
 	// Step 5: append EncryptAndHash(s.public_key) — our STATIC key, EllSwift-
 	// encoded (64B), encrypted (+16B MAC) = 80 bytes total.
 	_, ourStaticEllSwift, err := staticKP.ellswiftKeyMaterial()
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: static ellswift material: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: static ellswift material: %w", err)
 	}
 	encStaticPub, err := hs.encryptAndHash(ourStaticEllSwift[:])
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: encrypt static pubkey: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: encrypt static pubkey: %w", err)
 	}
 	out = append(out, encStaticPub...)
 
 	// Step 6: MixKey(ECDH(s.private_key, re.public_key)) — static-ephemeral DH.
 	esShared, err := bip324EllswiftXDH(theirEphemeral, ourStaticEllSwift, staticKP.priv)
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: es ECDH: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: es ECDH: %w", err)
 	}
 	if err := hs.mixKey(esShared[:]); err != nil {
-		return nil, fmt.Errorf("sv2 handshake: mixKey(es): %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: mixKey(es): %w", err)
 	}
 
 	// Step 7: append EncryptAndHash(SIGNATURE_NOISE_MESSAGE) — 74B cert + 16B MAC = 90 bytes.
@@ -538,21 +473,21 @@ func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *A
 	const certValiditySeconds = 60 * 60 * 24 // 24h, matches GSS's default cert validity
 	sigMsg, err := buildSignatureNoiseMessage(authKP, staticKP.xOnlyPubKeyBytes(), now, now+certValiditySeconds)
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: build certificate: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: build certificate: %w", err)
 	}
 	encSig, err := hs.encryptAndHash(sigMsg[:])
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: encrypt certificate: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: encrypt certificate: %w", err)
 	}
 	out = append(out, encSig...)
 
 	if len(out) != initiatorExpectedHandshakeMsgSize {
-		return nil, fmt.Errorf("sv2 handshake: internal error, response size %d != expected %d",
+		return nil, nil, fmt.Errorf("sv2 handshake: internal error, response size %d != expected %d",
 			len(out), initiatorExpectedHandshakeMsgSize)
 	}
 
 	if _, err := conn.Write(out); err != nil {
-		return nil, fmt.Errorf("sv2 handshake: send response: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: send response: %w", err)
 	}
 
 	// Step 9: derive transport ciphers. (temp_k1, temp_k2) = hkdf_2(ck, []).
@@ -561,16 +496,12 @@ func PerformSV2ServerHandshake(conn net.Conn, staticKP *StaticKeypair, authKP *A
 	tempK1, tempK2 := hkdf2(hs.ck, nil)
 	recvCipher, err := newSV2TransportCipher(tempK1)
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: init recv transport cipher: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: init recv transport cipher: %w", err)
 	}
 	sendCipher, err := newSV2TransportCipher(tempK2)
 	if err != nil {
-		return nil, fmt.Errorf("sv2 handshake: init send transport cipher: %w", err)
+		return nil, nil, fmt.Errorf("sv2 handshake: init send transport cipher: %w", err)
 	}
 
-	return &sv2NoiseConn{
-		conn: conn,
-		send: sendCipher,
-		recv: recvCipher,
-	}, nil
+	return sendCipher, recvCipher, nil
 }

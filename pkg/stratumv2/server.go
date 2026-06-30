@@ -178,14 +178,19 @@ func (srv *Server) handleConn(conn net.Conn) {
 	log.Printf("[sv2-%s] new connection from %s", srv.cfg.CoinTicker, remote)
 
 	// SV2 Noise_NX handshake (secp256k1 + EllSwift DH, single round trip).
-	encConn, err := PerformSV2ServerHandshake(conn, srv.cfg.StaticKeypair, srv.cfg.AuthorityKeypair)
+	// Returns the two transport-phase ciphers directly — the raw conn stays
+	// the raw conn; encryption is handled by Codec, not a wrapped net.Conn
+	// (SV2's encrypted wire framing has no length prefix, so the codec needs
+	// direct cipher access — see codec.go's header comment for the full
+	// rationale).
+	sendCipher, recvCipher, err := PerformSV2ServerHandshake(conn, srv.cfg.StaticKeypair, srv.cfg.AuthorityKeypair)
 	if err != nil {
 		log.Printf("[sv2-%s] handshake failed from %s: %v", srv.cfg.CoinTicker, remote, err)
 		conn.Close()
 		return
 	}
 
-	sess := newSession(encConn, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder)
+	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess

@@ -8,7 +8,7 @@ import (
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
-// SV2 Binary Frame Format
+// SV2 Binary Frame Format (plaintext, as seen after decryption)
 //
 //  0        1        2        3        4        5        6
 //  ┌────────┬────────┬────────┬────────┬────────┬────────┬──────────────────┐
@@ -26,6 +26,29 @@ import (
 // Total header size: 6 bytes.
 // Maximum payload:   16,777,215 bytes (2^24 - 1). In practice messages are
 //                    small (< 256 bytes for most control messages).
+//
+// ──────────────────────────────────────────────────────────────────────────────
+// ENCRYPTED wire format (post-handshake, transport phase)
+//
+// Ported from sv2/codec-sv2/src/{encoder,decoder}.rs and
+// sv2/framing-sv2/src/header.rs. CRITICAL: there is NO explicit length
+// prefix on the wire for encrypted frames — sizes are derived from fixed
+// constants and the decrypted header's length field:
+//
+//   1. Read exactly ENCRYPTED_SV2_FRAME_HEADER_SIZE (22 = 6 + 16 MAC) bytes.
+//      AEAD-decrypt them (one AEAD call) to get the plaintext 6-byte header.
+//   2. From the decrypted header's msg_length, compute encrypted_len:
+//        payloadPerChunk = SV2_FRAME_CHUNK_SIZE(65535) - AEAD_MAC_LEN(16) = 65519
+//        chunks = ceil(msg_length / payloadPerChunk)
+//        encrypted_len = msg_length + chunks*16
+//   3. Read exactly encrypted_len more bytes, and AEAD-decrypt them in
+//      sequence in chunks of up to SV2_FRAME_CHUNK_SIZE ciphertext bytes
+//      each (the last chunk may be shorter) — each chunk is a SEPARATE AEAD
+//      call advancing the cipher's nonce by one.
+//
+// Writing mirrors this: encrypt the 6-byte header alone as one AEAD frame,
+// then encrypt the payload in chunks of up to (65535-16)=65519 plaintext
+// bytes each, each chunk becoming its own AEAD-sealed wire segment.
 // ──────────────────────────────────────────────────────────────────────────────
 
 const (
@@ -37,6 +60,11 @@ const (
 
 	// ExtensionTypeMining is the extension_type for the Mining Protocol.
 	ExtensionTypeMining uint16 = 0x0000
+
+	// sv2FrameChunkSize and encryptedFrameHeaderSize per framing-sv2/src/lib.rs.
+	sv2FrameChunkSize        = 65535
+	encryptedFrameHeaderSize = frameHeaderLen + aeadMACLen    // 22
+	payloadPerChunk          = sv2FrameChunkSize - aeadMACLen // 65519
 )
 
 // Frame is a decoded SV2 frame ready for message parsing.
@@ -46,42 +74,88 @@ type Frame struct {
 	Payload       []byte
 }
 
-// Codec handles reading and writing SV2 binary frames over a net.Conn.
-// The conn is expected to already be a Noise-encrypted connection after
-// the handshake, but Codec works over any net.Conn.
+// Codec handles reading and writing SV2 binary frames.
+//
+// Pre-handshake (handshake bytes only): Codec is unused — the handshake is
+// handled entirely by PerformSV2ServerHandshake in sv2noise.go, operating
+// directly on the raw net.Conn.
+//
+// Post-handshake (transport phase): Codec wraps the raw net.Conn PLUS the
+// two transport-phase AEAD ciphers, and implements the real chunked,
+// length-prefix-free encrypted framing described above. This requires
+// direct cipher access (not just an opaque net.Conn) because decrypting the
+// header is what reveals how many more bytes to read for the payload.
 type Codec struct {
 	conn net.Conn
+	send *sv2TransportCipher // encrypts frames we write (nil = read-only/no transport keys)
+	recv *sv2TransportCipher // decrypts frames we read (nil = write-only/no transport keys)
 }
 
-// NewCodec wraps conn in a SV2 frame codec.
-func NewCodec(conn net.Conn) *Codec {
-	return &Codec{conn: conn}
+// NewCodec wraps conn in a SV2 frame codec with the given transport-phase
+// ciphers. send/recv come from PerformSV2ServerHandshake's return value.
+func NewCodec(conn net.Conn, send, recv *sv2TransportCipher) *Codec {
+	return &Codec{conn: conn, send: send, recv: recv}
 }
 
-// ReadFrame reads exactly one SV2 frame from the connection.
+// ReadFrame reads, decrypts, and decodes exactly one SV2 frame.
 // It blocks until a complete frame is available or an error occurs.
 func (c *Codec) ReadFrame() (*Frame, error) {
-	// Read the 6-byte header.
-	hdr := make([]byte, frameHeaderLen)
-	if _, err := io.ReadFull(c.conn, hdr); err != nil {
-		return nil, fmt.Errorf("sv2 read header: %w", err)
+	if c.recv == nil {
+		return nil, fmt.Errorf("sv2 codec: no recv cipher configured")
+	}
+
+	// Step 1: read + decrypt the fixed-size encrypted header (22 bytes).
+	encHdr := make([]byte, encryptedFrameHeaderSize)
+	if _, err := io.ReadFull(c.conn, encHdr); err != nil {
+		return nil, fmt.Errorf("sv2 read encrypted header: %w", err)
+	}
+	hdr, err := c.recv.open(encHdr)
+	if err != nil {
+		return nil, fmt.Errorf("sv2 decrypt header: %w", err)
+	}
+	if len(hdr) != frameHeaderLen {
+		return nil, fmt.Errorf("sv2 decrypted header: expected %d bytes, got %d", frameHeaderLen, len(hdr))
 	}
 
 	extType := binary.LittleEndian.Uint16(hdr[0:2])
 	msgType := hdr[2]
-
-	// msg_length is a 24-bit LE value across bytes 3-5.
 	payLen := uint32(hdr[3]) | uint32(hdr[4])<<8 | uint32(hdr[5])<<16
 
 	if payLen > MaxFramePayload {
 		return nil, fmt.Errorf("sv2 frame payload too large: %d bytes", payLen)
 	}
 
-	payload := make([]byte, payLen)
-	if payLen > 0 {
-		if _, err := io.ReadFull(c.conn, payload); err != nil {
-			return nil, fmt.Errorf("sv2 read payload: %w", err)
+	if payLen == 0 {
+		return &Frame{ExtensionType: extType, MsgType: msgType, Payload: nil}, nil
+	}
+
+	// Step 2: compute encrypted_len (payload + one 16-byte MAC per chunk),
+	// then read and decrypt that many bytes in chunks.
+	chunks := (int(payLen) + payloadPerChunk - 1) / payloadPerChunk
+	encryptedLen := int(payLen) + chunks*aeadMACLen
+
+	encPayload := make([]byte, encryptedLen)
+	if _, err := io.ReadFull(c.conn, encPayload); err != nil {
+		return nil, fmt.Errorf("sv2 read encrypted payload: %w", err)
+	}
+
+	payload := make([]byte, 0, payLen)
+	start := 0
+	for start < len(encPayload) {
+		end := start + sv2FrameChunkSize
+		if end > len(encPayload) {
+			end = len(encPayload)
 		}
+		chunkPlain, err := c.recv.open(encPayload[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("sv2 decrypt payload chunk: %w", err)
+		}
+		payload = append(payload, chunkPlain...)
+		start = end
+	}
+
+	if len(payload) != int(payLen) {
+		return nil, fmt.Errorf("sv2 decrypted payload: expected %d bytes, got %d", payLen, len(payload))
 	}
 
 	return &Frame{
@@ -91,9 +165,12 @@ func (c *Codec) ReadFrame() (*Frame, error) {
 	}, nil
 }
 
-// WriteFrame encodes and sends a SV2 frame.
+// WriteFrame encodes, encrypts, and sends a SV2 frame.
 // extType should be ExtensionTypeMining (0) for all standard mining messages.
 func (c *Codec) WriteFrame(extType uint16, msgType uint8, payload []byte) error {
+	if c.send == nil {
+		return fmt.Errorf("sv2 codec: no send cipher configured")
+	}
 	if len(payload) > MaxFramePayload {
 		return fmt.Errorf("sv2 write: payload %d bytes exceeds 24-bit limit", len(payload))
 	}
@@ -102,19 +179,33 @@ func (c *Codec) WriteFrame(extType uint16, msgType uint8, payload []byte) error 
 	binary.LittleEndian.PutUint16(hdr[0:2], extType)
 	hdr[2] = msgType
 
-	// Encode payload length as 24-bit LE.
 	payLen := len(payload)
 	hdr[3] = byte(payLen)
 	hdr[4] = byte(payLen >> 8)
 	hdr[5] = byte(payLen >> 16)
 
-	// Write header + payload as a single syscall to minimise fragmentation.
-	pkt := make([]byte, frameHeaderLen+len(payload))
-	copy(pkt, hdr)
-	copy(pkt[frameHeaderLen:], payload)
+	// Step 1: encrypt and send the 6-byte header as its own AEAD frame.
+	encHdr := c.send.seal(hdr)
+	if _, err := c.conn.Write(encHdr); err != nil {
+		return fmt.Errorf("sv2 write encrypted header: %w", err)
+	}
 
-	_, err := c.conn.Write(pkt)
-	return err
+	// Step 2: encrypt and send the payload in chunks of up to 65519 plaintext
+	// bytes each, writing each chunk's ciphertext immediately.
+	start := 0
+	for start < len(payload) {
+		end := start + payloadPerChunk
+		if end > len(payload) {
+			end = len(payload)
+		}
+		encChunk := c.send.seal(payload[start:end])
+		if _, err := c.conn.Write(encChunk); err != nil {
+			return fmt.Errorf("sv2 write encrypted payload chunk: %w", err)
+		}
+		start = end
+	}
+
+	return nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

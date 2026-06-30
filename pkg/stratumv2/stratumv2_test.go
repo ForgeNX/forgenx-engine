@@ -2,6 +2,7 @@ package stratumv2
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 	"net"
 	"testing"
@@ -9,27 +10,49 @@ import (
 
 // ──────────────────────────────────────────────────────────────────────────────
 // codec_test
+//
+// Tests exercise the REAL encrypted SV2 wire framing (header-then-chunked-
+// payload, no length prefix — see codec.go's header comment). Each test
+// builds two Codecs sharing a net.Pipe(), with cipher keys cross-wired so
+// side A's send cipher matches side B's recv cipher and vice versa — exactly
+// how PerformSV2ServerHandshake's (send, recv) pair works in practice.
 // ──────────────────────────────────────────────────────────────────────────────
 
-// fakeConn is a net.Conn backed by a bytes.Buffer for testing.
-type fakeConn struct {
-	net.Conn
-	buf *bytes.Buffer
-}
+// newTestCodecPair builds two Codecs over a connected net.Pipe(), with
+// matching transport ciphers so each side can decrypt what the other sends.
+func newTestCodecPair(t *testing.T) (*Codec, *Codec) {
+	t.Helper()
 
-func newFakeConn() (*fakeConn, *fakeConn) {
-	// Two connected fake conns sharing a pipe.
-	r, w := net.Pipe()
-	_ = r
-	_ = w
-	// Use net.Pipe() for real bidirectional testing.
-	return &fakeConn{Conn: r}, &fakeConn{Conn: w}
+	connA, connB := net.Pipe()
+
+	var keyAtoB, keyBtoA [32]byte
+	keyAtoB[0] = 0x01 // distinct keys per direction, matching real handshake behavior
+	keyBtoA[0] = 0x02
+
+	aSend, err := newSV2TransportCipher(keyAtoB)
+	if err != nil {
+		t.Fatalf("newSV2TransportCipher aSend: %v", err)
+	}
+	aRecv, err := newSV2TransportCipher(keyBtoA)
+	if err != nil {
+		t.Fatalf("newSV2TransportCipher aRecv: %v", err)
+	}
+	bSend, err := newSV2TransportCipher(keyBtoA)
+	if err != nil {
+		t.Fatalf("newSV2TransportCipher bSend: %v", err)
+	}
+	bRecv, err := newSV2TransportCipher(keyAtoB)
+	if err != nil {
+		t.Fatalf("newSV2TransportCipher bRecv: %v", err)
+	}
+
+	ca := NewCodec(connA, aSend, aRecv)
+	cb := NewCodec(connB, bSend, bRecv)
+	return ca, cb
 }
 
 func TestCodecRoundtrip(t *testing.T) {
-	a, b := newFakeConn()
-	ca := NewCodec(a)
-	cb := NewCodec(b)
+	ca, cb := newTestCodecPair(t)
 
 	payload := []byte("hello sv2")
 	done := make(chan error, 1)
@@ -59,9 +82,7 @@ func TestCodecRoundtrip(t *testing.T) {
 }
 
 func TestCodecEmptyPayload(t *testing.T) {
-	a, b := newFakeConn()
-	ca := NewCodec(a)
-	cb := NewCodec(b)
+	ca, cb := newTestCodecPair(t)
 
 	done := make(chan error, 1)
 	go func() {
@@ -77,6 +98,40 @@ func TestCodecEmptyPayload(t *testing.T) {
 	}()
 
 	if err := ca.WriteFrame(ExtensionTypeMining, MsgSetupConnectionSuccess, nil); err != nil {
+		t.Fatalf("WriteFrame: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("ReadFrame: %v", err)
+	}
+}
+
+// TestCodecMultiChunkPayload exercises the chunking logic (payloadPerChunk =
+// 65519 bytes) with a payload large enough to require two chunks — the exact
+// edge case that the original framing bug (no chunking at all) would have
+// silently mishandled.
+func TestCodecMultiChunkPayload(t *testing.T) {
+	ca, cb := newTestCodecPair(t)
+
+	payload := make([]byte, payloadPerChunk+1000) // forces exactly 2 chunks
+	for i := range payload {
+		payload[i] = byte(i % 256)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		frame, err := cb.ReadFrame()
+		if err != nil {
+			done <- err
+			return
+		}
+		if !bytes.Equal(frame.Payload, payload) {
+			done <- fmt.Errorf("payload mismatch: got %d bytes, want %d bytes", len(frame.Payload), len(payload))
+			return
+		}
+		done <- nil
+	}()
+
+	if err := ca.WriteFrame(ExtensionTypeMining, MsgNewMiningJob, payload); err != nil {
 		t.Fatalf("WriteFrame: %v", err)
 	}
 	if err := <-done; err != nil {
