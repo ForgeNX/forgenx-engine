@@ -84,20 +84,25 @@ type Session struct {
 	// Callback to the engine when a share / block solution is found.
 	onShare shareSubmitCallback
 
+	// Solo-mode coinbase builder. Nil in pool mode — channels then use the
+	// template's shared Coinbase1/Coinbase2 unmodified.
+	coinbaseBuilder CoinbaseBuilderFunc
+
 	// Signals
 	closeCh chan struct{}
 	once    sync.Once
 }
 
 // newSession wraps an already-handshaked conn in a Session.
-func newSession(conn net.Conn, onShare shareSubmitCallback) *Session {
+func newSession(conn net.Conn, onShare shareSubmitCallback, coinbaseBuilder CoinbaseBuilderFunc) *Session {
 	return &Session{
-		id:       conn.RemoteAddr().String(),
-		conn:     conn,
-		codec:    NewCodec(conn),
-		channels: make(map[uint32]*Channel),
-		onShare:  onShare,
-		closeCh:  make(chan struct{}),
+		id:              conn.RemoteAddr().String(),
+		conn:            conn,
+		codec:           NewCodec(conn),
+		channels:        make(map[uint32]*Channel),
+		onShare:         onShare,
+		coinbaseBuilder: coinbaseBuilder,
+		closeCh:         make(chan struct{}),
 	}
 }
 
@@ -226,6 +231,21 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	log.Printf("[sv2] session %s: opened channel %d for worker %q (hashrate=%.2f GH/s)",
 		s.id, ch.ID(), req.UserIdentity, float64(req.NominalHashrate)/1e9)
 
+	// Solo mode: build this channel's own coinbase paying out to its
+	// UserIdentity address. Errors are logged but non-fatal — the channel
+	// falls back to the template's shared coinbase (which in solo mode is
+	// the pool's fallback address) until a template update succeeds in
+	// building this channel's coinbase.
+	if s.coinbaseBuilder != nil {
+		cb1, cb2, err := s.coinbaseBuilder(req.UserIdentity)
+		if err != nil {
+			log.Printf("[sv2] session %s ch=%d: coinbase build failed for %q: %v",
+				s.id, ch.ID(), req.UserIdentity, err)
+		} else {
+			ch.SetOwnCoinbase(cb1, cb2)
+		}
+	}
+
 	// Send OpenStandardMiningChannel.Success.
 	resp, err := EncodeOpenStandardMiningChannelSuccess(
 		req.RequestID,
@@ -301,11 +321,19 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	en2[2] = byte(share.SequenceNum >> 16)
 	en2[3] = byte(share.SequenceNum >> 24)
 
+	// Solo mode: validate against THIS channel's own coinbase, not the
+	// template's shared one — otherwise we'd validate (and potentially
+	// submit) a block paying out to the wrong address.
+	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
+	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = ownCb1, ownCb2
+	}
+
 	coinbaseTxHash := HashCoinbaseTx(
-		tmpl.Coinbase1,
+		coinb1,
 		ch.Extranonce1Bytes(),
 		en2[:],
-		tmpl.Coinbase2,
+		coinb2,
 	)
 	merkleRoot := ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
 
@@ -367,6 +395,23 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 		if ch.IsClosed() {
 			continue
 		}
+
+		// Solo mode: refresh this channel's own coinbase against the new
+		// template BEFORE dispatching the job. The new block height/fees
+		// invalidate any previously-built coinbase.
+		if s.coinbaseBuilder != nil {
+			cb1, cb2, err := s.coinbaseBuilder(ch.UserIdentity())
+			if err != nil {
+				log.Printf("[sv2] session %s ch=%d: coinbase refresh failed: %v", s.id, ch.ID(), err)
+				// Keep the previous coinbase rather than falling back to the
+				// shared template coinbase — mining with a stale-but-valid
+				// coinbase for one extra job is safer than silently paying
+				// out to the wrong address.
+			} else {
+				ch.SetOwnCoinbase(cb1, cb2)
+			}
+		}
+
 		// SetNewPrevHash first, then NewMiningJob.
 		if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
 			log.Printf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
@@ -393,6 +438,12 @@ func (s *Session) sendPrevHashToChannel(ch *Channel, tmpl *JobTemplate) error {
 // sendJobToChannel sends NewMiningJob to a single channel and records the job ID.
 func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 	ch.SetCurrentJob(tmpl.JobID)
+
+	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
+	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = ownCb1, ownCb2
+	}
+
 	payload := EncodeNewMiningJob(
 		ch.ID(),
 		tmpl.JobID,
@@ -400,8 +451,8 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 		tmpl.Version,
 		VersionRollingMask,
 		tmpl.MerkleBranch,
-		tmpl.Coinbase1,
-		tmpl.Coinbase2,
+		coinb1,
+		coinb2,
 	)
 	return s.codec.WriteFrame(ExtensionTypeMining, MsgNewMiningJob, payload)
 }

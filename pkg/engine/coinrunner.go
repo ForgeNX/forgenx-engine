@@ -10,17 +10,20 @@
 package engine
 
 import (
-	_ "embed"
-	"fmt"
-	"strings"
-	"time"
+        _ "embed"
+        "encoding/hex"
+        "fmt"
+        "os"
+        "strings"
+        "time"
 
-	"github.com/ForgeNX/forgenx-engine/pkg/coin"
-	"github.com/ForgeNX/forgenx-engine/pkg/config"
-	"github.com/ForgeNX/forgenx-engine/pkg/logging"
-	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
-	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
-	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
+        "github.com/ForgeNX/forgenx-engine/pkg/coin"
+        "github.com/ForgeNX/forgenx-engine/pkg/config"
+        "github.com/ForgeNX/forgenx-engine/pkg/logging"
+        "github.com/ForgeNX/forgenx-engine/pkg/metrics"
+        "github.com/ForgeNX/forgenx-engine/pkg/noderpc"
+        "github.com/ForgeNX/forgenx-engine/pkg/stratum"
+        "github.com/ForgeNX/forgenx-engine/pkg/stratumv2"
 )
 
 //go:embed AUTHORS
@@ -33,19 +36,20 @@ type shareWork struct {
 
 // CoinRunner manages the complete mining pipeline for a single coin.
 type CoinRunner struct {
-	symbol          string
-	coin            coin.Coin
-	rpcClient       *noderpc.Client
-	jobMgr          *JobManager
-	validator       *ShareValidator
-	server          *stratum.Server
-	zmqSub          *noderpc.ZMQSubscriber
-	stats           *metrics.Stats
-	logger          *logging.Logger
+        symbol          string
+        coin            coin.Coin
+        rpcClient       *noderpc.Client
+        jobMgr          *JobManager
+        validator       *ShareValidator
+        server          *stratum.Server
+        sv2Server       *stratumv2.Server
+        zmqSub          *noderpc.ZMQSubscriber
+        stats           *metrics.Stats
+        logger          *logging.Logger
         acceptedShares  int64
         totalDifficulty float64
         startTime       time.Time
-	recentShares 	[]shareWork
+        recentShares    []shareWork
 }
 
 // NewCoinRunner creates and wires up all components for a single coin.
@@ -223,14 +227,137 @@ stats.InitCoin(symbol)
 		}
 	}
 
-	// Set up ZMQ if enabled
-	if cfg.Node.ZMQEnabled && cfg.Node.ZMQHashBlock != "" {
-		runner.zmqSub = noderpc.NewZMQSubscriber(cfg.Node.ZMQHashBlock, func(blockHash string) {
-			jobMgr.OnBlockNotification(blockHash)
-		})
-	}
+        // Set up ZMQ if enabled
+        if cfg.Node.ZMQEnabled && cfg.Node.ZMQHashBlock != "" {
+                runner.zmqSub = noderpc.NewZMQSubscriber(cfg.Node.ZMQHashBlock, func(blockHash string) {
+                        jobMgr.OnBlockNotification(blockHash)
+                })
+        }
 
-	return runner, nil
+        // Set up SV2 server (port = V1 port + 1, e.g. 3334 -> 3335)
+        sv2KP, err := loadOrGenerateSV2Key(symbol)
+        if err != nil {
+                runner.logger.Warn("[%s] SV2 disabled: %v", symbol, err)
+        } else {
+                sv2Cfg := stratumv2.Config{
+                        ListenAddr:    fmt.Sprintf("%s:%d", cfg.Stratum.Host, cfg.Stratum.Port+1),
+                        StaticKeypair: sv2KP,
+                        CoinTicker:    symbol,
+                        OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
+                                if result.MeetsBlock {
+                                        runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
+                                                symbol, ch.UserIdentity(), job.Height, result.HashHex)
+                                        // Block assembly/submission requires the full transaction set from
+                                        // the originating template (template.Transactions). That set isn't
+                                        // threaded through JobTemplate today — wire this in a follow-up
+                                        // patch (submitSV2Block) before relying on SV2 to find real blocks.
+                                        // Until then this is a CONNECTIVITY-ONLY deployment: shares are
+                                        // validated and accepted correctly, but a found block will be
+                                        // logged, not submitted.
+                                }
+                        },
+                }
+
+                // Solo mode: each channel gets its own coinbase, built fresh
+                // against the JobManager's latest template, paying out to the
+                // channel's own UserIdentity address — exactly mirroring V1's
+                // AuthorizeHandler + AddressCoinb2s pattern, just resolved
+                // per-SV2-channel instead of precomputed for known sessions.
+                if soloMode {
+                        sv2Cfg.CoinbaseBuilder = func(userIdentity string) (coinb1, coinb2 []byte, err error) {
+                                // Parse address from userIdentity: "address.workerID" -> "address"
+                                // Same convention as the V1 AuthorizeHandler above.
+                                address := userIdentity
+                                if dotIdx := strings.Index(userIdentity, "."); dotIdx > 0 {
+                                        address = userIdentity[:dotIdx]
+                                }
+
+                                if err := c.ValidateAddress(address, cfg.Mining.Network); err != nil {
+                                        return nil, nil, fmt.Errorf("invalid sv2 worker address %q: %w", address, err)
+                                }
+
+                                template := jobMgr.LatestTemplate()
+                                if template == nil {
+                                        return nil, nil, fmt.Errorf("no block template available yet")
+                                }
+
+                                c1Hex, c2Hex, err := c.BuildCoinbase(
+                                        template, address, cfg.Mining.Network, cfg.Mining.CoinbaseText,
+                                        jobMgr.ExtraNonce1Size(), jobMgr.ExtraNonce2Size(),
+                                        jobMgr.donationOutputs(template),
+                                )
+                                if err != nil {
+                                        return nil, nil, fmt.Errorf("building sv2 coinbase for %s: %w", address, err)
+                                }
+
+                                cb1, err := hex.DecodeString(c1Hex)
+                                if err != nil {
+                                        return nil, nil, fmt.Errorf("decode coinb1: %w", err)
+                                }
+                                cb2, err := hex.DecodeString(c2Hex)
+                                if err != nil {
+                                        return nil, nil, fmt.Errorf("decode coinb2: %w", err)
+                                }
+                                return cb1, cb2, nil
+                        }
+
+                        // Register the SV2 worker's address with the job manager the same
+                        // way V1's AuthorizeHandler does, so it shows up in connectedAddrs
+                        // for stats/accounting parity with V1 solo workers. This is fired
+                        // from the OpenStandardMiningChannel handler indirectly via the
+                        // CoinbaseBuilder call above on first build; explicit registration
+                        // here is intentionally omitted to avoid double-counting against
+                        // jobMgr.connectedAddrs, which currently assumes V1 session
+                        // lifecycle (Authorize/disconnect) for its ref-counting. SV2
+                        // worker accounting is tracked independently via
+                        // sv2Server.Stats() / Channel.Stats() — see metrics wiring in a
+                        // follow-up patch if unified accounting is needed later.
+                }
+
+                sv2Srv, err := stratumv2.NewServer(sv2Cfg)
+                if err != nil {
+                        runner.logger.Warn("[%s] SV2 disabled: %v", symbol, err)
+                } else {
+                        runner.sv2Server = sv2Srv
+                        runner.logger.Info("[%s] SV2 server configured on %s (solo=%v)", symbol, sv2Cfg.ListenAddr, soloMode)
+                }
+        }
+
+        // Wire SV2 template broadcast alongside the existing V1 onNewJob.
+        // Fires from the exact same refreshTemplate() call as V1 — same
+        // template, same instant, no separate polling or staleness skew.
+        //
+        // Note: in solo mode, evt.JobData.Coinb1/Coinb2 here are the POOL
+        // FALLBACK coinbase (cfg.Mining.Address) — this is fine, because
+        // sendJobToChannel/handleSubmitShares in pkg/stratumv2 prefer each
+        // channel's own coinbase (set via CoinbaseBuilder above) whenever
+        // one is present, falling back to this shared one only before a
+        // channel's first successful coinbase build completes.
+        jobMgr.onNewJobV2 = func(evt NewJobEvent) {
+                if runner.sv2Server == nil {
+                        return
+                }
+                src := stratumv2.V1JobSource{
+                        JobIDHex:          evt.JobData.Job.JobID,
+                        PrevBlockHashHex:  evt.Template.PreviousBlockHash,
+                        Coinb1Hex:         evt.JobData.Coinb1,
+                        Coinb2Hex:         evt.JobData.Coinb2,
+                        MerkleBranchesHex: evt.JobData.Job.MerkleBranches,
+                        VersionHex:        evt.JobData.Job.Version,
+                        NBitsHex:          evt.JobData.Job.NBits,
+                        NTimeHex:          evt.JobData.Job.NTime,
+                        Height:            uint32(evt.Template.Height),
+                        CleanJobs:         evt.JobData.Job.CleanJobs,
+                }
+                tmpl, err := stratumv2.BuildTemplateFromV1Job(src)
+                if err != nil {
+                        runner.logger.Error("[%s] SV2 template build failed: %v", symbol, err)
+                        return
+                }
+                runner.sv2Server.BroadcastTemplate(tmpl)
+        }
+
+        return runner, nil
 }
 
 // Start begins the coin mining pipeline.
@@ -261,13 +388,22 @@ func (cr *CoinRunner) Start() error {
 		return fmt.Errorf("%s: starting job manager: %w", cr.symbol, err)
 	}
 
-	// Start ZMQ subscriber if configured
-	if cr.zmqSub != nil {
-		if err := cr.zmqSub.Start(); err != nil {
-			cr.logger.Warn("[%s] ZMQ failed to start, falling back to polling: %v", cr.symbol, err)
-			cr.zmqSub = nil
-		}
-	}
+        // Start ZMQ subscriber if configured
+        if cr.zmqSub != nil {
+                if err := cr.zmqSub.Start(); err != nil {
+                        cr.logger.Warn("[%s] ZMQ failed to start, falling back to polling: %v", cr.symbol, err)
+                        cr.zmqSub = nil
+                }
+        }
+
+        // Start SV2 server if configured
+        if cr.sv2Server != nil {
+                go func() {
+                        if err := cr.sv2Server.Start(); err != nil {
+                                cr.logger.Error("[%s] SV2 server error: %v", cr.symbol, err)
+                        }
+                }()
+        }
 
         cr.logger.Info("[%s] coin runner started", cr.symbol)
 
@@ -305,12 +441,15 @@ func (cr *CoinRunner) Start() error {
 
 // Stop shuts down the coin mining pipeline.
 func (cr *CoinRunner) Stop() {
-	if cr.zmqSub != nil {
-		cr.zmqSub.Stop()
-	}
-	cr.jobMgr.Stop()
-	cr.server.Stop()
-	cr.logger.Info("[%s] coin runner stopped", cr.symbol)
+        if cr.zmqSub != nil {
+                cr.zmqSub.Stop()
+        }
+        cr.jobMgr.Stop()
+        cr.server.Stop()
+        if cr.sv2Server != nil {
+                cr.sv2Server.Stop()
+        }
+        cr.logger.Info("[%s] coin runner stopped", cr.symbol)
 }
 
 // SessionCount returns the number of active miner connections.
@@ -337,6 +476,30 @@ func loadDonationAddress(symbol, network string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no donation address for %s/%s in AUTHORS", symbol, network)
+}
+
+// loadOrGenerateSV2Key loads the coin's persistent SV2 static keypair from
+// disk, generating and saving a new one if it doesn't exist yet. The key
+// file path is derived from the coin symbol: /pool/coins/<symbol>_sv2.key
+func loadOrGenerateSV2Key(symbol string) (*stratumv2.StaticKeypair, error) {
+        keyPath := fmt.Sprintf("/pool/coins/%s_sv2.key", strings.ToLower(symbol))
+
+        if data, err := os.ReadFile(keyPath); err == nil {
+                raw, decErr := hex.DecodeString(strings.TrimSpace(string(data)))
+                if decErr == nil && len(raw) == 32 {
+                        return stratumv2.LoadStaticKeypair(raw)
+                }
+                // Fall through to regenerate if the file is malformed.
+        }
+
+        kp, err := stratumv2.GenerateStaticKeypair()
+        if err != nil {
+                return nil, fmt.Errorf("generate sv2 keypair: %w", err)
+        }
+        if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(kp.PrivKeyBytes())), 0600); err != nil {
+                return nil, fmt.Errorf("save sv2 keypair to %s: %w", keyPath, err)
+        }
+        return kp, nil
 }
 
 func (r *CoinRunner) Hashrate() float64 {

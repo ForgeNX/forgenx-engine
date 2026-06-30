@@ -24,12 +24,23 @@ import (
 
 // JobData holds a job and its associated block template.
 type JobData struct {
-	Job            *stratum.Job
-	Template       *noderpc.BlockTemplate
-	Coinb1         string
-	Coinb2         string
-	AddressCoinb2s map[string]string // solo mode: address -> coinb2
-	Created        time.Time
+        Job            *stratum.Job
+        Template       *noderpc.BlockTemplate
+        Coinb1         string
+        Coinb2         string
+        AddressCoinb2s map[string]string // solo mode: address -> coinb2
+        Created        time.Time
+}
+
+// NewJobEvent carries the full JobData and originating template to
+// secondary consumers (currently: the SV2 server) that need richer data
+// than the plain *stratum.Job the V1 callback receives. Fired alongside
+// onNewJob from the same refreshTemplate() call, so V1 and SV2 always see
+// the identical underlying template — no separate polling, no staleness
+// skew between protocols.
+type NewJobEvent struct {
+        JobData  *JobData
+        Template *noderpc.BlockTemplate
 }
 
 // JobManager manages block template polling and mining job creation.
@@ -59,25 +70,27 @@ type JobManager struct {
 	donationScript  []byte
 	donationPercent float64
 
-	onNewJob func(*stratum.Job)
-	logger   *logging.Logger
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
+        onNewJob   func(*stratum.Job)
+        onNewJobV2 func(NewJobEvent)
+        logger     *logging.Logger
+        stopCh     chan struct{}
+        wg         sync.WaitGroup
 }
 
 // JobManagerConfig holds configuration for the job manager.
 type JobManagerConfig struct {
-	Coin            coin.Coin
-	RPCClient       *noderpc.Client
-	Address         string
-	Network         string
-	CoinbaseText    string
-	ExtraNonceSize  int
-	PollInterval    time.Duration
-	OnNewJob        func(*stratum.Job)
-	SoloMode        bool
-	DonationScript  []byte
-	DonationPercent float64
+        Coin            coin.Coin
+        RPCClient       *noderpc.Client
+        Address         string
+        Network         string
+        CoinbaseText    string
+        ExtraNonceSize  int
+        PollInterval    time.Duration
+        OnNewJob        func(*stratum.Job)
+        OnNewJobV2      func(NewJobEvent)
+        SoloMode        bool
+        DonationScript  []byte
+        DonationPercent float64
 }
 
 // NewJobManager creates a new job manager.
@@ -89,24 +102,25 @@ func NewJobManager(cfg JobManagerConfig) *JobManager {
 		en2Size = 2
 	}
 
-	jm := &JobManager{
-		coin:            cfg.Coin,
-		rpcClient:       cfg.RPCClient,
-		address:         cfg.Address,
-		network:         cfg.Network,
-		coinbaseText:    cfg.CoinbaseText,
-		extraNonce1Size: en1Size,
-		extraNonce2Size: en2Size,
-		pollInterval:    cfg.PollInterval,
-		jobs:            make(map[string]*JobData),
-		maxJobHistory:   10,
-		soloMode:        cfg.SoloMode,
-		donationScript:  cfg.DonationScript,
-		donationPercent: cfg.DonationPercent,
-		onNewJob:        cfg.OnNewJob,
-		logger:          logging.New(logging.ModuleEngine),
-		stopCh:          make(chan struct{}),
-	}
+        jm := &JobManager{
+                coin:            cfg.Coin,
+                rpcClient:       cfg.RPCClient,
+                address:         cfg.Address,
+                network:         cfg.Network,
+                coinbaseText:    cfg.CoinbaseText,
+                extraNonce1Size: en1Size,
+                extraNonce2Size: en2Size,
+                pollInterval:    cfg.PollInterval,
+                jobs:            make(map[string]*JobData),
+                maxJobHistory:   10,
+                soloMode:        cfg.SoloMode,
+                donationScript:  cfg.DonationScript,
+                donationPercent: cfg.DonationPercent,
+                onNewJob:        cfg.OnNewJob,
+                onNewJobV2:      cfg.OnNewJobV2,
+                logger:          logging.New(logging.ModuleEngine),
+                stopCh:          make(chan struct{}),
+        }
 	if cfg.SoloMode {
 		jm.connectedAddrs = make(map[string]int)
 	}
@@ -150,9 +164,30 @@ func (jm *JobManager) GetJob(jobID string) *JobData {
 
 // CurrentTip returns the current best block hash.
 func (jm *JobManager) CurrentTip() string {
-	jm.mu.RLock()
-	defer jm.mu.RUnlock()
-	return jm.currentTip
+        jm.mu.RLock()
+        defer jm.mu.RUnlock()
+        return jm.currentTip
+}
+
+// LatestTemplate returns the most recently fetched block template, or nil
+// if no template has been fetched yet. Used by the SV2 solo-mode
+// CoinbaseBuilder to build a channel's coinbase against current state
+// on demand (e.g. when a channel opens between scheduled template
+// refreshes), without needing to thread state through every call site.
+func (jm *JobManager) LatestTemplate() *noderpc.BlockTemplate {
+        jm.mu.RLock()
+        defer jm.mu.RUnlock()
+
+        var latest *JobData
+        for _, jd := range jm.jobs {
+                if latest == nil || jd.Created.After(latest.Created) {
+                        latest = jd
+                }
+        }
+        if latest == nil {
+                return nil
+        }
+        return latest.Template
 }
 
 // TipChangedAt returns when the current tip was first seen.
@@ -323,14 +358,20 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		jm.logger.Info("new block detected at height %d", template.Height)
 	}
 
-	// Notify (unlock first to avoid holding lock during broadcast)
-	jm.mu.Unlock()
-	if jm.onNewJob != nil {
-		jm.onNewJob(job)
-	}
-	jm.mu.Lock()
+        // Notify (unlock first to avoid holding lock during broadcast)
+        jm.mu.Unlock()
+        if jm.onNewJob != nil {
+                jm.onNewJob(job)
+        }
+        if jm.onNewJobV2 != nil {
+                jm.onNewJobV2(NewJobEvent{
+                        JobData:  jobData,
+                        Template: template,
+                })
+        }
+        jm.mu.Lock()
 
-	return nil
+        return nil
 }
 
 func (jm *JobManager) computeMerkleBranches(template *noderpc.BlockTemplate) []string {

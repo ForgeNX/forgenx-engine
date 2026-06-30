@@ -32,6 +32,19 @@ import (
 //     onShare callback → engine's submitblock RPC call
 // ──────────────────────────────────────────────────────────────────────────────
 
+// CoinbaseBuilderFunc builds a coinbase transaction pair for a specific
+// miner identity. Only used in solo mode, where each worker's block reward
+// must pay out to that worker's own address rather than a shared pool
+// address. The engine supplies this closure (wrapping pkg/coin's
+// BuildCoinbase against the JobManager's current template) so pkg/stratumv2
+// never needs to import pkg/coin directly.
+//
+// userIdentity is the raw string from the miner's OpenStandardMiningChannel
+// (typically "address" or "address.workerName" — same convention as V1's
+// mining.authorize). Implementations should parse out the address portion
+// the same way coinrunner.go's AuthorizeHandler does for V1.
+type CoinbaseBuilderFunc func(userIdentity string) (coinbase1, coinbase2 []byte, err error)
+
 // Config holds all tunable parameters for the SV2 server.
 type Config struct {
 	// ListenAddr is the TCP address to listen on, e.g. ":3335".
@@ -45,6 +58,11 @@ type Config struct {
 	// If the share's ShareResult.MeetsBlock is true, the engine should
 	// submit the block to the node via RPC.
 	OnShare shareSubmitCallback
+
+	// CoinbaseBuilder, if set, enables solo mode: each channel's coinbase
+	// is built individually from its UserIdentity instead of using the
+	// JobTemplate's shared Coinbase1/Coinbase2. Leave nil for pool mode.
+	CoinbaseBuilder CoinbaseBuilderFunc
 
 	// CoinTicker is a short string like "BCH" used in log messages.
 	CoinTicker string
@@ -151,7 +169,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	sess := newSession(encConn, srv.cfg.OnShare)
+	sess := newSession(encConn, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess
@@ -241,51 +259,6 @@ func (srv *Server) Stats() ServerStats {
 // (as used in pkg/engine and pkg/coin) and the SV2 JobTemplate struct.
 // They live here rather than in the engine package to avoid a circular import.
 // ──────────────────────────────────────────────────────────────────────────────
-
-// BuildCoinbase constructs the coinbase transaction split around the extranonce
-// insertion point, returning (coinbase1, coinbase2).
-//
-// For SV2 Standard Channel, extranonce1 (4 bytes, server-assigned) and
-// extranonce2 (4 bytes, miner-rolled) are concatenated between coinbase1
-// and coinbase2 exactly as in Stratum V1.
-//
-// Parameters:
-//
-//	coinbaseValue   — block subsidy + fees in satoshis
-//	payoutAddress   — miner's BCH/BTC address (P2PKH/P2SH script)
-//	heightBytes     — BIP 34 block height as CScript bytes (little-endian)
-//	extraData       — arbitrary bytes appended to coinbase scriptSig (e.g., "ForgeNX")
-//	extranonce1Size — always 4 for ForgeNX
-//	extranonce2Size — always 4 for ForgeNX
-func BuildCoinbase(
-	coinbaseValue int64,
-	p2pkhScript []byte,
-	heightBytes []byte,
-	extraData []byte,
-	extranonce1Size, extranonce2Size int,
-) (coinbase1, coinbase2 []byte) {
-	// This is a simplified coinbase builder for solo mining.
-	// A full implementation would build a proper Bitcoin transaction;
-	// here we produce the bytes that match the node's coinbase template
-	// with the extranonce splice point at the scriptSig boundary.
-
-	// txVersion (4 LE) + inputCount (1) + prevout (36) + scriptSig...
-	// For solo mining, the engine typically gets coinbase1/coinbase2 directly
-	// from getblocktemplate's "coinbasetxn" or builds them from scratch.
-	// This stub is a placeholder — the real implementation will call
-	// the coin-specific builder (e.g., pkg/coin/bitcoincash.go BuildCoinbaseTx).
-	_ = coinbaseValue
-	_ = p2pkhScript
-	_ = heightBytes
-	_ = extraData
-	_ = extranonce1Size
-	_ = extranonce2Size
-
-	// Return empty stubs — the engine integration in coinrunner.go will
-	// supply the actual bytes. This function's signature documents the
-	// contract that the engine must fulfill.
-	return nil, nil
-}
 
 // PrevHashFromHex converts a hex block hash string (display byte order)
 // to the internal byte order [32]byte expected by SV2.

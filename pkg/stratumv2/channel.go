@@ -59,6 +59,17 @@ type Channel struct {
 	// SV2 spec says servers MUST accept shares for at least the last job.
 	staleJobIDs [2]uint32
 
+	// Solo-mode per-channel coinbase override. When set (non-nil), the
+	// channel's own coinbase1/coinbase2 are used instead of the shared
+	// JobTemplate.Coinbase1/2 — this is how each SV2 worker's payout
+	// address gets baked into its own block solution, mirroring V1's
+	// AddressCoinb2s map but resolved per-channel instead of precomputed
+	// for all known addresses. Pool mode never sets this; nil means
+	// "use the template's shared coinbase."
+	coinbaseMu   sync.RWMutex
+	ownCoinbase1 []byte
+	ownCoinbase2 []byte
+
 	// Share sequence tracking (for SubmitSharesSuccess cumulative acks).
 	lastAckedSeq     uint32
 	pendingSharesAcc uint64 // accumulated share difficulty since last ack
@@ -115,6 +126,28 @@ func (c *Channel) Extranonce1() [4]byte { return c.extranonce1 }
 func (c *Channel) Extranonce1Bytes() []byte {
 	b := c.extranonce1
 	return b[:]
+}
+
+// SetOwnCoinbase stores a per-channel coinbase override (solo mode).
+// Pass nil, nil to clear the override and fall back to the template's
+// shared coinbase (pool mode behavior).
+func (c *Channel) SetOwnCoinbase(coinbase1, coinbase2 []byte) {
+	c.coinbaseMu.Lock()
+	defer c.coinbaseMu.Unlock()
+	c.ownCoinbase1 = coinbase1
+	c.ownCoinbase2 = coinbase2
+}
+
+// OwnCoinbase returns the channel's coinbase override, and whether one is
+// set. When ok is false, callers should fall back to the template's shared
+// Coinbase1/Coinbase2 fields (pool mode).
+func (c *Channel) OwnCoinbase() (coinbase1, coinbase2 []byte, ok bool) {
+	c.coinbaseMu.RLock()
+	defer c.coinbaseMu.RUnlock()
+	if c.ownCoinbase1 == nil && c.ownCoinbase2 == nil {
+		return nil, nil, false
+	}
+	return c.ownCoinbase1, c.ownCoinbase2, true
 }
 
 // PoolTarget returns the current pool difficulty target as a 32-byte LE slice.
