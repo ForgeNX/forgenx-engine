@@ -4,25 +4,22 @@
 //
 // Protocol reference: https://stratumprotocol.org/specification/
 //
-// Noise layer: Noise_NX_secp256k1_ChaChaPoly_SHA256
-//   - Initiator (miner) does NOT need a pre-existing key.
-//   - Responder (server) has a static secp256k1 keypair.
-//   - EllSwift encoding (BIP-324) is used for the 64-byte public key wire format.
+// This file (noise.go) defines StaticKeypair — the server's per-coin secp256k1
+// Noise-DH identity. The actual handshake protocol logic lives in sv2noise.go,
+// which implements the REAL SV2-specific Noise_NX variant (secp256k1 + EllSwift
+// DH directly, not a generic Curve25519 Noise Protocol Framework pattern).
+//
+// See sv2noise.go's header comment for why this split exists and what was
+// wrong with the earlier flynn/noise-based implementation.
 package stratumv2
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net"
-	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ellswift"
-	"github.com/flynn/noise"
 )
 
 const (
@@ -34,29 +31,25 @@ const (
 	handshakeTimeoutSeconds = 10
 )
 
-// sv2CipherSuite returns the noise.CipherSuite for Stratum V2.
-// SV2 mandates: Curve25519 DH (for the Noise session), ChaChaPoly AEAD, SHA-256 hash.
-func sv2CipherSuite() noise.CipherSuite {
-	return noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
-}
-
-// StaticKeypair holds the server's long-lived secp256k1 identity keys and
-// the EllSwift-encoded wire public key (64 bytes) used for miner identification.
-//
-// Note on key separation:
-//
-//	The Noise session DH uses an ephemeral Curve25519 keypair (generated per
-//	connection by the noise library). The secp256k1 keypair here is the server's
-//	*identity* — its EllSwift public key is sent to miners in the handshake
-//	payload so they can verify they're talking to the right server.
+// StaticKeypair holds the server's secp256k1 identity keypair used directly
+// as the Noise DH static key (per the real SV2 spec — secp256k1 IS the DH
+// curve, not a side-channel identity payload as in the earlier broken
+// implementation). The EllSwift encoding cached here is regenerated fresh
+// per call to ellswiftKeyMaterial() since BIP-324 EllSwift encoding is
+// intentionally non-deterministic (see LoadStaticKeypair's doc comment).
 type StaticKeypair struct {
-	priv        *btcec.PrivateKey
-	pub         *btcec.PublicKey
+	priv *btcec.PrivateKey
+	pub  *btcec.PublicKey
+
+	// ellSwiftPub is captured at construction time purely for logging
+	// (EllSwiftPubKeyHex). It is NOT reused in the handshake itself —
+	// ellswiftKeyMaterial() re-derives a fresh encoding for every connection,
+	// since reusing a fixed EllSwift encoding across sessions would leak a
+	// stable fingerprint the spec's randomized encoding is designed to avoid.
 	ellSwiftPub [ellSwiftLen]byte
 }
 
 // GenerateStaticKeypair creates a new random secp256k1 keypair for the server.
-// Uses btcd's EllswiftCreate which generates the key and EllSwift encoding together.
 func GenerateStaticKeypair() (*StaticKeypair, error) {
 	priv, ellSwiftBytes, err := ellswift.EllswiftCreate()
 	if err != nil {
@@ -74,25 +67,38 @@ func GenerateStaticKeypair() (*StaticKeypair, error) {
 // privKeyBytes must be a raw secp256k1 scalar (big-endian, 32 bytes).
 //
 // IMPORTANT: EllSwift encoding is intentionally non-deterministic by design
-// (BIP-324) — XElligatorSwift picks a random `u` value and case number on
-// every call, so re-encoding the SAME private key's public key produces a
-// DIFFERENT 64-byte EllSwift representation each time, even across calls
-// within the same process, let alone across restarts. This is correct
-// protocol behavior, not a bug: it prevents wire-level fingerprinting of
-// the server's identity. What persists is the PRIVATE key; miners verify
-// server identity through the Noise handshake's cryptographic binding
-// (successful decryption / MAC verification), not by comparing EllSwift
-// bytes across sessions. Do not expect EllSwiftPubKeyHex() to return the
-// same value after a restart — only the underlying private key (and
-// therefore the server's actual cryptographic identity) is stable.
+// (BIP-324) — re-encoding the SAME private key's public key produces a
+// DIFFERENT 64-byte EllSwift representation on every call. This is correct
+// protocol behavior: it prevents wire-level fingerprinting of the server's
+// identity. The PRIVATE key is what persists and matters cryptographically;
+// miners verify server identity through the handshake's certificate
+// signature (see AuthorityKeypair / SignatureNoiseMessage in sv2noise.go),
+// not by comparing EllSwift bytes across sessions.
 func LoadStaticKeypair(privKeyBytes []byte) (*StaticKeypair, error) {
 	if len(privKeyBytes) != 32 {
 		return nil, errors.New("stratumv2: private key must be 32 bytes")
 	}
 	priv, pub := btcec.PrivKeyFromBytes(privKeyBytes)
 
-	// Derive the X coordinate of the public key (X-only, as EllSwift encodes).
-	compressed := pub.SerializeCompressed() // 33 bytes: 02/03 prefix + 32-byte X
+	esBytes, err := ellswiftEncodePubkey(pub)
+	if err != nil {
+		return nil, err
+	}
+
+	return &StaticKeypair{
+		priv:        priv,
+		pub:         pub,
+		ellSwiftPub: esBytes,
+	}, nil
+}
+
+// ellswiftEncodePubkey derives a fresh (randomized) EllSwift encoding of an
+// existing public key's X-coordinate via the real XElligatorSwift encoder
+// (the same one EllswiftCreate uses internally for fresh keys).
+func ellswiftEncodePubkey(pub *btcec.PublicKey) ([ellSwiftLen]byte, error) {
+	var out [ellSwiftLen]byte
+
+	compressed := pub.SerializeCompressed() // 33 bytes: 0x02/0x03 prefix + 32-byte X
 	var xBytes [32]byte
 	copy(xBytes[:], compressed[1:])
 
@@ -104,21 +110,14 @@ func LoadStaticKeypair(privKeyBytes []byte) (*StaticKeypair, error) {
 
 	u, t, err := ellswift.XElligatorSwift(&x)
 	if err != nil {
-		return nil, fmt.Errorf("stratumv2: ellswift re-encode: %w", err)
+		return out, fmt.Errorf("stratumv2: ellswift encode: %w", err)
 	}
 
 	uBytes := u.Bytes()
 	tBytes := t.Bytes()
-
-	var esBytes [ellSwiftLen]byte
-	copy(esBytes[0:32], (*uBytes)[:])
-	copy(esBytes[32:64], (*tBytes)[:])
-
-	return &StaticKeypair{
-		priv:        priv,
-		pub:         pub,
-		ellSwiftPub: esBytes,
-	}, nil
+	copy(out[0:32], (*uBytes)[:])
+	copy(out[32:64], (*tBytes)[:])
+	return out, nil
 }
 
 // PrivKeyBytes returns the raw 32-byte private key scalar for persistence.
@@ -126,177 +125,36 @@ func (k *StaticKeypair) PrivKeyBytes() []byte {
 	return k.priv.Serialize()
 }
 
-// EllSwiftPubKey returns the 64-byte EllSwift-encoded public key that should
-// be advertised to miners (e.g., in the pool's endpoint configuration).
+// EllSwiftPubKey returns the EllSwift encoding captured at construction time.
+// For logging only — see the non-determinism note on LoadStaticKeypair.
 func (k *StaticKeypair) EllSwiftPubKey() [ellSwiftLen]byte {
 	return k.ellSwiftPub
 }
 
-// EllSwiftPubKeyHex returns the public key as a hex string for logging/config.
+// EllSwiftPubKeyHex returns EllSwiftPubKey() as a hex string for logging.
 func (k *StaticKeypair) EllSwiftPubKeyHex() string {
 	b := k.ellSwiftPub
 	return hex.EncodeToString(b[:])
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Noise encrypted connection
-// ──────────────────────────────────────────────────────────────────────────────
-
-// noiseConn wraps a net.Conn with Noise transport encryption after handshake.
-type noiseConn struct {
-	conn net.Conn
-	send *noise.CipherState
-	recv *noise.CipherState
-	buf  []byte // partial read buffer
+// xOnlyPubKeyBytes returns the 32-byte BIP-340 X-only encoding of this
+// keypair's public key — used as the value the authority signs over in the
+// handshake certificate (SignatureNoiseMessage).
+func (k *StaticKeypair) xOnlyPubKeyBytes() [32]byte {
+	var out [32]byte
+	compressed := k.pub.SerializeCompressed()
+	copy(out[:], compressed[1:])
+	return out
 }
 
-// noiseFrameMaxPayload is the maximum plaintext payload per Noise message.
-const noiseFrameMaxPayload = 65519
-
-// Write encrypts plaintext and sends it with a 2-byte big-endian length prefix.
-func (c *noiseConn) Write(plaintext []byte) (int, error) {
-	total := 0
-	for len(plaintext) > 0 {
-		chunk := plaintext
-		if len(chunk) > noiseFrameMaxPayload {
-			chunk = plaintext[:noiseFrameMaxPayload]
-		}
-		ct, err := c.send.Encrypt(nil, nil, chunk)
-		if err != nil {
-			return total, fmt.Errorf("noise encrypt: %w", err)
-		}
-		var hdr [2]byte
-		binary.BigEndian.PutUint16(hdr[:], uint16(len(ct)))
-		if _, err := c.conn.Write(hdr[:]); err != nil {
-			return total, err
-		}
-		if _, err := c.conn.Write(ct); err != nil {
-			return total, err
-		}
-		total += len(chunk)
-		plaintext = plaintext[len(chunk):]
-	}
-	return total, nil
-}
-
-// Read decrypts the next Noise message and places plaintext into p.
-func (c *noiseConn) Read(p []byte) (int, error) {
-	if len(c.buf) > 0 {
-		n := copy(p, c.buf)
-		c.buf = c.buf[n:]
-		return n, nil
-	}
-	var hdr [2]byte
-	if _, err := io.ReadFull(c.conn, hdr[:]); err != nil {
-		return 0, err
-	}
-	ctLen := binary.BigEndian.Uint16(hdr[:])
-	ct := make([]byte, ctLen)
-	if _, err := io.ReadFull(c.conn, ct); err != nil {
-		return 0, err
-	}
-	plaintext, err := c.recv.Decrypt(nil, nil, ct)
+// ellswiftKeyMaterial returns a FRESH EllSwift encoding for use in a single
+// handshake (called once per connection by PerformSV2ServerHandshake). This
+// is distinct from EllSwiftPubKey() — that one is a snapshot for logging;
+// this one is freshly randomized per the spec's intent.
+func (k *StaticKeypair) ellswiftKeyMaterial() (*btcec.PrivateKey, [ellSwiftLen]byte, error) {
+	enc, err := ellswiftEncodePubkey(k.pub)
 	if err != nil {
-		return 0, fmt.Errorf("noise decrypt: %w", err)
+		return nil, enc, err
 	}
-	n := copy(p, plaintext)
-	if n < len(plaintext) {
-		c.buf = plaintext[n:]
-	}
-	return n, nil
-}
-
-func (c *noiseConn) Close() error                       { return c.conn.Close() }
-func (c *noiseConn) LocalAddr() net.Addr                { return c.conn.LocalAddr() }
-func (c *noiseConn) RemoteAddr() net.Addr               { return c.conn.RemoteAddr() }
-func (c *noiseConn) SetDeadline(t time.Time) error      { return c.conn.SetDeadline(t) }
-func (c *noiseConn) SetReadDeadline(t time.Time) error  { return c.conn.SetReadDeadline(t) }
-func (c *noiseConn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Noise_NX handshake (server / responder side)
-//
-// NX pattern message flow:
-//   -> e                       miner sends ephemeral pubkey (64 bytes EllSwift)
-//   <- e, ee, s, es            server sends ephemeral + static, does DH
-//   -> payload                 miner sends encrypted payload (empty in SV2)
-//
-// After message 3 the handshake is complete and both sides derive send/recv
-// CipherState objects from WriteMessage/ReadMessage return values.
-// ──────────────────────────────────────────────────────────────────────────────
-
-// PerformServerHandshake executes the Noise_NX responder handshake on conn.
-// On success it returns a noiseConn whose reads and writes are encrypted.
-func PerformServerHandshake(conn net.Conn, staticKP *StaticKeypair) (net.Conn, error) {
-	deadline := time.Now().Add(handshakeTimeoutSeconds * time.Second)
-	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, err
-	}
-	defer conn.SetDeadline(time.Time{})
-
-	cs := sv2CipherSuite()
-
-	// Generate an ephemeral Curve25519 keypair for this session's Noise DH.
-	ephKP, err := cs.GenerateKeypair(rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("noise ephemeral keygen: %w", err)
-	}
-
-	hs, err := noise.NewHandshakeState(noise.Config{
-		CipherSuite:   cs,
-		Pattern:       noise.HandshakeNX,
-		Initiator:     false,
-		StaticKeypair: ephKP,
-		Prologue:      nil,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("noise handshake state: %w", err)
-	}
-
-	// ── Message 1: -> e  (read miner's ephemeral, 64 bytes EllSwift) ─────────
-	msg1 := make([]byte, ellSwiftLen)
-	if _, err := io.ReadFull(conn, msg1); err != nil {
-		return nil, fmt.Errorf("noise msg1 read: %w", err)
-	}
-	// ReadMessage returns (payload, cs0, cs1, err).
-	// cs0/cs1 are nil for non-final handshake messages.
-	if _, _, _, err := hs.ReadMessage(nil, msg1); err != nil {
-		return nil, fmt.Errorf("noise msg1 process: %w", err)
-	}
-
-	// ── Message 2: <- e, ee, s, es  (server sends ephemeral + static) ────────
-	// Payload: server's secp256k1 EllSwift public key so miners can verify identity.
-	serverPubPayload := staticKP.ellSwiftPub[:]
-	// WriteMessage returns (msg, cs0, cs1, err).
-	// For NX pattern message 2 (non-final), cs0/cs1 are nil.
-	msg2, _, _, err := hs.WriteMessage(nil, serverPubPayload)
-	if err != nil {
-		return nil, fmt.Errorf("noise msg2 write: %w", err)
-	}
-	if _, err := conn.Write(msg2); err != nil {
-		return nil, fmt.Errorf("noise msg2 send: %w", err)
-	}
-
-	// ── Message 3: -> payload  (read miner's final encrypted message) ─────────
-	// This is the final handshake message; ReadMessage returns the two
-	// CipherState objects (send from initiator's perspective = our recv).
-	msg3Buf := make([]byte, 128)
-	n, err := conn.Read(msg3Buf)
-	if err != nil {
-		return nil, fmt.Errorf("noise msg3 read: %w", err)
-	}
-	// Final message: cs0 = initiator→responder cipher, cs1 = responder→initiator cipher.
-	_, cs0, cs1, err := hs.ReadMessage(nil, msg3Buf[:n])
-	if err != nil {
-		return nil, fmt.Errorf("noise msg3 process: %w", err)
-	}
-
-	// From the server's perspective:
-	//   recv = cs0 (miner sends with cs0, we receive with cs0)
-	//   send = cs1 (we send with cs1, miner receives with cs1)
-	return &noiseConn{
-		conn: conn,
-		send: cs1,
-		recv: cs0,
-	}, nil
+	return k.priv, enc, nil
 }

@@ -50,9 +50,20 @@ type Config struct {
 	// ListenAddr is the TCP address to listen on, e.g. ":3335".
 	ListenAddr string
 
-	// StaticKeypair is the server's long-lived secp256k1 identity.
-	// Generate once with GenerateStaticKeypair() and persist PrivKeyBytes().
+	// StaticKeypair is the server's secp256k1 Noise-DH identity for this
+	// coin/listener. Generate once with GenerateStaticKeypair() and persist
+	// PrivKeyBytes(); see noise.go for why the EllSwift wire encoding itself
+	// is NOT expected to stay stable across restarts (BIP-324 randomization).
 	StaticKeypair *StaticKeypair
+
+	// AuthorityKeypair signs each handshake's certificate (SignatureNoiseMessage),
+	// binding StaticKeypair's identity to a longer-lived, operator-controlled
+	// signing key. Required — the handshake response is structurally invalid
+	// without a certificate, even if connecting clients don't verify it.
+	// Generate once with GenerateAuthorityKeypair() and persist PrivKeyBytes();
+	// UNLIKE StaticKeypair, this key SHOULD remain stable across restarts,
+	// since operators are expected to publish/pin its X-only pubkey out of band.
+	AuthorityKeypair *AuthorityKeypair
 
 	// OnShare is called (in a goroutine) for every accepted share.
 	// If the share's ShareResult.MeetsBlock is true, the engine should
@@ -94,6 +105,9 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.StaticKeypair == nil {
 		return nil, fmt.Errorf("sv2: StaticKeypair is required")
 	}
+	if cfg.AuthorityKeypair == nil {
+		return nil, fmt.Errorf("sv2: AuthorityKeypair is required")
+	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":3335"
 	}
@@ -117,8 +131,10 @@ func (srv *Server) Start() error {
 	srv.listener = ln
 
 	pubHex := hex.EncodeToString(srv.cfg.StaticKeypair.ellSwiftPub[:])
+	authPubHex := hex.EncodeToString(func() []byte { b := srv.cfg.AuthorityKeypair.XOnlyPubKeyBytes(); return b[:] }())
 	log.Printf("[sv2-%s] server listening on %s", srv.cfg.CoinTicker, srv.cfg.ListenAddr)
-	log.Printf("[sv2-%s] server public key (EllSwift): %s", srv.cfg.CoinTicker, pubHex)
+	log.Printf("[sv2-%s] static key EllSwift snapshot (changes every restart by design): %s", srv.cfg.CoinTicker, pubHex)
+	log.Printf("[sv2-%s] authority pubkey (X-only, stable — pin this client-side): %s", srv.cfg.CoinTicker, authPubHex)
 
 	for {
 		conn, err := ln.Accept()
@@ -161,8 +177,8 @@ func (srv *Server) handleConn(conn net.Conn) {
 	remote := conn.RemoteAddr().String()
 	log.Printf("[sv2-%s] new connection from %s", srv.cfg.CoinTicker, remote)
 
-	// Noise handshake.
-	encConn, err := PerformServerHandshake(conn, srv.cfg.StaticKeypair)
+	// SV2 Noise_NX handshake (secp256k1 + EllSwift DH, single round trip).
+	encConn, err := PerformSV2ServerHandshake(conn, srv.cfg.StaticKeypair, srv.cfg.AuthorityKeypair)
 	if err != nil {
 		log.Printf("[sv2-%s] handshake failed from %s: %v", srv.cfg.CoinTicker, remote, err)
 		conn.Close()

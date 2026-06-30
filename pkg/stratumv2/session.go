@@ -18,7 +18,7 @@ import (
 //   • The message dispatch loop
 //
 // Lifecycle:
-//   1. TCP accept → PerformServerHandshake (noise.go)
+//   1. TCP accept → PerformSV2ServerHandshake (sv2noise.go)
 //   2. newSession() wraps the encrypted conn
 //   3. session.Run() is called in a goroutine — reads frames and dispatches
 //   4. When SetupConnection arrives, validate and reply Success/Error
