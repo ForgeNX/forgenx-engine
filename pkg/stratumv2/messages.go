@@ -28,12 +28,12 @@ const (
 	MsgOpenStandardMiningChannel        uint8 = 0x10
 	MsgOpenStandardMiningChannelSuccess uint8 = 0x11
 	MsgOpenStandardMiningChannelError   uint8 = 0x12
-	MsgNewMiningJob                     uint8 = 0x1A
+	MsgNewMiningJob                     uint8 = 0x15
 	MsgSetNewPrevHash                   uint8 = 0x20
-	MsgSubmitSharesStandard             uint8 = 0x1E
-	MsgSubmitSharesSuccess              uint8 = 0x1F
-	MsgSubmitSharesError                uint8 = 0x21
-	MsgSetTarget                        uint8 = 0x22
+	MsgSubmitSharesStandard             uint8 = 0x1A
+	MsgSubmitSharesSuccess              uint8 = 0x1C
+	MsgSubmitSharesError                uint8 = 0x1D
+	MsgSetTarget                        uint8 = 0x21
 )
 
 // SetupConnection error codes.

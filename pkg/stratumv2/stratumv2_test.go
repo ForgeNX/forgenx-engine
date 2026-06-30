@@ -8,6 +8,40 @@ import (
 	"testing"
 )
 
+// TestMessageTypeConstants pins every message type byte to the authoritative
+// values from sv2-spec's 08-Message-Types.md table. An earlier version of
+// this package had every constant from MsgNewMiningJob onward wrong (off by
+// varying amounts, not a single consistent offset) — confirmed via live
+// Bitaxe Gamma testing, where the firmware logged "Unknown SV2 message type:
+// 0x1a" because we'd sent NewMiningJob using 0x1A, which is actually
+// SubmitSharesStandard in the real spec. This test exists specifically so
+// that class of silent renumbering bug can't recur undetected.
+func TestMessageTypeConstants(t *testing.T) {
+	cases := []struct {
+		name string
+		got  uint8
+		want uint8
+	}{
+		{"MsgSetupConnection", MsgSetupConnection, 0x00},
+		{"MsgSetupConnectionSuccess", MsgSetupConnectionSuccess, 0x01},
+		{"MsgSetupConnectionError", MsgSetupConnectionError, 0x02},
+		{"MsgOpenStandardMiningChannel", MsgOpenStandardMiningChannel, 0x10},
+		{"MsgOpenStandardMiningChannelSuccess", MsgOpenStandardMiningChannelSuccess, 0x11},
+		{"MsgOpenStandardMiningChannelError", MsgOpenStandardMiningChannelError, 0x12},
+		{"MsgNewMiningJob", MsgNewMiningJob, 0x15},
+		{"MsgSubmitSharesStandard", MsgSubmitSharesStandard, 0x1A},
+		{"MsgSubmitSharesSuccess", MsgSubmitSharesSuccess, 0x1C},
+		{"MsgSubmitSharesError", MsgSubmitSharesError, 0x1D},
+		{"MsgSetNewPrevHash", MsgSetNewPrevHash, 0x20},
+		{"MsgSetTarget", MsgSetTarget, 0x21},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: want 0x%02X, got 0x%02X", c.name, c.want, c.got)
+		}
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // codec_test
 //
@@ -63,8 +97,8 @@ func TestCodecRoundtrip(t *testing.T) {
 			done <- err
 			return
 		}
-		if frame.MsgType != 0x1A {
-			t.Errorf("expected MsgType 0x1A, got 0x%02X", frame.MsgType)
+		if frame.MsgType != MsgNewMiningJob {
+			t.Errorf("expected MsgType MsgNewMiningJob (0x%02X), got 0x%02X", MsgNewMiningJob, frame.MsgType)
 		}
 		if !bytes.Equal(frame.Payload, payload) {
 			t.Errorf("payload mismatch: got %q, want %q", frame.Payload, payload)
