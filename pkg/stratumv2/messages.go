@@ -286,30 +286,43 @@ func EncodeSetNewPrevHash(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// NewMiningJob (server → client)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// EncodeNewMiningJob builds the payload for a NewMiningJob message.
+// NewMiningJob (server → client) — STANDARD CHANNEL format
+//
+// Wire order per sv2-spec 05-Mining-Protocol.md §5.3.15:
+//
+//	channel_id(4) + job_id(4) + min_ntime(OPTION[u32]) + version(4) + merkle_root(U256, 32)
+//
+// CRITICAL: this is the Standard Channel job format — fundamentally
+// different from Extended Channel jobs (NewExtendedMiningJob, msg 0x1F),
+// which DO carry raw coinbase_tx_prefix/suffix + merkle_path for the client
+// to assemble its own coinbase. Standard Channel clients never see the
+// coinbase at all; the SERVER computes the final merkle root (folding the
+// coinbase tx hash through the merkle path) and sends only that 32-byte
+// result. An earlier version of this function sent the Extended format to
+// Standard Channels — confirmed via live Bitaxe Gamma testing, where the
+// firmware accepted the message (no parse error, since the first few fixed
+// fields happened to still align) but never actually started hashing,
+// because everything past channel_id/job_id was structurally wrong.
+//
+// min_ntime is OPTION[u32]: a 1-byte presence flag (0 or 1), followed by
+// 4 bytes ONLY if present. The spec requires the very first NewMiningJob
+// sent after a channel opens to have min_ntime UNSET (a "future job",
+// activated later by a matching SetNewPrevHash). minNtimeSet=false encodes
+// that case.
 func EncodeNewMiningJob(
 	channelID uint32,
 	jobID uint32,
-	futureJob bool,
+	minNtimeSet bool,
+	minNtime uint32,
 	version uint32,
-	versionRollingAllowedBits uint32,
-	merkleBranch [][32]byte,
-	coinbase1 []byte,
-	coinbase2 []byte,
+	merkleRoot [32]byte,
 ) []byte {
-	futureJobByte := byte(0)
-	if futureJob {
-		futureJobByte = 1
+	optionLen := 1
+	if minNtimeSet {
+		optionLen += 4
 	}
 
-	branchLen := len(merkleBranch)
-	cb1Len := len(coinbase1)
-	cb2Len := len(coinbase2)
-
-	size := 4 + 4 + 1 + 4 + 4 + 1 + branchLen*32 + 2 + cb1Len + 2 + cb2Len
+	size := 4 + 4 + optionLen + 4 + 32
 	b := make([]byte, size)
 	off := 0
 
@@ -317,28 +330,21 @@ func EncodeNewMiningJob(
 	off += 4
 	putU32LE(b, off, jobID)
 	off += 4
-	b[off] = futureJobByte
-	off++
-	putU32LE(b, off, version)
-	off += 4
-	putU32LE(b, off, versionRollingAllowedBits)
-	off += 4
 
-	b[off] = byte(branchLen)
-	off++
-	for _, h := range merkleBranch {
-		copy(b[off:], h[:])
-		off += 32
+	if minNtimeSet {
+		b[off] = 1
+		off++
+		putU32LE(b, off, minNtime)
+		off += 4
+	} else {
+		b[off] = 0
+		off++
 	}
 
-	putU16LE(b, off, uint16(cb1Len))
-	off += 2
-	copy(b[off:], coinbase1)
-	off += cb1Len
+	putU32LE(b, off, version)
+	off += 4
 
-	putU16LE(b, off, uint16(cb2Len))
-	off += 2
-	copy(b[off:], coinbase2)
+	copy(b[off:], merkleRoot[:])
 
 	return b
 }

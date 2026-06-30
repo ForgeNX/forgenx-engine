@@ -178,7 +178,7 @@ func TestCodecMultiChunkPayload(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestSetupConnectionSuccess(t *testing.T) {
-	payload := EncodeSetupConnectionSuccess(2, sv2FlagsSupported)
+	payload := EncodeSetupConnectionSuccess(2, sv2ServerResponseFlags)
 	if len(payload) != 6 {
 		t.Fatalf("expected 6 bytes, got %d", len(payload))
 	}
@@ -187,9 +187,64 @@ func TestSetupConnectionSuccess(t *testing.T) {
 	if version != 2 {
 		t.Errorf("version: want 2, got %d", version)
 	}
-	if flags != sv2FlagsSupported {
-		t.Errorf("flags: want %08X, got %08X", sv2FlagsSupported, flags)
+	if flags != sv2ServerResponseFlags {
+		t.Errorf("flags: want %08X, got %08X", sv2ServerResponseFlags, flags)
 	}
+}
+
+// TestEncodeNewMiningJob verifies the Standard Channel job wire format —
+// channel_id(4) + job_id(4) + min_ntime(OPTION[u32]) + version(4) +
+// merkle_root(U256, 32). An earlier version sent the Extended Channel
+// format (raw coinbase + merkle branch) to Standard Channel clients;
+// confirmed via live Bitaxe Gamma testing that this caused the firmware to
+// silently fail to queue work, despite no parse error being raised.
+func TestEncodeNewMiningJob(t *testing.T) {
+	var merkleRoot [32]byte
+	merkleRoot[0] = 0xCD
+	merkleRoot[31] = 0xEF
+
+	t.Run("future job (min_ntime unset)", func(t *testing.T) {
+		payload := EncodeNewMiningJob(1, 5, false, 0, 0x20000000, merkleRoot)
+		wantLen := 4 + 4 + 1 + 4 + 32
+		if len(payload) != wantLen {
+			t.Fatalf("payload length: want %d, got %d", wantLen, len(payload))
+		}
+		if got := getU32LE(payload, 0); got != 1 {
+			t.Errorf("channel_id: want 1, got %d", got)
+		}
+		if got := getU32LE(payload, 4); got != 5 {
+			t.Errorf("job_id: want 5, got %d", got)
+		}
+		if payload[8] != 0 {
+			t.Errorf("min_ntime presence byte: want 0 (unset), got %d", payload[8])
+		}
+		if got := getU32LE(payload, 9); got != 0x20000000 {
+			t.Errorf("version: want 0x20000000, got 0x%08X", got)
+		}
+		if !bytes.Equal(payload[13:45], merkleRoot[:]) {
+			t.Errorf("merkle_root mismatch")
+		}
+	})
+
+	t.Run("active job (min_ntime set)", func(t *testing.T) {
+		payload := EncodeNewMiningJob(1, 5, true, 1700000000, 0x20000000, merkleRoot)
+		wantLen := 4 + 4 + 1 + 4 + 4 + 32
+		if len(payload) != wantLen {
+			t.Fatalf("payload length: want %d, got %d", wantLen, len(payload))
+		}
+		if payload[8] != 1 {
+			t.Errorf("min_ntime presence byte: want 1 (set), got %d", payload[8])
+		}
+		if got := getU32LE(payload, 9); got != 1700000000 {
+			t.Errorf("min_ntime value: want 1700000000, got %d", got)
+		}
+		if got := getU32LE(payload, 13); got != 0x20000000 {
+			t.Errorf("version: want 0x20000000, got 0x%08X", got)
+		}
+		if !bytes.Equal(payload[17:49], merkleRoot[:]) {
+			t.Errorf("merkle_root mismatch")
+		}
+	})
 }
 
 func TestEncodeDecodeSubmitSharesStandard(t *testing.T) {

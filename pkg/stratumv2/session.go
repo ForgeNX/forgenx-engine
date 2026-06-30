@@ -40,12 +40,27 @@ const (
 	// Miners should send shares or keepalives; if silent for this long, drop.
 	readDeadlineSeconds = 120
 
-	// SV2 feature flags we advertise and accept.
-	// Bit 0: REQUIRES_STANDARD_JOBS — we always send standard jobs.
-	// Bit 1: ASYNC_JOB_MINING — not supported yet.
-	// Bit 2: SOLUTION_ROLLBACK — not supported.
-	// Bit 3: REQUIRES_VERSION_ROLLING — we support it (VersionRollingMask).
-	sv2FlagsSupported uint32 = 0x00000009 // bits 0 + 3
+	// SetupConnection.flags bits (client → server), per
+	// sv2-spec 05-Mining-Protocol.md §5.3.1. We accept all three from
+	// clients since ForgeNX always sends standard jobs (satisfies
+	// REQUIRES_STANDARD_JOBS) and doesn't reject version-rolling clients
+	// (satisfies REQUIRES_VERSION_ROLLING — version is fully client-rolled,
+	// we never constrain it). REQUIRES_WORK_SELECTION (SetCustomMiningJob)
+	// is not implemented; we don't reject the flag, but the corresponding
+	// message would currently go unhandled if a client actually sent it.
+	sv2FlagRequiresStandardJobs   uint32 = 1 << 0
+	sv2FlagRequiresWorkSelection  uint32 = 1 << 1
+	sv2FlagRequiresVersionRolling uint32 = 1 << 2
+	sv2ClientFlagsAccepted        uint32 = sv2FlagRequiresStandardJobs | sv2FlagRequiresVersionRolling
+
+	// SetupConnection.Success.flags bits (server → client) — a COMPLETELY
+	// DIFFERENT flag namespace from the client's request flags above; an
+	// earlier version of this code wrongly echoed back (sc.Flags & mask) as
+	// if the two shared meaning. We don't set REQUIRES_FIXED_VERSION (we
+	// never constrain version, satisfying any REQUIRES_VERSION_ROLLING
+	// client) or REQUIRES_EXTENDED_CHANNELS (we only open standard
+	// channels) — both correctly stay unset (0).
+	sv2ServerResponseFlags uint32 = 0
 )
 
 // JobTemplate is the minimal set of block-template data the Session needs
@@ -180,12 +195,21 @@ func (s *Session) handleSetupConnection() error {
 			sc.MinVersion, sc.MaxVersion, sv2ProtocolVersion)
 	}
 
+	// Reject REQUIRES_WORK_SELECTION — we don't implement SetCustomMiningJob.
+	if sc.Flags&sv2FlagRequiresWorkSelection != 0 {
+		unsupported := sc.Flags &^ sv2ClientFlagsAccepted
+		payload, _ := EncodeSetupConnectionError(unsupported, "unsupported-feature-flags")
+		_ = s.codec.WriteFrame(ExtensionTypeMining, MsgSetupConnectionError, payload)
+		return fmt.Errorf("client requires unsupported feature flags: 0x%08X", unsupported)
+	}
+
 	log.Printf("[sv2] session %s: SetupConnection OK — vendor=%q firmware=%q device=%q",
 		s.id, sc.Vendor, sc.Firmware, sc.DeviceID)
 
-	// Respond with success. Negotiate flags as intersection of both sides.
-	negotiatedFlags := sc.Flags & sv2FlagsSupported
-	payload := EncodeSetupConnectionSuccess(sv2ProtocolVersion, negotiatedFlags)
+	// Respond with success. SetupConnection.Success.flags is a SEPARATE
+	// namespace from the client's request flags (sc.Flags) — see the
+	// sv2ServerResponseFlags doc comment above. We don't echo sc.Flags back.
+	payload := EncodeSetupConnectionSuccess(sv2ProtocolVersion, sv2ServerResponseFlags)
 	return s.codec.WriteFrame(ExtensionTypeMining, MsgSetupConnectionSuccess, payload)
 }
 
@@ -311,32 +335,12 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
 
-	// Build the coinbase transaction hash using the miner's extranonce2.
-	// The extranonce2 is derived from the sequenceNum for a simple scheme.
-	// In a full implementation the miner sends extranonce2 explicitly;
-	// for SV2 Standard Channel it is implicit from the miner's counter.
-	// We use a fixed 4-byte LE encoding of the sequence number as extranonce2.
-	var en2 [4]byte
-	en2[0] = byte(share.SequenceNum)
-	en2[1] = byte(share.SequenceNum >> 8)
-	en2[2] = byte(share.SequenceNum >> 16)
-	en2[3] = byte(share.SequenceNum >> 24)
-
-	// Solo mode: validate against THIS channel's own coinbase, not the
-	// template's shared one — otherwise we'd validate (and potentially
-	// submit) a block paying out to the wrong address.
-	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
-	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
-		coinb1, coinb2 = ownCb1, ownCb2
-	}
-
-	coinbaseTxHash := HashCoinbaseTx(
-		coinb1,
-		ch.Extranonce1Bytes(),
-		en2[:],
-		coinb2,
-	)
-	merkleRoot := ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
+	// Validate against THIS channel's fixed merkle root — Standard Channels
+	// have NO extranonce2 (it's fixed per-job, not per-share), and the root
+	// MUST exactly match what was sent in NewMiningJob for this job_id, or
+	// share validation would silently diverge from what the miner actually
+	// hashed. See channelMerkleRoot's doc comment for the spec citation.
+	merkleRoot := channelMerkleRoot(ch, tmpl)
 
 	result, err := ValidateShare(
 		share.Version,
@@ -424,6 +428,27 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 	}
 }
 
+// channelMerkleRoot computes the final 32-byte merkle root for a channel's
+// job, using that channel's own coinbase (solo mode override, or the
+// template's shared pool-mode coinbase) and the template's merkle branch.
+//
+// IMPORTANT: Standard Channels have NO extranonce2 component in their
+// coinbase — per sv2-spec 05-Mining-Protocol.md §5.3.15's merkle root
+// algorithm: "extranonce, # null if standard channel". The coinbase is
+// built from extranonce_prefix (the channel's Extranonce1) alone. An
+// earlier version fabricated an extranonce2 from the share's sequence
+// number, which both contradicts the spec and would have produced a
+// DIFFERENT merkle root per share — meaning the job sent to the miner and
+// the root used to validate its shares could never have matched.
+func channelMerkleRoot(ch *Channel, tmpl *JobTemplate) [32]byte {
+	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
+	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = ownCb1, ownCb2
+	}
+	coinbaseTxHash := HashCoinbaseTx(coinb1, ch.Extranonce1Bytes(), nil, coinb2)
+	return ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
+}
+
 // sendPrevHashToChannel sends SetNewPrevHash to a single channel.
 func (s *Session) sendPrevHashToChannel(ch *Channel, tmpl *JobTemplate) error {
 	payload := EncodeSetNewPrevHash(
@@ -437,23 +462,28 @@ func (s *Session) sendPrevHashToChannel(ch *Channel, tmpl *JobTemplate) error {
 }
 
 // sendJobToChannel sends NewMiningJob to a single channel and records the job ID.
+//
+// Standard Channel jobs carry a precomputed merkle_root (server-side), NOT
+// raw coinbase/merkle-branch data for the client to assemble itself — that
+// raw format is for Extended Channels only (NewExtendedMiningJob, a
+// different message this package does not currently implement, since
+// ForgeNX only opens Standard Channels with miners today).
 func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 	ch.SetCurrentJob(tmpl.JobID)
 
-	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
-	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
-		coinb1, coinb2 = ownCb1, ownCb2
-	}
+	merkleRoot := channelMerkleRoot(ch, tmpl)
 
+	// minNtimeSet=false: per spec, the FIRST NewMiningJob after a channel
+	// opens (or any future-staged job sent before its matching
+	// SetNewPrevHash) must have min_ntime unset. tmpl.IsFutureJob already
+	// tracks this distinction from the engine side.
 	payload := EncodeNewMiningJob(
 		ch.ID(),
 		tmpl.JobID,
-		tmpl.IsFutureJob,
+		!tmpl.IsFutureJob, // minNtimeSet: true once this job is actually active
+		tmpl.NTime,
 		tmpl.Version,
-		VersionRollingMask,
-		tmpl.MerkleBranch,
-		coinb1,
-		coinb2,
+		merkleRoot,
 	)
 	return s.codec.WriteFrame(ExtensionTypeMining, MsgNewMiningJob, payload)
 }

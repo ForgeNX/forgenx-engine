@@ -21,9 +21,16 @@ import (
 // ──────────────────────────────────────────────────────────────────────────────
 
 const (
-	// Extranonce1 is always 4 bytes in ForgeNX.
-	// Extranonce2 size offered to miners is 4 bytes (total extranonce = 8 bytes).
+	// Extranonce1Size is the size of the server-assigned extranonce_prefix
+	// sent in OpenStandardMiningChannel.Success.
 	Extranonce1Size uint16 = 4
+
+	// Extranonce2Size is currently unused: Standard Channels have NO
+	// extranonce2 component at all (see channelMerkleRoot's doc comment in
+	// session.go for the spec citation) — the channel's full extranonce IS
+	// extranonce_prefix. This constant is kept for documentation purposes
+	// and in case Extended Channel support is added later (where extranonce2
+	// genuinely does exist, miner-rolled, per share).
 	Extranonce2Size uint16 = 4
 
 	// DefaultPoolDifficulty is the starting pool difficulty assigned to new channels.
