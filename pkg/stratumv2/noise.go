@@ -44,10 +44,11 @@ func sv2CipherSuite() noise.CipherSuite {
 // the EllSwift-encoded wire public key (64 bytes) used for miner identification.
 //
 // Note on key separation:
-//   The Noise session DH uses an ephemeral Curve25519 keypair (generated per
-//   connection by the noise library). The secp256k1 keypair here is the server's
-//   *identity* — its EllSwift public key is sent to miners in the handshake
-//   payload so they can verify they're talking to the right server.
+//
+//	The Noise session DH uses an ephemeral Curve25519 keypair (generated per
+//	connection by the noise library). The secp256k1 keypair here is the server's
+//	*identity* — its EllSwift public key is sent to miners in the handshake
+//	payload so they can verify they're talking to the right server.
 type StaticKeypair struct {
 	priv        *btcec.PrivateKey
 	pub         *btcec.PublicKey
@@ -71,27 +72,47 @@ func GenerateStaticKeypair() (*StaticKeypair, error) {
 
 // LoadStaticKeypair reconstructs a StaticKeypair from a 32-byte private key scalar.
 // privKeyBytes must be a raw secp256k1 scalar (big-endian, 32 bytes).
+//
+// IMPORTANT: EllSwift encoding is intentionally non-deterministic by design
+// (BIP-324) — XElligatorSwift picks a random `u` value and case number on
+// every call, so re-encoding the SAME private key's public key produces a
+// DIFFERENT 64-byte EllSwift representation each time, even across calls
+// within the same process, let alone across restarts. This is correct
+// protocol behavior, not a bug: it prevents wire-level fingerprinting of
+// the server's identity. What persists is the PRIVATE key; miners verify
+// server identity through the Noise handshake's cryptographic binding
+// (successful decryption / MAC verification), not by comparing EllSwift
+// bytes across sessions. Do not expect EllSwiftPubKeyHex() to return the
+// same value after a restart — only the underlying private key (and
+// therefore the server's actual cryptographic identity) is stable.
 func LoadStaticKeypair(privKeyBytes []byte) (*StaticKeypair, error) {
 	if len(privKeyBytes) != 32 {
 		return nil, errors.New("stratumv2: private key must be 32 bytes")
 	}
 	priv, pub := btcec.PrivKeyFromBytes(privKeyBytes)
 
-	// Re-derive the EllSwift encoding for the loaded key.
-	// EllswiftCreate generates a fresh key; we need to encode an existing one.
-	// Use XElligatorSwift via the field value of the public key's X coordinate.
-	// For simplicity and correctness we re-generate a compatible EllSwift
-	// encoding using a deterministic approach: encode pubkey X via the
-	// EllSwift spec's canonical form.
-	//
-	// Since btcd v2.5.0 doesn't expose a standalone Encode(pubkey) function,
-	// we derive the EllSwift bytes from the serialised compressed pubkey.
-	// The 64-byte EllSwift format encodes the same X coordinate; we use
-	// a zero-padded u field (first 32 bytes = 0, second 32 bytes = X coord).
-	// This is a valid EllSwift encoding per the spec when u=0.
+	// Derive the X coordinate of the public key (X-only, as EllSwift encodes).
+	compressed := pub.SerializeCompressed() // 33 bytes: 02/03 prefix + 32-byte X
+	var xBytes [32]byte
+	copy(xBytes[:], compressed[1:])
+
+	var x btcec.FieldVal
+	overflow := x.SetBytes(&xBytes)
+	if overflow == 1 {
+		x.Normalize()
+	}
+
+	u, t, err := ellswift.XElligatorSwift(&x)
+	if err != nil {
+		return nil, fmt.Errorf("stratumv2: ellswift re-encode: %w", err)
+	}
+
+	uBytes := u.Bytes()
+	tBytes := t.Bytes()
+
 	var esBytes [ellSwiftLen]byte
-	compressed := pub.SerializeCompressed() // 33 bytes: 02/03 + X
-	copy(esBytes[32:], compressed[1:])       // bytes 32-63 = X coordinate
+	copy(esBytes[0:32], (*uBytes)[:])
+	copy(esBytes[32:64], (*tBytes)[:])
 
 	return &StaticKeypair{
 		priv:        priv,
