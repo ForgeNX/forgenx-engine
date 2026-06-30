@@ -252,7 +252,7 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 		req.RequestID,
 		ch.ID(),
 		ch.PoolTarget(),
-		Extranonce2Size,
+		ch.Extranonce1Bytes(),
 		0, // groupChannelID = 0 (not using grouped channels)
 	)
 	if err != nil {

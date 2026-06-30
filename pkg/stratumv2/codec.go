@@ -269,6 +269,35 @@ func decodeB0_32(buf []byte, offset int) ([]byte, int, error) {
 	return out, blen + 1, nil
 }
 
+// encodeU256 encodes a 256-bit value as exactly 32 raw bytes, NO length
+// prefix — per sv2-spec 03-Protocol-Overview.md's data type table, U256 is
+// "Unsigned integer, 256-bit, little-endian", distinct from B0_32 (which DOES
+// have a length prefix). Every target/hash field in the Mining Protocol
+// (max_target, target, maximum_target, prev_hash, merkle_root, etc.) is
+// U256, not B0_32 — conflating the two was a real bug found via live testing
+// against real Bitaxe Gamma SV2 firmware (decode failed with
+// "B0_32: length 255 exceeds 32" because the first byte of a genuine 256-bit
+// value was being misread as a length prefix).
+func encodeU256(b []byte) ([]byte, error) {
+	if len(b) != 32 {
+		return nil, fmt.Errorf("sv2 U256: must be exactly 32 bytes, got %d", len(b))
+	}
+	out := make([]byte, 32)
+	copy(out, b)
+	return out, nil
+}
+
+// decodeU256 reads exactly 32 raw bytes from buf at offset (no length prefix).
+func decodeU256(buf []byte, offset int) ([]byte, int, error) {
+	end := offset + 32
+	if end > len(buf) {
+		return nil, 0, fmt.Errorf("sv2 U256: need 32 bytes at offset %d, buffer has %d", offset, len(buf)-offset)
+	}
+	out := make([]byte, 32)
+	copy(out, buf[offset:end])
+	return out, 32, nil
+}
+
 // putU16LE writes a uint16 in LE at buf[offset].
 func putU16LE(buf []byte, offset int, v uint16) {
 	binary.LittleEndian.PutUint16(buf[offset:], v)

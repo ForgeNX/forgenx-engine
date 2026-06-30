@@ -161,7 +161,7 @@ type MsgOpenStandardMiningChannelFields struct {
 	RequestID       uint32
 	UserIdentity    string  // STR0_255 — miner's worker name / address
 	NominalHashrate float32 // hashrate in H/s as IEEE-754 float32
-	MaxTargetBytes  []byte  // B0_32 — maximum acceptable target (256-bit, LE)
+	MaxTargetBytes  []byte  // U256 — maximum acceptable target (256-bit, LE, fixed 32 bytes, NO length prefix)
 }
 
 // DecodeOpenStandardMiningChannel parses the payload.
@@ -187,7 +187,7 @@ func DecodeOpenStandardMiningChannel(payload []byte) (*MsgOpenStandardMiningChan
 	m.NominalHashrate = math.Float32frombits(rawFloat)
 	offset += 4
 
-	m.MaxTargetBytes, _, err = decodeB0_32(payload, offset)
+	m.MaxTargetBytes, _, err = decodeU256(payload, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -199,24 +199,35 @@ func DecodeOpenStandardMiningChannel(payload []byte) (*MsgOpenStandardMiningChan
 // ──────────────────────────────────────────────────────────────────────────────
 
 // EncodeOpenStandardMiningChannelSuccess builds the success response.
+//
+// Wire order per sv2-spec 05-Mining-Protocol.md §5.3.3:
+//
+//	request_id(4) + channel_id(4) + target(U256, 32) +
+//	extranonce_prefix(B0_32) + group_channel_id(4)
 func EncodeOpenStandardMiningChannelSuccess(
 	requestID uint32,
 	channelID uint32,
 	targetBytes []byte,
-	extranonce2size uint16,
+	extranoncePrefix []byte,
 	groupChannelID uint32,
 ) ([]byte, error) {
-	targetEnc, err := encodeB0_32(targetBytes)
+	targetEnc, err := encodeU256(targetBytes)
 	if err != nil {
 		return nil, err
 	}
-	b := make([]byte, 4+4+len(targetEnc)+2+4)
+	prefixEnc, err := encodeB0_32(extranoncePrefix)
+	if err != nil {
+		return nil, err
+	}
+	b := make([]byte, 4+4+len(targetEnc)+len(prefixEnc)+4)
 	putU32LE(b, 0, requestID)
 	putU32LE(b, 4, channelID)
-	copy(b[8:], targetEnc)
-	off := 8 + len(targetEnc)
-	putU16LE(b, off, extranonce2size)
-	putU32LE(b, off+2, groupChannelID)
+	off := 8
+	copy(b[off:], targetEnc)
+	off += len(targetEnc)
+	copy(b[off:], prefixEnc)
+	off += len(prefixEnc)
+	putU32LE(b, off, groupChannelID)
 	return b, nil
 }
 
@@ -242,7 +253,7 @@ func EncodeOpenStandardMiningChannelError(requestID uint32, errCode string) ([]b
 
 // EncodeSetTarget builds the payload for a SetTarget message.
 func EncodeSetTarget(channelID uint32, targetBytes []byte) ([]byte, error) {
-	targetEnc, err := encodeB0_32(targetBytes)
+	targetEnc, err := encodeU256(targetBytes)
 	if err != nil {
 		return nil, err
 	}

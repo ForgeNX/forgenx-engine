@@ -182,7 +182,7 @@ func TestEncodeDecodeSubmitSharesStandard(t *testing.T) {
 
 func TestEncodeDecodeOpenStandardMiningChannel(t *testing.T) {
 	// Construct a minimal valid payload.
-	// requestID(4) + userIdentity(STR0_255) + hashrate(4 float32) + maxTarget(B0_32)
+	// requestID(4) + userIdentity(STR0_255) + hashrate(4 float32) + maxTarget(U256, 32 raw bytes, no length prefix)
 	var buf []byte
 	buf = appendU32LE(buf, 1) // requestID
 
@@ -194,8 +194,7 @@ func TestEncodeDecodeOpenStandardMiningChannel(t *testing.T) {
 	// nominal hashrate: 0 (valid float32 zero)
 	buf = appendU32LE(buf, 0)
 
-	// maxTarget: 32 zero bytes (easiest possible)
-	buf = append(buf, 32) // B0_32 length prefix
+	// maxTarget: U256 is exactly 32 raw bytes, NO length prefix byte
 	buf = append(buf, make([]byte, 32)...)
 
 	msg, err := DecodeOpenStandardMiningChannel(buf)
@@ -212,6 +211,53 @@ func TestEncodeDecodeOpenStandardMiningChannel(t *testing.T) {
 
 func appendU32LE(b []byte, v uint32) []byte {
 	return append(b, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+}
+
+// TestEncodeOpenStandardMiningChannelSuccess catches the field-layout bug
+// found via live Bitaxe testing: an earlier version sent a fabricated
+// extranonce2size uint16 instead of the real spec field (extranonce_prefix,
+// B0_32), and encoded target as B0_32 instead of U256 (fixed 32 bytes, no
+// length prefix). This verifies the wire layout matches sv2-spec
+// 05-Mining-Protocol.md §5.3.3 exactly: request_id(4) + channel_id(4) +
+// target(32, no prefix) + extranonce_prefix(B0_32) + group_channel_id(4).
+func TestEncodeOpenStandardMiningChannelSuccess(t *testing.T) {
+	target := make([]byte, 32)
+	target[0] = 0xAB // distinctive byte to catch any offset errors
+	extranoncePrefix := []byte{0x01, 0x02, 0x03, 0x04}
+
+	payload, err := EncodeOpenStandardMiningChannelSuccess(42, 7, target, extranoncePrefix, 99)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	wantLen := 4 + 4 + 32 + (1 + len(extranoncePrefix)) + 4
+	if len(payload) != wantLen {
+		t.Fatalf("payload length: want %d, got %d", wantLen, len(payload))
+	}
+
+	if got := getU32LE(payload, 0); got != 42 {
+		t.Errorf("request_id: want 42, got %d", got)
+	}
+	if got := getU32LE(payload, 4); got != 7 {
+		t.Errorf("channel_id: want 7, got %d", got)
+	}
+	// target: 32 raw bytes starting at offset 8, NO length prefix byte.
+	if payload[8] != 0xAB {
+		t.Errorf("target[0]: want 0xAB, got 0x%02X — possible length-prefix offset bug", payload[8])
+	}
+	// extranonce_prefix: B0_32, starts at offset 8+32=40, length byte then data.
+	prefixOff := 40
+	if payload[prefixOff] != byte(len(extranoncePrefix)) {
+		t.Errorf("extranonce_prefix length byte: want %d, got %d", len(extranoncePrefix), payload[prefixOff])
+	}
+	if !bytes.Equal(payload[prefixOff+1:prefixOff+1+len(extranoncePrefix)], extranoncePrefix) {
+		t.Errorf("extranonce_prefix bytes mismatch")
+	}
+	// group_channel_id: last 4 bytes.
+	groupOff := prefixOff + 1 + len(extranoncePrefix)
+	if got := getU32LE(payload, groupOff); got != 99 {
+		t.Errorf("group_channel_id: want 99, got %d", got)
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
