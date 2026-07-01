@@ -113,9 +113,24 @@ type Session struct {
 	vardiffOnNewBlock bool
 	startDiff         float64
 
+	// Structured logger (optional). When set, log output matches the engine's
+	// format. When nil, falls back to log.Printf via s.logf.
+	logger sv2Logger
+
 	// Signals
 	closeCh chan struct{}
 	once    sync.Once
+}
+
+// logf logs at Info level via the structured logger if available, otherwise
+// falls back to Go's stdlib log.Printf. All session log calls go through
+// here so the output format is consistent with the rest of the engine.
+func (s *Session) logf(format string, args ...interface{}) {
+	if s.logger != nil {
+		s.logger.Info(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
 }
 
 // newSession wraps an already-handshaked conn, plus its transport-phase
@@ -128,6 +143,7 @@ func newSession(
 	vardiffCfg *stratum.VarDiffConfig,
 	vardiffOnNewBlock bool,
 	startDiff float64,
+	logger sv2Logger,
 ) *Session {
 	return &Session{
 		id:                conn.RemoteAddr().String(),
@@ -139,6 +155,7 @@ func newSession(
 		vardiffCfg:        vardiffCfg,
 		vardiffOnNewBlock: vardiffOnNewBlock,
 		startDiff:         startDiff,
+		logger:            logger,
 		closeCh:           make(chan struct{}),
 	}
 }
@@ -147,11 +164,11 @@ func newSession(
 // Call in a goroutine: go session.Run()
 func (s *Session) Run() {
 	defer s.Close()
-	log.Printf("[sv2] session %s: connected", s.id)
+	s.logf("[sv2] session %s: connected", s.id)
 
 	// Step 1: Wait for SetupConnection (must be first message).
 	if err := s.handleSetupConnection(); err != nil {
-		log.Printf("[sv2] session %s: setup failed: %v", s.id, err)
+		s.logf("[sv2] session %s: setup failed: %v", s.id, err)
 		return
 	}
 
@@ -169,12 +186,12 @@ func (s *Session) Run() {
 
 		frame, err := s.codec.ReadFrame()
 		if err != nil {
-			log.Printf("[sv2] session %s: read error: %v", s.id, err)
+			s.logf("[sv2] session %s: read error: %v", s.id, err)
 			return
 		}
 
 		if err := s.dispatch(frame); err != nil {
-			log.Printf("[sv2] session %s: dispatch error (msg=0x%02X): %v", s.id, frame.MsgType, err)
+			s.logf("[sv2] session %s: dispatch error (msg=0x%02X): %v", s.id, frame.MsgType, err)
 			// Non-fatal errors: log and continue. Fatal errors return from dispatch.
 		}
 	}
@@ -224,7 +241,7 @@ func (s *Session) handleSetupConnection() error {
 		return fmt.Errorf("client requires unsupported feature flags: 0x%08X", unsupported)
 	}
 
-	log.Printf("[sv2] session %s: SetupConnection OK — vendor=%q firmware=%q device=%q",
+	s.logf("[sv2] session %s: SetupConnection OK — vendor=%q firmware=%q device=%q",
 		s.id, sc.Vendor, sc.Firmware, sc.DeviceID)
 
 	// Respond with success. SetupConnection.Success.flags is a SEPARATE
@@ -243,7 +260,7 @@ func (s *Session) dispatch(frame *Frame) error {
 		return s.handleSubmitShares(frame.Payload)
 	default:
 		// Unknown/unhandled message types are silently ignored per the spec.
-		log.Printf("[sv2] session %s: unhandled msg type 0x%02X (%d bytes)", s.id, frame.MsgType, len(frame.Payload))
+		s.logf("[sv2] session %s: unhandled msg type 0x%02X (%d bytes)", s.id, frame.MsgType, len(frame.Payload))
 		return nil
 	}
 }
@@ -274,7 +291,7 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	s.channels[ch.ID()] = ch
 	s.mu.Unlock()
 
-	log.Printf("[sv2] session %s: opened channel %d for worker %q (hashrate=%.2f GH/s)",
+	s.logf("[sv2] session %s: opened channel %d for worker %q (hashrate=%.2f GH/s)",
 		s.id, ch.ID(), req.UserIdentity, float64(req.NominalHashrate)/1e9)
 
 	// Solo mode: build this channel's own coinbase paying out to its
@@ -285,7 +302,7 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	if s.coinbaseBuilder != nil {
 		cb1, cb2, err := s.coinbaseBuilder(req.UserIdentity)
 		if err != nil {
-			log.Printf("[sv2] session %s ch=%d: coinbase build failed for %q: %v",
+			s.logf("[sv2] session %s ch=%d: coinbase build failed for %q: %v",
 				s.id, ch.ID(), req.UserIdentity, err)
 		} else {
 			ch.SetOwnCoinbase(cb1, cb2)
@@ -315,7 +332,7 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 
 	if tmpl != nil {
 		if err := s.sendJobToChannel(ch, tmpl); err != nil {
-			log.Printf("[sv2] session %s: initial job send failed: %v", s.id, err)
+			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		}
 	}
 
@@ -379,7 +396,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 
 	if !result.MeetsPool {
 		ch.RecordRejection()
-		log.Printf("[sv2] session %s ch=%d: share rejected (low difficulty) hash=%s",
+		s.logf("[sv2] session %s ch=%d: share rejected (low difficulty) hash=%s",
 			s.id, share.ChannelID, result.HashHex[:16])
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
@@ -387,7 +404,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 
 	// Valid share.
 	lastSeq, accepted, sumDiff := ch.RecordShare(share.SequenceNum, result.Difficulty)
-	log.Printf("[sv2] session %s ch=%d: share accepted diff=%.2f hash=%s block=%v",
+	s.logf("[sv2] session %s ch=%d: share accepted diff=%.2f hash=%s block=%v",
 		s.id, share.ChannelID, result.Difficulty, result.HashHex[:16], result.MeetsBlock)
 
 	// Notify the engine (e.g., to submit block to node RPC).
@@ -428,7 +445,7 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 		if s.coinbaseBuilder != nil {
 			cb1, cb2, err := s.coinbaseBuilder(ch.UserIdentity())
 			if err != nil {
-				log.Printf("[sv2] session %s ch=%d: coinbase refresh failed: %v", s.id, ch.ID(), err)
+				s.logf("[sv2] session %s ch=%d: coinbase refresh failed: %v", s.id, ch.ID(), err)
 				// Keep the previous coinbase rather than falling back to the
 				// shared template coinbase — mining with a stale-but-valid
 				// coinbase for one extra job is safer than silently paying
@@ -440,11 +457,11 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 
 		// SetNewPrevHash first, then NewMiningJob.
 		if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
-			log.Printf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
+			s.logf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
 			continue
 		}
 		if err := s.sendJobToChannel(ch, tmpl); err != nil {
-			log.Printf("[sv2] session %s ch=%d: sendJob error: %v", s.id, ch.ID(), err)
+			s.logf("[sv2] session %s ch=%d: sendJob error: %v", s.id, ch.ID(), err)
 		}
 	}
 }
@@ -517,7 +534,7 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 				if err := s.codec.WriteFrame(ExtensionTypeMining, MsgSetTarget, setTargetPayload); err != nil {
 					return fmt.Errorf("send SetTarget: %w", err)
 				}
-				log.Printf("[sv2] session %s ch=%d: vardiff applied %.4f", s.id, ch.ID(), newDiff)
+				s.logf("[sv2] session %s ch=%d: vardiff applied %.4f", s.id, ch.ID(), newDiff)
 			}
 		}
 		// else: will flush on next clean job (VarDiffOnNewBlock=true, future job)
@@ -554,7 +571,7 @@ func (s *Session) Close() {
 			ch.Close()
 		}
 		s.mu.Unlock()
-		log.Printf("[sv2] session %s: disconnected", s.id)
+		s.logf("[sv2] session %s: disconnected", s.id)
 	})
 }
 

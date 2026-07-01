@@ -47,6 +47,15 @@ import (
 // the same way coinrunner.go's AuthorizeHandler does for V1.
 type CoinbaseBuilderFunc func(userIdentity string) (coinbase1, coinbase2 []byte, err error)
 
+// sv2Logger is a minimal interface satisfied by pkg/logging.Logger.
+// Defined here as an interface so pkg/stratumv2 does not need to import
+// pkg/logging directly, keeping the package independently usable.
+type sv2Logger interface {
+	Info(format string, args ...interface{})
+	Warn(format string, args ...interface{})
+	Error(format string, args ...interface{})
+}
+
 // Config holds all tunable parameters for the SV2 server.
 type Config struct {
 	// ListenAddr is the TCP address to listen on, e.g. ":3335".
@@ -97,6 +106,13 @@ type Config struct {
 
 	// CoinTicker is a short string like "BCH" used in log messages.
 	CoinTicker string
+
+	// Logger is the engine's structured logger. When set, all SV2 log output
+	// uses the same format as the rest of the engine ("[2006-01-02 15:04:05]"
+	// with INFO/WARN/ERROR levels). When nil, falls back to Go's stdlib
+	// log.Printf (the old behaviour) so pkg/stratumv2 remains usable
+	// standalone outside the engine.
+	Logger sv2Logger
 }
 
 // Server is the SV2 Mining Protocol server.
@@ -117,6 +133,34 @@ type Server struct {
 	// Statistics (atomic).
 	totalConnections  uint64
 	activeConnections int64
+}
+
+// logInfo/logWarn/logError dispatch to the structured logger when one is
+// configured, or fall back to Go's stdlib log.Printf so the package stays
+// usable outside the engine. Output format matches the rest of the engine
+// when Logger is set: "[2006-01-02 15:04:05] [INFO] message".
+func (srv *Server) logInfo(format string, args ...interface{}) {
+	if srv.cfg.Logger != nil {
+		srv.cfg.Logger.Info(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
+}
+
+func (srv *Server) logWarn(format string, args ...interface{}) {
+	if srv.cfg.Logger != nil {
+		srv.cfg.Logger.Warn(format, args...)
+	} else {
+		log.Printf("WARN "+format, args...)
+	}
+}
+
+func (srv *Server) logError(format string, args ...interface{}) {
+	if srv.cfg.Logger != nil {
+		srv.cfg.Logger.Error(format, args...)
+	} else {
+		log.Printf("ERROR "+format, args...)
+	}
 }
 
 // NewServer creates a new SV2 Server with the given config.
@@ -152,9 +196,9 @@ func (srv *Server) Start() error {
 
 	pubHex := hex.EncodeToString(srv.cfg.StaticKeypair.ellSwiftPub[:])
 	authPubHex := hex.EncodeToString(func() []byte { b := srv.cfg.AuthorityKeypair.XOnlyPubKeyBytes(); return b[:] }())
-	log.Printf("[sv2-%s] server listening on %s", srv.cfg.CoinTicker, srv.cfg.ListenAddr)
-	log.Printf("[sv2-%s] static key EllSwift snapshot (changes every restart by design): %s", srv.cfg.CoinTicker, pubHex)
-	log.Printf("[sv2-%s] authority pubkey (X-only, stable — pin this client-side): %s", srv.cfg.CoinTicker, authPubHex)
+	srv.logInfo("[sv2-%s] server listening on %s", srv.cfg.CoinTicker, srv.cfg.ListenAddr)
+	srv.logInfo("[sv2-%s] static key EllSwift snapshot (changes every restart by design): %s", srv.cfg.CoinTicker, pubHex)
+	srv.logInfo("[sv2-%s] authority pubkey (X-only, stable — pin this client-side): %s", srv.cfg.CoinTicker, authPubHex)
 
 	for {
 		conn, err := ln.Accept()
@@ -163,7 +207,7 @@ func (srv *Server) Start() error {
 			case <-srv.quit:
 				return nil // clean shutdown
 			default:
-				log.Printf("[sv2-%s] accept error: %v", srv.cfg.CoinTicker, err)
+				srv.logWarn("[sv2-%s] accept error: %v", srv.cfg.CoinTicker, err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
@@ -184,7 +228,7 @@ func (srv *Server) Stop() {
 			sess.Close()
 		}
 		srv.mu.Unlock()
-		log.Printf("[sv2-%s] server stopped", srv.cfg.CoinTicker)
+		srv.logInfo("[sv2-%s] server stopped", srv.cfg.CoinTicker)
 	})
 }
 
@@ -195,7 +239,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 	defer atomic.AddInt64(&srv.activeConnections, -1)
 
 	remote := conn.RemoteAddr().String()
-	log.Printf("[sv2-%s] new connection from %s", srv.cfg.CoinTicker, remote)
+	srv.logInfo("[sv2-%s] new connection from %s", srv.cfg.CoinTicker, remote)
 
 	// SV2 Noise_NX handshake (secp256k1 + EllSwift DH, single round trip).
 	// Returns the two transport-phase ciphers directly — the raw conn stays
@@ -205,13 +249,13 @@ func (srv *Server) handleConn(conn net.Conn) {
 	// rationale).
 	sendCipher, recvCipher, err := PerformSV2ServerHandshake(conn, srv.cfg.StaticKeypair, srv.cfg.AuthorityKeypair)
 	if err != nil {
-		log.Printf("[sv2-%s] handshake failed from %s: %v", srv.cfg.CoinTicker, remote, err)
+		srv.logWarn("[sv2-%s] handshake failed from %s: %v", srv.cfg.CoinTicker, remote, err)
 		conn.Close()
 		return
 	}
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder,
-		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff)
+		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess
@@ -255,7 +299,7 @@ func (srv *Server) BroadcastTemplate(tmpl *JobTemplate) {
 		return
 	}
 
-	log.Printf("[sv2-%s] broadcasting job %d to %d session(s) height=%d",
+	srv.logInfo("[sv2-%s] broadcasting job %d to %d session(s) height=%d",
 		srv.cfg.CoinTicker, tmpl.JobID, len(sessions), tmpl.Height)
 
 	for _, sess := range sessions {

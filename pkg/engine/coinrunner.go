@@ -255,6 +255,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				VarDiff:           vardiffCfg,
 				VarDiffOnNewBlock: cfg.VarDiff.OnNewBlock == nil || *cfg.VarDiff.OnNewBlock,
 				StartDiff:         cfg.Stratum.Difficulty,
+				Logger:            runner.logger,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
