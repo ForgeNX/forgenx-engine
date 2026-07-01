@@ -248,10 +248,13 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			runner.logger.Warn("[%s] SV2 disabled: authority key: %v", symbol, authErr)
 		} else {
 			sv2Cfg := stratumv2.Config{
-				ListenAddr:       fmt.Sprintf("%s:%d", cfg.Stratum.Host, cfg.Stratum.SV2Port),
-				StaticKeypair:    sv2KP,
-				AuthorityKeypair: sv2AuthKP,
-				CoinTicker:       symbol,
+				ListenAddr:        fmt.Sprintf("%s:%d", cfg.Stratum.Host, cfg.Stratum.SV2Port),
+				StaticKeypair:     sv2KP,
+				AuthorityKeypair:  sv2AuthKP,
+				CoinTicker:        symbol,
+				VarDiff:           vardiffCfg,
+				VarDiffOnNewBlock: cfg.VarDiff.OnNewBlock == nil || *cfg.VarDiff.OnNewBlock,
+				StartDiff:         cfg.Stratum.Difficulty,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",

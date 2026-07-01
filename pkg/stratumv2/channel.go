@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -60,6 +62,20 @@ type Channel struct {
 	poolTargetBytes []byte  // 32-byte LE B0_32 representation
 	poolDifficulty  float64 // human-readable difficulty (for logging / stats)
 
+	// Variable difficulty. Reuses pkg/stratum's VarDiff tracker directly —
+	// same algorithm V1 uses, fed from the same cfg.VarDiff config, so V1
+	// and SV2 channels mining the same coin retarget identically. nil if
+	// vardiff is disabled for this coin (cfg.VarDiff.Enabled == false).
+	//
+	// Mirrors V1's pendingDiff pattern exactly (see pkg/stratum/session.go):
+	// a retarget does NOT immediately push SetTarget mid-job — it's queued
+	// here and flushed on the next job dispatch (or immediately if
+	// vardiffOnNewBlock is false), avoiding a difficulty change mid-search
+	// that would desync the miner's nonce space.
+	vardiff           *stratum.VarDiff
+	pendingDiff       float64 // 0 = none pending
+	vardiffOnNewBlock bool    // mirrors ServerConfig.VarDiffOnNewBlock from V1
+
 	// Job tracking
 	currentJobID uint32 // the most recent job sent to this channel
 	// staleJobIDs tracks the last N job IDs so we can detect stale shares.
@@ -95,7 +111,18 @@ type Channel struct {
 var channelCounter uint32
 
 // newChannel allocates a new Channel with a unique ID and extranonce1.
-func newChannel(sessionID string, userIdentity string, extranoncePool *extranoncePool) (*Channel, error) {
+//
+// vardiffCfg may be nil (vardiff disabled for this coin); startDiff is the
+// channel's initial pool difficulty, normally cfg.Stratum.Difficulty —
+// the same value V1 uses as its starting point before any retargeting.
+func newChannel(
+	sessionID string,
+	userIdentity string,
+	extranoncePool *extranoncePool,
+	vardiffCfg *stratum.VarDiffConfig,
+	vardiffOnNewBlock bool,
+	startDiff float64,
+) (*Channel, error) {
 	id := atomic.AddUint32(&channelCounter, 1)
 
 	en1, err := extranoncePool.Allocate()
@@ -103,17 +130,28 @@ func newChannel(sessionID string, userIdentity string, extranoncePool *extranonc
 		return nil, fmt.Errorf("sv2 newChannel: %w", err)
 	}
 
-	target := DifficultyToTarget(DefaultPoolDifficulty)
+	if startDiff <= 0 {
+		startDiff = DefaultPoolDifficulty
+	}
+
+	target := DifficultyToTarget(startDiff)
 	targetBytes := TargetToBytes(target)
 
-	return &Channel{
-		id:              id,
-		userIdentity:    userIdentity,
-		sessionID:       sessionID,
-		extranonce1:     en1,
-		poolTargetBytes: targetBytes,
-		poolDifficulty:  DefaultPoolDifficulty,
-	}, nil
+	ch := &Channel{
+		id:                id,
+		userIdentity:      userIdentity,
+		sessionID:         sessionID,
+		extranonce1:       en1,
+		poolTargetBytes:   targetBytes,
+		poolDifficulty:    startDiff,
+		vardiffOnNewBlock: vardiffOnNewBlock,
+	}
+
+	if vardiffCfg != nil {
+		ch.vardiff = stratum.NewVarDiff(*vardiffCfg, startDiff)
+	}
+
+	return ch, nil
 }
 
 // ID returns the channel's server-assigned identifier.
@@ -200,11 +238,18 @@ func (c *Channel) IsJobValid(jobID uint32) bool {
 		jobID == c.staleJobIDs[1]
 }
 
-// RecordShare records a validated share.
-// Returns (lastAckedSeq, acceptedCount, sumDiff) for building SubmitSharesSuccess.
+// RecordShare records a validated share, and — if vardiff is enabled —
+// checks whether a retarget is due. Mirrors V1's exact behavior
+// (pkg/stratum/session.go's handleSubmit): if a difficulty change is
+// already pending delivery, the retarget check is SKIPPED for this share,
+// since shares at the old difficulty would otherwise feed the vardiff
+// window with increasingly-wrong assumptions while waiting for the new
+// target to actually reach the miner.
+//
+// Returns (lastAckedSeq, acceptedCount, sumDiff) for building
+// SubmitSharesSuccess — unchanged from before vardiff was added.
 func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint64) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.sharesAccepted++
 	c.totalDiff += diff
 
@@ -216,11 +261,66 @@ func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint
 	// scaled to the share difficulty units. We use uint64 truncation here.
 	diffInt := uint64(diff)
 	c.pendingSharesAcc += diffInt
-
 	sumDiff := c.pendingSharesAcc
 	c.pendingSharesAcc = 0
 
+	hasPending := c.pendingDiff > 0
+	vd := c.vardiff
+	c.mu.Unlock()
+
+	if vd != nil && !hasPending {
+		result := vd.RecordShare()
+		if result.Adjusted {
+			c.mu.Lock()
+			c.pendingDiff = result.ClampedDiff
+			c.mu.Unlock()
+		}
+	}
+
 	return seqNum, accepted, sumDiff
+}
+
+// PendingDiff returns the queued-but-not-yet-delivered vardiff target, and
+// whether one exists. Callers (session.go's job dispatch path) should call
+// FlushPendingDiff to actually apply it and clear the pending state.
+func (c *Channel) PendingDiff() (float64, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.pendingDiff, c.pendingDiff > 0
+}
+
+// VarDiffOnNewBlock reports whether this channel's pending diff should only
+// flush on clean (new-block) jobs, mirroring V1's ServerConfig.VarDiffOnNewBlock.
+func (c *Channel) VarDiffOnNewBlock() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.vardiffOnNewBlock
+}
+
+// FlushPendingDiff applies the channel's pending vardiff target (if any),
+// resets the vardiff measurement window, and returns the new target bytes
+// to send via SetTarget. Returns ok=false if nothing was pending.
+func (c *Channel) FlushPendingDiff() (targetBytes []byte, newDiff float64, ok bool) {
+	c.mu.Lock()
+	if c.pendingDiff <= 0 {
+		c.mu.Unlock()
+		return nil, 0, false
+	}
+	newDiff = c.pendingDiff
+	c.pendingDiff = 0
+	target := DifficultyToTarget(newDiff)
+	c.poolTargetBytes = TargetToBytes(target)
+	c.poolDifficulty = newDiff
+	out := make([]byte, 32)
+	copy(out, c.poolTargetBytes)
+	vd := c.vardiff
+	c.mu.Unlock()
+
+	if vd != nil {
+		vd.ResetWindow(newDiff)
+	}
+
+	return out, newDiff, true
 }
 
 // RecordRejection records a rejected share.

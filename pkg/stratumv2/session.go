@@ -6,6 +6,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -103,6 +105,14 @@ type Session struct {
 	// template's shared Coinbase1/Coinbase2 unmodified.
 	coinbaseBuilder CoinbaseBuilderFunc
 
+	// Variable difficulty config, passed through to every channel this
+	// session opens. See newChannel's doc comment for the full picture —
+	// this reuses pkg/stratum's VarDiff tracker directly, the same
+	// algorithm and config V1 uses.
+	vardiffCfg        *stratum.VarDiffConfig
+	vardiffOnNewBlock bool
+	startDiff         float64
+
 	// Signals
 	closeCh chan struct{}
 	once    sync.Once
@@ -110,15 +120,26 @@ type Session struct {
 
 // newSession wraps an already-handshaked conn, plus its transport-phase
 // ciphers, in a Session.
-func newSession(conn net.Conn, send, recv *sv2TransportCipher, onShare shareSubmitCallback, coinbaseBuilder CoinbaseBuilderFunc) *Session {
+func newSession(
+	conn net.Conn,
+	send, recv *sv2TransportCipher,
+	onShare shareSubmitCallback,
+	coinbaseBuilder CoinbaseBuilderFunc,
+	vardiffCfg *stratum.VarDiffConfig,
+	vardiffOnNewBlock bool,
+	startDiff float64,
+) *Session {
 	return &Session{
-		id:              conn.RemoteAddr().String(),
-		conn:            conn,
-		codec:           NewCodec(conn, send, recv),
-		channels:        make(map[uint32]*Channel),
-		onShare:         onShare,
-		coinbaseBuilder: coinbaseBuilder,
-		closeCh:         make(chan struct{}),
+		id:                conn.RemoteAddr().String(),
+		conn:              conn,
+		codec:             NewCodec(conn, send, recv),
+		channels:          make(map[uint32]*Channel),
+		onShare:           onShare,
+		coinbaseBuilder:   coinbaseBuilder,
+		vardiffCfg:        vardiffCfg,
+		vardiffOnNewBlock: vardiffOnNewBlock,
+		startDiff:         startDiff,
+		closeCh:           make(chan struct{}),
 	}
 }
 
@@ -242,7 +263,7 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	}
 	s.mu.Unlock()
 
-	ch, err := newChannel(s.id, req.UserIdentity, globalExtranoncePool)
+	ch, err := newChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, s.startDiff)
 	if err != nil {
 		resp, _ := EncodeOpenStandardMiningChannelError(req.RequestID, "internal-error")
 		_ = s.codec.WriteFrame(ExtensionTypeMining, MsgOpenStandardMiningChannelError, resp)
@@ -468,8 +489,39 @@ func (s *Session) sendPrevHashToChannel(ch *Channel, tmpl *JobTemplate) error {
 // raw format is for Extended Channels only (NewExtendedMiningJob, a
 // different message this package does not currently implement, since
 // ForgeNX only opens Standard Channels with miners today).
+// sendJobToChannel sends SetNewPrevHash (if applicable) and NewMiningJob to
+// a single channel. Flushes any pending vardiff first — exactly mirroring
+// V1's SendJob logic (pkg/stratum/session.go): send SetTarget with the new
+// difficulty, reset the vardiff measurement window, THEN send the job, so
+// the miner's first shares on this job are already at the correct target.
+//
+// When VarDiffOnNewBlock is true (the BCH default), the flush only happens
+// on clean/active jobs (tmpl.IsFutureJob==false), not on pre-staged future
+// jobs, to avoid flushing before the block boundary where it would be
+// meaningless.
 func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 	ch.SetCurrentJob(tmpl.JobID)
+
+	// Flush pending vardiff before sending the job, but only when appropriate:
+	// - VarDiffOnNewBlock=false: always flush immediately (V1's "mid-block" mode)
+	// - VarDiffOnNewBlock=true: only flush on active/clean jobs (new block boundary)
+	if _, hasPending := ch.PendingDiff(); hasPending {
+		shouldFlush := !ch.VarDiffOnNewBlock() || !tmpl.IsFutureJob
+		if shouldFlush {
+			targetBytes, newDiff, flushed := ch.FlushPendingDiff()
+			if flushed {
+				setTargetPayload, err := EncodeSetTarget(ch.ID(), targetBytes)
+				if err != nil {
+					return fmt.Errorf("encode SetTarget: %w", err)
+				}
+				if err := s.codec.WriteFrame(ExtensionTypeMining, MsgSetTarget, setTargetPayload); err != nil {
+					return fmt.Errorf("send SetTarget: %w", err)
+				}
+				log.Printf("[sv2] session %s ch=%d: vardiff applied %.4f", s.id, ch.ID(), newDiff)
+			}
+		}
+		// else: will flush on next clean job (VarDiffOnNewBlock=true, future job)
+	}
 
 	merkleRoot := channelMerkleRoot(ch, tmpl)
 

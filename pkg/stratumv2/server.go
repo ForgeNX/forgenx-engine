@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -74,6 +76,24 @@ type Config struct {
 	// is built individually from its UserIdentity instead of using the
 	// JobTemplate's shared Coinbase1/Coinbase2. Leave nil for pool mode.
 	CoinbaseBuilder CoinbaseBuilderFunc
+
+	// VarDiff configures variable difficulty for channels on this server,
+	// reusing pkg/stratum's VarDiff tracker directly — the SAME algorithm
+	// and config V1 uses (cfg.VarDiff in the coin's JSON config), so V1 and
+	// SV2 miners on the same coin retarget identically. Leave nil to
+	// disable vardiff entirely (channels stay at StartDiff forever).
+	VarDiff *stratum.VarDiffConfig
+
+	// VarDiffOnNewBlock mirrors V1's ServerConfig.VarDiffOnNewBlock: when
+	// true (the default), pending diff changes only flush on clean
+	// (new-block) jobs, avoiding a difficulty change mid-search. When
+	// false, changes flush immediately with a job resend.
+	VarDiffOnNewBlock bool
+
+	// StartDiff is each new channel's initial pool difficulty before any
+	// vardiff retargeting — normally cfg.Stratum.Difficulty, the same
+	// starting point V1 uses. Falls back to DefaultPoolDifficulty if <= 0.
+	StartDiff float64
 
 	// CoinTicker is a short string like "BCH" used in log messages.
 	CoinTicker string
@@ -190,7 +210,8 @@ func (srv *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder)
+	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder,
+		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess
