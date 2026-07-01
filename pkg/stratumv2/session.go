@@ -38,9 +38,10 @@ const (
 	// connection may open. Reasonable limit for ASICs (typically 1-4).
 	maxChannelsPerSession = 16
 
-	// readDeadlineSeconds is the per-frame read deadline for established sessions.
-	// Miners should send shares or keepalives; if silent for this long, drop.
-	readDeadlineSeconds = 120
+	// readDeadlineSeconds is the default per-frame read deadline if no config value
+	// is provided. Equivalent to GSS's "Connection Timeout". Configurable via
+	// Config.ConnectionTimeoutSeconds so users can increase it for high difficulty.
+	defaultReadDeadlineSeconds = 600
 
 	// SetupConnection.flags bits (client → server), per
 	// sv2-spec 05-Mining-Protocol.md §5.3.1. We accept all three from
@@ -113,6 +114,11 @@ type Session struct {
 	vardiffOnNewBlock bool
 	startDiff         float64
 
+	// ConnectionTimeoutSeconds is the read deadline per frame. If the miner
+	// sends nothing for this long, the connection is dropped. Equivalent to
+	// GSS's "Connection Timeout". Defaults to 600s if zero.
+	connectionTimeoutSeconds int
+
 	// Structured logger (optional). When set, log output matches the engine's
 	// format. When nil, falls back to log.Printf via s.logf.
 	logger sv2Logger
@@ -144,19 +150,21 @@ func newSession(
 	vardiffOnNewBlock bool,
 	startDiff float64,
 	logger sv2Logger,
+	connectionTimeoutSeconds int,
 ) *Session {
 	return &Session{
-		id:                conn.RemoteAddr().String(),
-		conn:              conn,
-		codec:             NewCodec(conn, send, recv),
-		channels:          make(map[uint32]*Channel),
-		onShare:           onShare,
-		coinbaseBuilder:   coinbaseBuilder,
-		vardiffCfg:        vardiffCfg,
-		vardiffOnNewBlock: vardiffOnNewBlock,
-		startDiff:         startDiff,
-		logger:            logger,
-		closeCh:           make(chan struct{}),
+		id:                       conn.RemoteAddr().String(),
+		conn:                     conn,
+		codec:                    NewCodec(conn, send, recv),
+		channels:                 make(map[uint32]*Channel),
+		onShare:                  onShare,
+		coinbaseBuilder:          coinbaseBuilder,
+		vardiffCfg:               vardiffCfg,
+		vardiffOnNewBlock:        vardiffOnNewBlock,
+		startDiff:                startDiff,
+		connectionTimeoutSeconds: connectionTimeoutSeconds,
+		logger:                   logger,
+		closeCh:                  make(chan struct{}),
 	}
 }
 
@@ -180,7 +188,11 @@ func (s *Session) Run() {
 		default:
 		}
 
-		if err := s.conn.SetReadDeadline(time.Now().Add(readDeadlineSeconds * time.Second)); err != nil {
+		timeout := s.connectionTimeoutSeconds
+		if timeout <= 0 {
+			timeout = defaultReadDeadlineSeconds
+		}
+		if err := s.conn.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second)); err != nil {
 			return
 		}
 

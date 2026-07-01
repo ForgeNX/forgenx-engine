@@ -107,6 +107,12 @@ type Config struct {
 	// CoinTicker is a short string like "BCH" used in log messages.
 	CoinTicker string
 
+	// ConnectionTimeoutSeconds is the read deadline per frame — how long the
+	// server waits for the miner to send anything (share, keepalive, etc.)
+	// before dropping the connection. Equivalent to GSS's "Connection Timeout".
+	// Defaults to 600s if zero or unset.
+	ConnectionTimeoutSeconds int
+
 	// Logger is the engine's structured logger. When set, all SV2 log output
 	// uses the same format as the rest of the engine ("[2006-01-02 15:04:05]"
 	// with INFO/WARN/ERROR levels). When nil, falls back to Go's stdlib
@@ -255,7 +261,8 @@ func (srv *Server) handleConn(conn net.Conn) {
 	}
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder,
-		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger)
+		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger,
+		srv.cfg.ConnectionTimeoutSeconds)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess

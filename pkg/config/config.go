@@ -64,12 +64,13 @@ type StratumConfig struct {
 	Port              int     `json:"port"`
 	Difficulty        float64 `json:"difficulty"`
 	PingEnabled       bool    `json:"ping_enabled"`
-	PingInterval      int     `json:"ping_interval"`        // seconds between server-sent pings (0 = disabled)
-	AcceptSuggestDiff bool    `json:"accept_suggest_diff"`  // honor mining.suggest_difficulty from miners
-	StaleShareGrace   int     `json:"stale_share_grace"`    // seconds to accept shares after a new block (default 5)
-	LowDiffShareGrace int     `json:"low_diff_share_grace"` // seconds to accept shares at previous diff after a change (default 5)
-	SV2Enabled        bool    `json:"sv2_enabled"`          // enable the Stratum V2 listener for this coin (default false)
-	SV2Port           int     `json:"sv2_port,omitempty"`   // TCP port for the SV2 listener. Must be unique across V1 and all V2 listeners — NOT derived from Port.
+	PingInterval      int     `json:"ping_interval"`                // seconds between server-sent pings (0 = disabled)
+	AcceptSuggestDiff bool    `json:"accept_suggest_diff"`          // honor mining.suggest_difficulty from miners
+	StaleShareGrace   int     `json:"stale_share_grace"`            // seconds to accept shares after a new block (default 5)
+	LowDiffShareGrace int     `json:"low_diff_share_grace"`         // seconds to accept shares at previous diff after a change (default 5)
+	SV2Enabled        bool    `json:"sv2_enabled"`                  // enable the Stratum V2 listener for this coin (default false)
+	SV2Port           int     `json:"sv2_port,omitempty"`           // TCP port for the SV2 listener. Must be unique across V1 and all V2 listeners — NOT derived from Port.
+	ConnectionTimeout int     `json:"connection_timeout,omitempty"` // seconds before dropping an idle SV2 miner (0 = default 600). Equivalent to GSS Connection Timeout.
 }
 
 // MiningConfig holds mining-related settings.
