@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -634,6 +635,50 @@ func (r *CoinRunner) Hashrate() float64 {
 // persistSV2AuthPubkey writes the authority public key into the coin's
 // JSON config file so the ForgeNX UI can display it without needing root
 // access to the key files. Called once at SV2 server startup.
+// sv2AuthPubkeyToBase58 encodes a 32-byte X-only SV2 authority pubkey into
+// the Base58Check format Bitaxe firmware expects for sv2_auth_pk:
+//
+//	Base58Check( 0x01 0x00 || 32_byte_xonly_pubkey )
+func sv2AuthPubkeyToBase58(pubkeyHex string) (string, error) {
+	pubBytes, err := hex.DecodeString(pubkeyHex)
+	if err != nil || len(pubBytes) != 32 {
+		return "", fmt.Errorf("sv2 authority pubkey: %v", err)
+	}
+	payload := make([]byte, 34)
+	payload[0] = 0x01
+	payload[1] = 0x00
+	copy(payload[2:], pubBytes)
+	h1 := sha256.Sum256(payload)
+	h2 := sha256.Sum256(h1[:])
+	full := append(payload, h2[:4]...)
+	const alpha = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+	// Convert bytes to base58 using digit-by-digit division
+	digits := []byte{0}
+	for _, b := range full {
+		carry := int(b)
+		for i := 0; i < len(digits); i++ {
+			carry += int(digits[i]) << 8
+			digits[i] = byte(carry % 58)
+			carry /= 58
+		}
+		for carry > 0 {
+			digits = append(digits, byte(carry%58))
+			carry /= 58
+		}
+	}
+	result := make([]byte, 0, len(digits))
+	for _, b := range full {
+		if b != 0 {
+			break
+		}
+		result = append(result, '1')
+	}
+	for i := len(digits) - 1; i >= 0; i-- {
+		result = append(result, alpha[digits[i]])
+	}
+	return string(result), nil
+}
+
 func persistSV2AuthPubkey(symbol, authPubHex string, logger *logging.Logger) {
 	configPath := fmt.Sprintf("/pool/coins/%s.json", strings.ToLower(symbol))
 	data, err := os.ReadFile(configPath)
@@ -649,7 +694,12 @@ func persistSV2AuthPubkey(symbol, authPubHex string, logger *logging.Logger) {
 		stratum = make(map[string]interface{})
 		cfg["stratum"] = stratum
 	}
-	stratum["sv2_authority_pubkey"] = authPubHex
+	encoded, encErr := sv2AuthPubkeyToBase58(authPubHex)
+	if encErr != nil {
+		logger.Warn("[%s] SV2 authority pubkey encoding failed: %v", symbol, encErr)
+		return
+	}
+	stratum["sv2_authority_pubkey"] = encoded
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return
