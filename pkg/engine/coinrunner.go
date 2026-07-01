@@ -12,6 +12,7 @@ package engine
 import (
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -329,6 +330,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				authPubHex := hex.EncodeToString(func() []byte { b := sv2AuthKP.XOnlyPubKeyBytes(); return b[:] }())
 				runner.logger.Info("[%s] SV2 server configured on %s (solo=%v) authority_pubkey=%s",
 					symbol, sv2Cfg.ListenAddr, soloMode, authPubHex)
+				persistSV2AuthPubkey(symbol, authPubHex, runner.logger)
 			}
 		}
 	} // closes "if !cfg.Stratum.SV2Enabled { ... } else { ... }"
@@ -628,3 +630,36 @@ func (r *CoinRunner) Hashrate() float64 {
 
 	return (hashes / 60) / 1e12
 }
+
+// persistSV2AuthPubkey writes the authority public key into the coin's
+// JSON config file so the ForgeNX UI can display it without needing root
+// access to the key files. Called once at SV2 server startup.
+func persistSV2AuthPubkey(symbol, authPubHex string, logger *logging.Logger) {
+	configPath := fmt.Sprintf("/pool/coins/%s.json", strings.ToLower(symbol))
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+	stratum, ok := cfg["stratum"].(map[string]interface{})
+	if !ok {
+		stratum = make(map[string]interface{})
+		cfg["stratum"] = stratum
+	}
+	stratum["sv2_authority_pubkey"] = authPubHex
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		logger.Warn("[%s] could not persist SV2 authority pubkey: %v", symbol, err)
+		return
+	}
+}
+
+// persistSV2AuthPubkey writes the SV2 authority public key into the coin's
+// JSON config so the ForgeNX UI can display it without needing root access
+// to the key files. Called once at SV2 server startup.
