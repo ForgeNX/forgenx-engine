@@ -408,8 +408,8 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 
 	if !result.MeetsPool {
 		ch.RecordRejection()
-		s.logf("[sv2] session %s ch=%d: share rejected (low difficulty) hash=%s",
-			s.id, share.ChannelID, result.HashHex[:16])
+		s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
+			s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
