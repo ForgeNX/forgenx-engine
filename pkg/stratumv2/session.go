@@ -415,7 +415,24 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	}
 
 	// Valid share.
-	lastSeq, accepted, sumDiff := ch.RecordShare(share.SequenceNum, result.Difficulty)
+	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)
+
+	// GSS-style vardiff diagnostic logging
+	if diag := vdResult.DiagString(); diag != "" {
+		if vdResult.Adjusted {
+			reason := "shares_too_fast"
+			if vdResult.ClampedDiff < vdResult.CurrentDiff {
+				reason = "shares_too_slow"
+			}
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF DIAG: %s",
+				s.id, ch.ID(), ch.UserIdentity(), diag)
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty adjustment pending (will send with next job): %.0f -> %.0f (%s)",
+				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, vdResult.ClampedDiff, reason)
+		} else if vdResult.Reason == "within_variance" {
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF: No adjustment - within_variance (difficulty stays at %.0f) | %s",
+				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, diag)
+		}
+	}
 	s.logf("[sv2] session %s ch=%d: share accepted diff=%.2f hash=%s block=%v",
 		s.id, share.ChannelID, result.Difficulty, result.HashHex[:16], result.MeetsBlock)
 
@@ -546,7 +563,7 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 				if err := s.codec.WriteFrame(ExtensionTypeMining, MsgSetTarget, setTargetPayload); err != nil {
 					return fmt.Errorf("send SetTarget: %w", err)
 				}
-				s.logf("[sv2] session %s ch=%d: vardiff applied %.4f", s.id, ch.ID(), newDiff)
+				s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty updated to %.0f (sent with new job)", s.id, ch.ID(), ch.UserIdentity(), newDiff)
 			}
 		}
 		// else: will flush on next clean job (VarDiffOnNewBlock=true, future job)

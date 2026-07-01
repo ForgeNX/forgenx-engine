@@ -248,7 +248,7 @@ func (c *Channel) IsJobValid(jobID uint32) bool {
 //
 // Returns (lastAckedSeq, acceptedCount, sumDiff) for building
 // SubmitSharesSuccess — unchanged from before vardiff was added.
-func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint64) {
+func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint64, stratum.VarDiffResult) {
 	c.mu.Lock()
 	c.sharesAccepted++
 	c.totalDiff += diff
@@ -268,16 +268,17 @@ func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint
 	vd := c.vardiff
 	c.mu.Unlock()
 
+	var vdResult stratum.VarDiffResult
 	if vd != nil && !hasPending {
-		result := vd.RecordShare()
-		if result.Adjusted {
+		vdResult = vd.RecordShare()
+		if vdResult.Adjusted {
 			c.mu.Lock()
-			c.pendingDiff = result.ClampedDiff
+			c.pendingDiff = vdResult.ClampedDiff
 			c.mu.Unlock()
 		}
 	}
 
-	return seqNum, accepted, sumDiff
+	return seqNum, accepted, sumDiff, vdResult
 }
 
 // PendingDiff returns the queued-but-not-yet-delivered vardiff target, and
