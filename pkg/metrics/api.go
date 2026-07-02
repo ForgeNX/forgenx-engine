@@ -230,8 +230,8 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 			}
 			if ws, ok := workerStats[sess.WorkerName]; ok {
 				ws.mu.Lock()
-				mi.SharesAccepted = ws.SharesAccepted
-				mi.SharesRejected = ws.SharesRejected
+				mi.SharesAccepted = sess.SharesAccepted
+				mi.SharesRejected = sess.SharesRejected
 				mi.SharesStale = ws.SharesStale
 				mi.BlocksFound = ws.BlocksFound
 				mi.LastShareTime = ws.LastShareTime
