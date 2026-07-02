@@ -263,7 +263,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder,
 		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds)
+		srv.cfg.ConnectionTimeoutSeconds, srv)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess
@@ -461,6 +461,13 @@ func merkleRootFromBranch(coinbaseTxHash [32]byte, branch [][32]byte) [32]byte {
 func doublesha256(b []byte) [32]byte {
 	first := sha256.Sum256(b)
 	return sha256.Sum256(first[:])
+}
+
+// LatestTemplate returns the most recently broadcast job template, or nil.
+func (srv *Server) LatestTemplate() *JobTemplate {
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	return srv.latestTemplate
 }
 
 // Sessions returns a []stratum.SessionInfo for all active SV2 channels,

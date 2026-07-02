@@ -152,6 +152,7 @@ func newSession(
 	startDiff float64,
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
+	srv *Server,
 ) *Session {
 	return &Session{
 		id:                       conn.RemoteAddr().String(),
@@ -338,21 +339,17 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 		return err
 	}
 
-	// If we already have a current template, send it immediately so the miner
-	// can start working without waiting for the next ZMQ notification.
-	s.templateMu.RLock()
-	tmpl := s.lastTemplate
-	s.templateMu.RUnlock()
-
-	if tmpl != nil {
-		if err := s.sendJobToChannel(ch, tmpl); err != nil {
-			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
+	// Fetch the latest template directly from the server — no goroutine race.
+	if s.srv != nil {
+		if tmpl := s.srv.LatestTemplate(); tmpl != nil {
+			if err := s.sendJobToChannel(ch, tmpl); err != nil {
+				s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
+			}
 		}
 	}
 
-	return nil
 }
-
+	return nil
 // handleSubmitShares processes a SubmitSharesStandard message.
 func (s *Session) handleSubmitShares(payload []byte) error {
 	share, err := DecodeSubmitSharesStandard(payload)
