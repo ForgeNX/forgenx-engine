@@ -642,7 +642,7 @@ func (r *CoinRunner) Hashrate() float64 {
 
 	hashes := diffSum * 4294967296
 
-	return (hashes / 60) / 1e12
+	return (hashes / 300) / 1e12
 }
 
 // persistSV2AuthPubkey writes the authority public key into the coin's
