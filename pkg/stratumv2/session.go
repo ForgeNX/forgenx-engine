@@ -342,11 +342,15 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	}
 
 	// Fetch the latest template directly from the server — no goroutine race.
-	if s.srv != nil {
-		if tmpl := s.srv.LatestTemplate(); tmpl != nil {
-			if err := s.sendJobToChannel(ch, tmpl); err != nil {
-				s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
-			}
+	if s.srv == nil {
+		s.logf("[sv2] session %s: srv is nil, cannot send initial job", s.id)
+	} else if tmpl := s.srv.LatestTemplate(); tmpl == nil {
+		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
+	} else {
+		if err := s.sendJobToChannel(ch, tmpl); err != nil {
+			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
+		} else {
+			s.logf("[sv2] session %s: initial job sent successfully", s.id)
 		}
 	}
 	return nil
