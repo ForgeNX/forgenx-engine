@@ -347,7 +347,9 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	} else if tmpl := s.srv.LatestTemplate(); tmpl == nil {
 		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
 	} else {
-		if err := s.sendJobToChannel(ch, tmpl); err != nil {
+			initTmpl := *tmpl // copy so we don't mutate the cached template
+			initTmpl.IsFutureJob = true // first job after channel open must have min_ntime unset
+		if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		} else {
 			s.logf("[sv2] session %s: initial job sent successfully", s.id)
