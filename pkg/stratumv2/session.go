@@ -435,8 +435,8 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, diag)
 		}
 	}
-	s.logf("[sv2] session %s ch=%d: share accepted diff=%.2f hash=%s block=%v",
-		s.id, share.ChannelID, result.Difficulty, result.HashHex[:16], result.MeetsBlock)
+	s.logf("[sv2] session %s ch=%d: %s Share accepted (diff %.2f) hash=%s block=%v",
+		s.id, share.ChannelID, ch.UserIdentity(), result.Difficulty, result.HashHex[:16], result.MeetsBlock)
 
 	// Notify the engine (e.g., to submit block to node RPC).
 	if s.onShare != nil {
