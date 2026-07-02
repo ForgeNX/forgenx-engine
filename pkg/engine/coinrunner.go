@@ -427,6 +427,27 @@ func (cr *CoinRunner) Start() error {
 		}()
 	}
 
+	// Prime the SV2 server latestTemplate so miners connecting before
+	// the first ZMQ block notification get work immediately.
+	if cr.sv2Server != nil {
+		go func() {
+			if tmpl := cr.jobMgr.LatestTemplate(); tmpl != nil {
+				src := stratumv2.V1JobSource{
+					CoinbasePrefix: tmpl.CoinbasePart1,
+					CoinbaseSuffix: tmpl.CoinbasePart2,
+					MerkleLeaves:   tmpl.MerkleLeaves,
+					PrevHash:       tmpl.Job.PrevHash,
+					NBits:          tmpl.Job.NBits,
+					NTimeHex:       tmpl.Job.NTime,
+					Height:         uint32(tmpl.Height),
+					CleanJobs:      true,
+				}
+				if sv2Tmpl, err := stratumv2.BuildTemplateFromV1Job(src); err == nil {
+					cr.sv2Server.BroadcastTemplate(sv2Tmpl)
+				}
+			}
+		}()
+	}
 	cr.logger.Info("[%s] coin runner started", cr.symbol)
 
 	// Start sync monitoring loop
