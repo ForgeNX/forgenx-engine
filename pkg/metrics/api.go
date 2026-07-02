@@ -38,9 +38,11 @@ type MinerInfo struct {
 	RemoteAddr     string    `json:"remote_addr"`
 	Difficulty     float64   `json:"difficulty"`
 	ConnectedAt    time.Time `json:"connected_at"`
-	SharesAccepted uint64    `json:"shares_accepted"`
-	SharesRejected uint64    `json:"shares_rejected"`
-	SharesStale    uint64    `json:"shares_stale"`
+	SharesAccepted        uint64    `json:"shares_accepted"`
+	SharesRejected        uint64    `json:"shares_rejected"`
+	SharesStale           uint64    `json:"shares_stale"`
+	SessionSharesAccepted uint64    `json:"session_shares_accepted"`
+	SessionSharesRejected uint64    `json:"session_shares_rejected"`
 	BlocksFound    uint64    `json:"blocks_found"`
 	LastShareTime  time.Time `json:"last_share_time,omitempty"`
 	BestDifficulty float64   `json:"best_difficulty"`
@@ -230,8 +232,10 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 			}
 			if ws, ok := workerStats[sess.WorkerName]; ok {
 				ws.mu.Lock()
-				mi.SharesAccepted = sess.SharesAccepted
-				mi.SharesRejected = sess.SharesRejected
+				mi.SharesAccepted = ws.SharesAccepted
+				mi.SharesRejected = ws.SharesRejected
+				mi.SessionSharesAccepted = sess.SharesAccepted
+				mi.SessionSharesRejected = sess.SharesRejected
 				mi.SharesStale = ws.SharesStale
 				mi.BlocksFound = ws.BlocksFound
 				mi.LastShareTime = ws.LastShareTime
