@@ -314,6 +314,7 @@ func (s *Stats) GetWorkerStats(symbol string) map[string]*WorkerStats {
 			BlocksFound:    ws.BlocksFound,
 			LastShareTime:  ws.LastShareTime,
 			BestDifficulty: ws.BestDifficulty,
+			recentShares:   append([]workerShareSample(nil), ws.recentShares...),
 		}
 		ws.mu.Unlock()
 	}
