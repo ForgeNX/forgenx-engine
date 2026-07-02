@@ -191,10 +191,10 @@ func (s *Stats) RecordShare(symbol string, result ShareResult, workerName string
 		ws.LastShareTime = time.Now()
 		if shareDiff > ws.BestDifficulty {
 			ws.BestDifficulty = shareDiff
-			if shareDiff > 0 {
-				ws.recentShares = append(ws.recentShares, workerShareSample{t: time.Now(), diff: shareDiff})
-				ws.pruneShares()
-			}
+		}
+		if shareDiff > 0 {
+			ws.recentShares = append(ws.recentShares, workerShareSample{t: time.Now(), diff: shareDiff})
+			ws.pruneShares()
 		}
 		ws.mu.Unlock()
 	}
