@@ -124,8 +124,9 @@ type Session struct {
 	logger sv2Logger
 
 	// Signals
-	closeCh chan struct{}
-	once    sync.Once
+	closeCh     chan struct{}
+	once        sync.Once
+	connectedAt time.Time
 }
 
 // logf logs at Info level via the structured logger if available, otherwise
@@ -154,6 +155,7 @@ func newSession(
 ) *Session {
 	return &Session{
 		id:                       conn.RemoteAddr().String(),
+		connectedAt:              time.Now(),
 		conn:                     conn,
 		codec:                    NewCodec(conn, send, recv),
 		channels:                 make(map[uint32]*Channel),
@@ -605,7 +607,22 @@ func (s *Session) Close() {
 }
 
 // ID returns a log-friendly identifier for this session.
-func (s *Session) ID() string { return s.id }
+func (s *Session) ID() string         { return s.id }
+func (s *Session) RemoteAddr() string { return s.id }
+func (s *Session) ConnectedAt() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.connectedAt
+}
+func (s *Session) Channels() []*Channel {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*Channel, 0, len(s.channels))
+	for _, ch := range s.channels {
+		out = append(out, ch)
+	}
+	return out
+}
 
 // ChannelCount returns the number of currently open channels.
 func (s *Session) ChannelCount() int {

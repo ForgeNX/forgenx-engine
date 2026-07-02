@@ -260,6 +260,8 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				Logger:                   runner.logger,
 				ConnectionTimeoutSeconds: cfg.Stratum.ConnectionTimeout,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
+					// Record in unified stats so SV2 workers appear in /miners and UI Workers tab.
+					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), result.Difficulty)
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
@@ -473,7 +475,11 @@ func (cr *CoinRunner) SessionCount() int {
 
 // Sessions returns info for all active sessions on this coin.
 func (cr *CoinRunner) Sessions() []stratum.SessionInfo {
-	return cr.server.Sessions()
+	v1 := cr.server.Sessions()
+	if cr.sv2Server == nil {
+		return v1
+	}
+	return append(v1, cr.sv2Server.Sessions()...)
 }
 
 // loadDonationAddress looks up the donation address for a coin symbol and network

@@ -450,3 +450,24 @@ func doublesha256(b []byte) [32]byte {
 	first := sha256.Sum256(b)
 	return sha256.Sum256(first[:])
 }
+
+// Sessions returns a []stratum.SessionInfo for all active SV2 channels,
+// merged with V1 sessions in CoinRunner for a unified worker list.
+func (srv *Server) Sessions() []stratum.SessionInfo {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	var out []stratum.SessionInfo
+	for _, sess := range srv.sessions {
+		for _, ch := range sess.Channels() {
+			out = append(out, stratum.SessionInfo{
+				ID:          fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
+				WorkerName:  ch.UserIdentity(),
+				RemoteAddr:  sess.RemoteAddr(),
+				Difficulty:  ch.Difficulty(),
+				ConnectedAt: sess.ConnectedAt(),
+				State:       "active",
+			})
+		}
+	}
+	return out
+}

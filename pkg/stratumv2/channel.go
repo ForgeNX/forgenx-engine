@@ -158,6 +158,11 @@ func newChannel(
 func (c *Channel) ID() uint32 { return c.id }
 
 // UserIdentity returns the miner-reported worker name.
+func (c *Channel) Difficulty() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.poolDifficulty
+}
 func (c *Channel) UserIdentity() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
