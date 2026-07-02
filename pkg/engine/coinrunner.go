@@ -260,10 +260,14 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				Logger:                   runner.logger,
 				ConnectionTimeoutSeconds: cfg.Stratum.ConnectionTimeout,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
+					// Use pool difficulty (not actual hash difficulty) for hashrate estimation.
+					// Actual hash diff can be astronomically high (lucky shares) and would
+					// massively skew rolling hashrate averages — same approach as V1.
+					poolDiff := ch.Difficulty()
 					// Record in unified stats so SV2 workers appear in /miners and UI Workers tab.
-					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), result.Difficulty)
+					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), poolDiff)
 					// Append to recentShares so CoinRunner.Hashrate() includes SV2 contribution.
-					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: result.Difficulty})
+					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: poolDiff})
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
