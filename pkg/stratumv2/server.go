@@ -126,8 +126,9 @@ type Server struct {
 	cfg      Config
 	listener net.Listener
 
-	mu       sync.RWMutex
-	sessions map[string]*Session // sessionID → Session
+	mu             sync.RWMutex
+	sessions       map[string]*Session
+	latestTemplate *JobTemplate // sessionID → Session
 
 	// Job counter — monotonically increasing job IDs.
 	jobCounter uint32
@@ -276,7 +277,14 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	// Push the most recent template so the miner can start immediately.
 	// (Session.handleOpenChannel also does this, but belt-and-suspenders.)
-	// Nothing to push here yet; template arrives via BroadcastTemplate.
+	// If we already have a template, push it to the new session immediately
+	// so the miner can start working without waiting for the next broadcast.
+	srv.mu.RLock()
+	latestTmpl := srv.latestTemplate
+	srv.mu.RUnlock()
+	if latestTmpl != nil {
+		go sess.UpdateTemplate(latestTmpl)
+	}
 
 	sess.Run() // blocks until disconnect
 }
@@ -294,6 +302,10 @@ func (srv *Server) handleConn(conn net.Conn) {
 func (srv *Server) BroadcastTemplate(tmpl *JobTemplate) {
 	// Assign a fresh job ID.
 	tmpl.JobID = atomic.AddUint32(&srv.jobCounter, 1)
+	// Cache so new sessions can get work immediately on connect.
+	srv.mu.Lock()
+	srv.latestTemplate = tmpl
+	srv.mu.Unlock()
 
 	srv.mu.RLock()
 	sessions := make([]*Session, 0, len(srv.sessions))
