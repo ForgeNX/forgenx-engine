@@ -118,6 +118,7 @@ type Session struct {
 	// sends nothing for this long, the connection is dropped. Equivalent to
 	// GSS's "Connection Timeout". Defaults to 600s if zero.
 	connectionTimeoutSeconds int
+	srv                      *Server
 
 	// Structured logger (optional). When set, log output matches the engine's
 	// format. When nil, falls back to log.Printf via s.logf.
@@ -166,6 +167,7 @@ func newSession(
 		vardiffOnNewBlock:        vardiffOnNewBlock,
 		startDiff:                startDiff,
 		connectionTimeoutSeconds: connectionTimeoutSeconds,
+		srv:                      srv,
 		logger:                   logger,
 		closeCh:                  make(chan struct{}),
 	}
