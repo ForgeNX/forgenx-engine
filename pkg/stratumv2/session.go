@@ -347,9 +347,9 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 			}
 		}
 	}
-
-}
 	return nil
+}
+
 // handleSubmitShares processes a SubmitSharesStandard message.
 func (s *Session) handleSubmitShares(payload []byte) error {
 	share, err := DecodeSubmitSharesStandard(payload)
