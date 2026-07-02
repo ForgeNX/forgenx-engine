@@ -532,10 +532,12 @@ func (s *Session) Info() SessionInfo {
 
 // SessionInfo holds session metadata for external consumption.
 type SessionInfo struct {
-	ID          string    `json:"id"`
-	WorkerName  string    `json:"worker_name"`
-	RemoteAddr  string    `json:"remote_addr"`
-	Difficulty  float64   `json:"difficulty"`
-	ConnectedAt time.Time `json:"connected_at"`
-	State       string    `json:"state"`
+	ID             string    `json:"id"`
+	WorkerName     string    `json:"worker_name"`
+	RemoteAddr     string    `json:"remote_addr"`
+	Difficulty     float64   `json:"difficulty"`
+	ConnectedAt    time.Time `json:"connected_at"`
+	State          string    `json:"state"`
+	SharesAccepted uint64    `json:"shares_accepted"`
+	SharesRejected uint64    `json:"shares_rejected"`
 }

@@ -478,13 +478,16 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 	var out []stratum.SessionInfo
 	for _, sess := range srv.sessions {
 		for _, ch := range sess.Channels() {
+			accepted, rejected, _ := ch.Stats()
 			out = append(out, stratum.SessionInfo{
 				ID:          fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
 				WorkerName:  ch.UserIdentity(),
 				RemoteAddr:  sess.RemoteAddr(),
 				Difficulty:  ch.Difficulty(),
 				ConnectedAt: sess.ConnectedAt(),
-				State:       "active",
+				State:          "active",
+				SharesAccepted: accepted,
+				SharesRejected: rejected,
 			})
 		}
 	}
