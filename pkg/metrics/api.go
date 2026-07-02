@@ -44,6 +44,9 @@ type MinerInfo struct {
 	BlocksFound    uint64    `json:"blocks_found"`
 	LastShareTime  time.Time `json:"last_share_time,omitempty"`
 	BestDifficulty float64   `json:"best_difficulty"`
+	Hashrate1m     float64   `json:"hashrate_1m"`
+	Hashrate5m     float64   `json:"hashrate_5m"`
+	Hashrate15m    float64   `json:"hashrate_15m"`
 }
 
 // MinersResponse is the JSON response for GET /miners.
@@ -226,12 +229,17 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 				ConnectedAt: sess.ConnectedAt,
 			}
 			if ws, ok := workerStats[sess.WorkerName]; ok {
+				ws.mu.Lock()
 				mi.SharesAccepted = ws.SharesAccepted
 				mi.SharesRejected = ws.SharesRejected
 				mi.SharesStale = ws.SharesStale
 				mi.BlocksFound = ws.BlocksFound
 				mi.LastShareTime = ws.LastShareTime
 				mi.BestDifficulty = ws.BestDifficulty
+				mi.Hashrate1m = ws.HashrateAt(1 * time.Minute)
+				mi.Hashrate5m = ws.HashrateAt(5 * time.Minute)
+				mi.Hashrate15m = ws.HashrateAt(15 * time.Minute)
+				ws.mu.Unlock()
 			}
 			miners = append(miners, mi)
 		}

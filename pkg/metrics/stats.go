@@ -18,34 +18,68 @@ import (
 type ShareResult int
 
 const (
-	ShareValid   ShareResult = iota
+	ShareValid ShareResult = iota
 	ShareInvalid
 	ShareStale
 )
 
 // WorkerStats holds per-worker statistics.
 type WorkerStats struct {
-	SharesAccepted  uint64    `json:"shares_accepted"`
-	SharesRejected  uint64    `json:"shares_rejected"`
-	SharesStale     uint64    `json:"shares_stale"`
-	BlocksFound     uint64    `json:"blocks_found"`
-	LastShareTime   time.Time `json:"last_share_time,omitempty"`
-	BestDifficulty  float64   `json:"best_difficulty"`
-	mu              sync.Mutex
+	SharesAccepted uint64    `json:"shares_accepted"`
+	SharesRejected uint64    `json:"shares_rejected"`
+	SharesStale    uint64    `json:"shares_stale"`
+	BlocksFound    uint64    `json:"blocks_found"`
+	LastShareTime  time.Time `json:"last_share_time,omitempty"`
+	BestDifficulty float64   `json:"best_difficulty"`
+	recentShares   []workerShareSample
+	mu             sync.Mutex
+}
+
+// workerShareSample is a timestamped share difficulty sample for hashrate calculation.
+type workerShareSample struct {
+	t    time.Time
+	diff float64
+}
+
+// HashrateAt returns the estimated hashrate (TH/s) over the given window.
+func (ws *WorkerStats) HashrateAt(window time.Duration) float64 {
+	cutoff := time.Now().Add(-window)
+	var diffSum float64
+	for _, s := range ws.recentShares {
+		if s.t.After(cutoff) {
+			diffSum += s.diff
+		}
+	}
+	if diffSum == 0 {
+		return 0
+	}
+	return (diffSum * 4294967296) / window.Seconds() / 1e12
+}
+
+// pruneShares removes samples older than 15 minutes.
+func (ws *WorkerStats) pruneShares() {
+	cutoff := time.Now().Add(-15 * time.Minute)
+	filtered := ws.recentShares[:0]
+	for _, s := range ws.recentShares {
+		if s.t.After(cutoff) {
+			filtered = append(filtered, s)
+		}
+	}
+	ws.recentShares = filtered
 }
 
 // CoinStats holds per-coin statistics.
 type CoinStats struct {
-	SharesAccepted   uint64    `json:"shares_accepted"`
-	SharesRejected   uint64    `json:"shares_rejected"`
-	SharesStale      uint64    `json:"shares_stale"`
-	BlocksFound      uint64    `json:"blocks_found"`
-	LastBlockHash    string    `json:"last_block_hash,omitempty"`
-	LastBlockHeight  int64     `json:"last_block_height,omitempty"`
-	LastBlockTime    time.Time `json:"last_block_time,omitempty"`
-        SyncProgress     float64   `json:"sync_progress"`
-	MaxPoolHashrate  float64   `json:"max_pool_hashrate"`
-	mu               sync.Mutex
+	SharesAccepted  uint64    `json:"shares_accepted"`
+	SharesRejected  uint64    `json:"shares_rejected"`
+	SharesStale     uint64    `json:"shares_stale"`
+	BlocksFound     uint64    `json:"blocks_found"`
+	LastBlockHash   string    `json:"last_block_hash,omitempty"`
+	LastBlockHeight int64     `json:"last_block_height,omitempty"`
+	LastBlockTime   time.Time `json:"last_block_time,omitempty"`
+	SyncProgress    float64   `json:"sync_progress"`
+	MaxPoolHashrate float64   `json:"max_pool_hashrate"`
+	mu              sync.Mutex
 }
 
 // Stats holds in-memory statistics for all coins.
@@ -73,32 +107,32 @@ func (s *Stats) UpdateMaxPoolHashrate(symbol string, current float64) {
 }
 
 func (s *Stats) SetSyncProgress(symbol string, progress float64) {
-        s.mu.RLock()
-        coin, ok := s.coins[symbol]
-        s.mu.RUnlock()
+	s.mu.RLock()
+	coin, ok := s.coins[symbol]
+	s.mu.RUnlock()
 
-        if !ok {
-                return
-        }
+	if !ok {
+		return
+	}
 
-        coin.mu.Lock()
-        coin.SyncProgress = progress
-        coin.mu.Unlock()
+	coin.mu.Lock()
+	coin.SyncProgress = progress
+	coin.mu.Unlock()
 }
 
 func (s *Stats) GetCoinsSnapshot() map[string]CoinStats {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    snapshot := make(map[string]CoinStats)
+	snapshot := make(map[string]CoinStats)
 
-    for symbol, coin := range s.coins {
-        coin.mu.Lock()
-        snapshot[symbol] = *coin
-        coin.mu.Unlock()
-    }
+	for symbol, coin := range s.coins {
+		coin.mu.Lock()
+		snapshot[symbol] = *coin
+		coin.mu.Unlock()
+	}
 
-    return snapshot
+	return snapshot
 }
 
 // NewStats creates a new Stats instance.
@@ -157,6 +191,10 @@ func (s *Stats) RecordShare(symbol string, result ShareResult, workerName string
 		ws.LastShareTime = time.Now()
 		if shareDiff > ws.BestDifficulty {
 			ws.BestDifficulty = shareDiff
+			if shareDiff > 0 {
+				ws.recentShares = append(ws.recentShares, workerShareSample{t: time.Now(), diff: shareDiff})
+				ws.pruneShares()
+			}
 		}
 		ws.mu.Unlock()
 	}

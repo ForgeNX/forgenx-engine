@@ -262,6 +262,8 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
 					// Record in unified stats so SV2 workers appear in /miners and UI Workers tab.
 					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), result.Difficulty)
+					// Append to recentShares so CoinRunner.Hashrate() includes SV2 contribution.
+					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: result.Difficulty})
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
