@@ -431,16 +431,18 @@ func (cr *CoinRunner) Start() error {
 	// the first ZMQ block notification get work immediately.
 	if cr.sv2Server != nil {
 		go func() {
-			if tmpl := cr.jobMgr.LatestTemplate(); tmpl != nil {
+			if evt := cr.jobMgr.LatestJobEvent(); evt != nil {
 				src := stratumv2.V1JobSource{
-					CoinbasePrefix: tmpl.CoinbasePart1,
-					CoinbaseSuffix: tmpl.CoinbasePart2,
-					MerkleLeaves:   tmpl.MerkleLeaves,
-					PrevHash:       tmpl.Job.PrevHash,
-					NBits:          tmpl.Job.NBits,
-					NTimeHex:       tmpl.Job.NTime,
-					Height:         uint32(tmpl.Height),
-					CleanJobs:      true,
+					JobIDHex:          evt.JobData.Job.JobID,
+					PrevBlockHashHex:  evt.Template.PreviousBlockHash,
+					Coinb1Hex:         evt.JobData.Coinb1,
+					Coinb2Hex:         evt.JobData.Coinb2,
+					MerkleBranchesHex: evt.JobData.Job.MerkleBranches,
+					VersionHex:        evt.JobData.Job.Version,
+					NBitsHex:          evt.JobData.Job.NBits,
+					NTimeHex:          evt.JobData.Job.NTime,
+					Height:            uint32(evt.Template.Height),
+					CleanJobs:         true,
 				}
 				if sv2Tmpl, err := stratumv2.BuildTemplateFromV1Job(src); err == nil {
 					cr.sv2Server.BroadcastTemplate(sv2Tmpl)
