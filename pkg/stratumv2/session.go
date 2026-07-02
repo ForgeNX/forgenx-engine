@@ -351,6 +351,9 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		} else {
 			s.logf("[sv2] session %s: initial job sent successfully", s.id)
+			s.templateMu.Lock()
+			s.lastTemplate = tmpl
+			s.templateMu.Unlock()
 		}
 	}
 	return nil
