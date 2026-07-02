@@ -348,7 +348,10 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
 	} else {
 			initTmpl := *tmpl // copy so we don't mutate the cached template
-			initTmpl.IsFutureJob = true // first job after channel open must have min_ntime unset
+			initTmpl.IsFutureJob = false
+			if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
+				s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
+			} else
 		if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		} else {
