@@ -42,18 +42,31 @@ type workerShareSample struct {
 }
 
 // HashrateAt returns the estimated hashrate (TH/s) over the given window.
+// Uses actual elapsed time between oldest and newest sample for accuracy.
 func (ws *WorkerStats) HashrateAt(window time.Duration) float64 {
 	cutoff := time.Now().Add(-window)
 	var diffSum float64
+	var oldest, newest time.Time
 	for _, s := range ws.recentShares {
 		if s.t.After(cutoff) {
 			diffSum += s.diff
+			if oldest.IsZero() || s.t.Before(oldest) {
+				oldest = s.t
+			}
+			if s.t.After(newest) {
+				newest = s.t
+			}
 		}
 	}
-	if diffSum == 0 {
+	if diffSum == 0 || oldest.IsZero() {
 		return 0
 	}
-	return (diffSum * 4294967296) / window.Seconds() / 1e12
+	// Use actual elapsed time, minimum 30s to avoid spikes on fresh connect
+	elapsed := newest.Sub(oldest).Seconds()
+	if elapsed < 30 {
+		elapsed = 30
+	}
+	return (diffSum * 4294967296) / elapsed / 1e12
 }
 
 // pruneShares removes samples older than 15 minutes.
