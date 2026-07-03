@@ -157,7 +157,7 @@ func (s *Stats) InitCoin(symbol string) {
 }
 
 // RecordShare records a share submission result.
-func (s *Stats) RecordShare(symbol string, result ShareResult, workerName string, shareDiff float64) {
+func (s *Stats) RecordShare(symbol string, result ShareResult, workerName string, shareDiff float64, actualDiff ...float64) {
 	s.mu.RLock()
 	cs, ok := s.coins[symbol]
 	s.mu.RUnlock()
