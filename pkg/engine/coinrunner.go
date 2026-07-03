@@ -265,7 +265,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					// massively skew rolling hashrate averages — same approach as V1.
 					poolDiff := ch.Difficulty()
 					// Record in unified stats so SV2 workers appear in /miners and UI Workers tab.
-					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), poolDiff)
+					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), poolDiff, result.Difficulty)
 					// Append to recentShares so CoinRunner.Hashrate() includes SV2 contribution.
 					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: poolDiff})
 					if result.MeetsBlock {
