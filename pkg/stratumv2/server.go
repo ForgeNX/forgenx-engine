@@ -486,6 +486,7 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 				Difficulty:  ch.Difficulty(),
 				ConnectedAt: sess.ConnectedAt(),
 				State:          "active",
+				Protocol:       "v2",
 				SharesAccepted: accepted,
 				SharesRejected: rejected,
 			})

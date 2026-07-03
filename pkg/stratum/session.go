@@ -527,6 +527,7 @@ func (s *Session) Info() SessionInfo {
 		Difficulty:  s.difficulty,
 		ConnectedAt: s.connectedAt,
 		State:       fmt.Sprintf("%d", s.state),
+		Protocol:    "v1",
 	}
 }
 
@@ -540,4 +541,5 @@ type SessionInfo struct {
 	State          string    `json:"state"`
 	SharesAccepted uint64    `json:"shares_accepted"`
 	SharesRejected uint64    `json:"shares_rejected"`
+	Protocol      string    `json:"protocol"`
 }

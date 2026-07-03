@@ -43,6 +43,7 @@ type MinerInfo struct {
 	SharesStale           uint64    `json:"shares_stale"`
 	SessionSharesAccepted uint64    `json:"session_shares_accepted"`
 	SessionSharesRejected uint64    `json:"session_shares_rejected"`
+	Protocol              string    `json:"protocol"`
 	BlocksFound    uint64    `json:"blocks_found"`
 	LastShareTime  time.Time `json:"last_share_time,omitempty"`
 	BestDifficulty float64   `json:"best_difficulty"`
@@ -236,6 +237,7 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 				mi.SharesRejected = ws.SharesRejected
 				mi.SessionSharesAccepted = sess.SharesAccepted
 				mi.SessionSharesRejected = sess.SharesRejected
+				mi.Protocol = sess.Protocol
 				mi.SharesStale = ws.SharesStale
 				mi.BlocksFound = ws.BlocksFound
 				mi.LastShareTime = ws.LastShareTime
