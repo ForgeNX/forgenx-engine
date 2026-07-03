@@ -63,8 +63,8 @@ func (ws *WorkerStats) HashrateAt(window time.Duration) float64 {
 	}
 	// Use actual elapsed time, minimum 30s to avoid spikes on fresh connect
 	elapsed := newest.Sub(oldest).Seconds()
-	if elapsed < 30 {
-		elapsed = 30
+	if elapsed < 60 {
+		elapsed = 60
 	}
 	return (diffSum * 4294967296) / elapsed / 1e12
 }
