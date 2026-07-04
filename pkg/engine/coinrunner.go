@@ -192,6 +192,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			if addr := session.MiningAddress(); addr != "" {
 				jobMgr.UnregisterAddress(addr)
 			}
+			if wn := session.WorkerName(); wn != "" {
+				runner.stats.RecordDisconnect(runner.symbol, wn)
+			}
 		}
 	}
 
@@ -332,6 +335,11 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				// follow-up patch if unified accounting is needed later.
 			}
 
+			sv2Cfg.OnDisconnect = func(workerName, remoteAddr string) {
+				if workerName != "" {
+					runner.stats.RecordDisconnect(runner.symbol, workerName)
+				}
+			}
 			sv2Srv, err := stratumv2.NewServer(sv2Cfg)
 			if err != nil {
 				runner.logger.Warn("[%s] SV2 disabled: %v", symbol, err)

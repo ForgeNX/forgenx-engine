@@ -178,9 +178,16 @@ func (s *Stats) RecordDisconnect(symbol, workerName string) {
 		return
 	}
 	ws := s.getOrCreateWorker(symbol, workerName)
+	now := time.Now()
 	ws.mu.Lock()
-	ws.LastSeenTime = time.Now()
+	ws.LastSeenTime = now
 	ws.mu.Unlock()
+	s.mu.Lock()
+	if s.recentDisconnects[symbol] == nil {
+		s.recentDisconnects[symbol] = make(map[string]time.Time)
+	}
+	s.recentDisconnects[symbol][workerName] = now
+	s.mu.Unlock()
 }
 
 // RecentDisconnects returns a copy of the recent disconnects map.

@@ -119,6 +119,9 @@ type Config struct {
 	// log.Printf (the old behaviour) so pkg/stratumv2 remains usable
 	// standalone outside the engine.
 	Logger sv2Logger
+	// OnDisconnect is called when a worker disconnects, with the worker name
+	// and remote address. Optional.
+	OnDisconnect func(workerName, remoteAddr string)
 }
 
 // Server is the SV2 Mining Protocol server.
@@ -263,7 +266,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder,
 		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds, srv)
+		srv.cfg.ConnectionTimeoutSeconds, srv, srv.cfg.OnDisconnect)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess

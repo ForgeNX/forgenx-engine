@@ -117,6 +117,7 @@ func (a *APIServer) Start() error {
 
         // 🔥 NEW: Serve UI
         staticDir := resolveStaticDir()
+        mux.HandleFunc("/disconnects", a.handleDisconnects)
         mux.Handle("/", serveStaticUI(staticDir))
 
         a.server = &http.Server{

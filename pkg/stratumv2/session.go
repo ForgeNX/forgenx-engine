@@ -155,6 +155,7 @@ func newSession(
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
 	srv *Server,
+	onDisconnect func(workerName, remoteAddr string),
 ) *Session {
 	return &Session{
 		id:                       conn.RemoteAddr().String(),
@@ -171,6 +172,7 @@ func newSession(
 		srv:                      srv,
 		logger:                   logger,
 		closeCh:                  make(chan struct{}),
+		onDisconnect:             onDisconnect,
 	}
 }
 
@@ -615,6 +617,16 @@ func (s *Session) Close() {
 		}
 		s.mu.Unlock()
 		s.logf("[sv2] session %s: disconnected", s.id)
+		if s.onDisconnect != nil {
+			workerName := ""
+			s.mu.RLock()
+			for _, ch := range s.channels {
+				workerName = ch.UserIdentity()
+				break
+			}
+			s.mu.RUnlock()
+			s.onDisconnect(workerName, s.id)
+		}
 	})
 }
 
