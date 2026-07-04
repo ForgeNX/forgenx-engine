@@ -98,7 +98,8 @@ type Channel struct {
 	pendingSharesAcc uint64 // accumulated share difficulty since last ack
 
 	// Statistics
-	sharesAccepted uint64
+	sharesAccepted  uint64
+	bestDifficulty  float64
 	sharesRejected uint64
 	totalDiff      float64
 
@@ -256,6 +257,9 @@ func (c *Channel) IsJobValid(jobID uint32) bool {
 func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint64, stratum.VarDiffResult) {
 	c.mu.Lock()
 	c.sharesAccepted++
+	if diff > c.bestDifficulty {
+		c.bestDifficulty = diff
+	}
 	c.totalDiff += diff
 
 	// Cumulative ack: acknowledge everything up to seqNum.
@@ -337,6 +341,12 @@ func (c *Channel) RecordRejection() {
 }
 
 // Stats returns a snapshot of the channel's cumulative statistics.
+func (c *Channel) BestDifficulty() float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bestDifficulty
+}
+
 func (c *Channel) Stats() (accepted, rejected uint64, totalDiff float64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

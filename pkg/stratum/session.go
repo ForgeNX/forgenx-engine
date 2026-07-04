@@ -539,7 +539,8 @@ type SessionInfo struct {
 	Difficulty     float64   `json:"difficulty"`
 	ConnectedAt    time.Time `json:"connected_at"`
 	State          string    `json:"state"`
-	SharesAccepted uint64    `json:"shares_accepted"`
-	SharesRejected uint64    `json:"shares_rejected"`
-	Protocol      string    `json:"protocol"`
+	SharesAccepted      uint64    `json:"shares_accepted"`
+	SharesRejected      uint64    `json:"shares_rejected"`
+	Protocol            string    `json:"protocol"`
+	BestDifficulty      float64   `json:"best_difficulty_session"`
 }
