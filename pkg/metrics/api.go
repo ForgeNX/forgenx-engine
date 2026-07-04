@@ -262,6 +262,19 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (a *APIServer) handleDisconnects(w http.ResponseWriter, r *http.Request) {
+	disconnects := a.stats.RecentDisconnects()
+	result := make(map[string]map[string]string)
+	for symbol, workers := range disconnects {
+		result[symbol] = make(map[string]string)
+		for name, t := range workers {
+			result[symbol][name] = t.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 func (a *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
