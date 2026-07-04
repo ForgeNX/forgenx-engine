@@ -193,7 +193,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				jobMgr.UnregisterAddress(addr)
 			}
 			if wn := session.WorkerName(); wn != "" {
-				runner.stats.RecordDisconnect(runner.symbol, wn)
+				runner.stats.RecordDisconnect(runner.symbol, wn, session.ConnectedAt())
 			}
 		}
 	}
@@ -335,9 +335,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				// follow-up patch if unified accounting is needed later.
 			}
 
-			sv2Cfg.OnDisconnect = func(workerName, remoteAddr string) {
+			sv2Cfg.OnDisconnect = func(workerName, remoteAddr string, connectedAt time.Time) {
 				if workerName != "" {
-					runner.stats.RecordDisconnect(runner.symbol, workerName)
+					runner.stats.RecordDisconnect(runner.symbol, workerName, connectedAt)
 				}
 			}
 			sv2Srv, err := stratumv2.NewServer(sv2Cfg)

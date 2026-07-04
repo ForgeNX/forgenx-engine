@@ -101,7 +101,7 @@ type Session struct {
 
 	// Callback to the engine when a share / block solution is found.
 	onShare      shareSubmitCallback
-	onDisconnect func(workerName, remoteAddr string)
+	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
 
 	// Solo-mode coinbase builder. Nil in pool mode — channels then use the
 	// template's shared Coinbase1/Coinbase2 unmodified.
@@ -155,7 +155,7 @@ func newSession(
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
 	srv *Server,
-	onDisconnect func(workerName, remoteAddr string),
+	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time),
 ) *Session {
 	return &Session{
 		id:                       conn.RemoteAddr().String(),
@@ -624,8 +624,9 @@ func (s *Session) Close() {
 				workerName = ch.UserIdentity()
 				break
 			}
+			ca := s.connectedAt
 			s.mu.RUnlock()
-			s.onDisconnect(workerName, s.id)
+			s.onDisconnect(workerName, s.id, ca)
 		}
 	})
 }

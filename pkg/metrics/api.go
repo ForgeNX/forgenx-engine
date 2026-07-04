@@ -118,6 +118,7 @@ func (a *APIServer) Start() error {
         // 🔥 NEW: Serve UI
         staticDir := resolveStaticDir()
         mux.HandleFunc("/disconnects", a.handleDisconnects)
+        mux.HandleFunc("/disconnects/", a.handleDeleteDisconnect)
         mux.Handle("/", serveStaticUI(staticDir))
 
         a.server = &http.Server{
@@ -265,15 +266,38 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 
 func (a *APIServer) handleDisconnects(w http.ResponseWriter, r *http.Request) {
 	disconnects := a.stats.RecentDisconnects()
-	result := make(map[string]map[string]string)
+	type disconnectEntry struct {
+		DisconnectTime string `json:"disconnect_time"`
+		ConnectedAt    string `json:"connected_at"`
+	}
+	result := make(map[string]map[string]disconnectEntry)
 	for symbol, workers := range disconnects {
-		result[symbol] = make(map[string]string)
-		for name, t := range workers {
-			result[symbol][name] = t.UTC().Format(time.RFC3339Nano)
+		result[symbol] = make(map[string]disconnectEntry)
+		for name, info := range workers {
+			result[symbol][name] = disconnectEntry{
+				DisconnectTime: info.DisconnectTime.UTC().Format(time.RFC3339Nano),
+				ConnectedAt:    info.ConnectedAt.UTC().Format(time.RFC3339Nano),
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+func (a *APIServer) handleDeleteDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/disconnects/"), "/", 2)
+	if len(parts) != 2 {
+		http.Error(w, "usage: DELETE /disconnects/{symbol}/{worker}", http.StatusBadRequest)
+		return
+	}
+	symbol, workerName := parts[0], parts[1]
+	a.stats.DeleteDisconnect(symbol, workerName)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (a *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {

@@ -96,11 +96,17 @@ type CoinStats struct {
 	mu              sync.Mutex
 }
 
+// DisconnectInfo holds timing information for a worker disconnect event.
+type DisconnectInfo struct {
+	DisconnectTime time.Time
+	ConnectedAt    time.Time
+}
+
 // Stats holds in-memory statistics for all coins.
 type Stats struct {
 	coins              map[string]*CoinStats
 	workers            map[string]map[string]*WorkerStats // coin symbol -> worker name -> stats
-	recentDisconnects  map[string]map[string]time.Time    // coin symbol -> worker name -> disconnect time
+	recentDisconnects  map[string]map[string]DisconnectInfo    // coin symbol -> worker name -> disconnect info
 	mu                 sync.RWMutex
 	startedAt          time.Time
 }
@@ -155,7 +161,7 @@ func NewStats() *Stats {
 	return &Stats{
 		coins:             make(map[string]*CoinStats),
 		workers:           make(map[string]map[string]*WorkerStats),
-		recentDisconnects: make(map[string]map[string]time.Time),
+		recentDisconnects: make(map[string]map[string]DisconnectInfo),
 		startedAt:         time.Now(),
 	}
 }
@@ -173,7 +179,7 @@ func (s *Stats) InitCoin(symbol string) {
 }
 
 // RecordDisconnect records when a worker disconnects.
-func (s *Stats) RecordDisconnect(symbol, workerName string) {
+func (s *Stats) RecordDisconnect(symbol, workerName string, connectedAt time.Time) {
 	if workerName == "" {
 		return
 	}
@@ -184,21 +190,30 @@ func (s *Stats) RecordDisconnect(symbol, workerName string) {
 	ws.mu.Unlock()
 	s.mu.Lock()
 	if s.recentDisconnects[symbol] == nil {
-		s.recentDisconnects[symbol] = make(map[string]time.Time)
+		s.recentDisconnects[symbol] = make(map[string]DisconnectInfo)
 	}
-	s.recentDisconnects[symbol][workerName] = now
+	s.recentDisconnects[symbol][workerName] = DisconnectInfo{DisconnectTime: now, ConnectedAt: connectedAt}
 	s.mu.Unlock()
 }
 
+// DeleteDisconnect removes a worker from the recent disconnects map.
+func (s *Stats) DeleteDisconnect(symbol, workerName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recentDisconnects[symbol] != nil {
+		delete(s.recentDisconnects[symbol], workerName)
+	}
+}
+
 // RecentDisconnects returns a copy of the recent disconnects map.
-func (s *Stats) RecentDisconnects() map[string]map[string]time.Time {
+func (s *Stats) RecentDisconnects() map[string]map[string]DisconnectInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make(map[string]map[string]time.Time)
+	out := make(map[string]map[string]DisconnectInfo)
 	for sym, workers := range s.recentDisconnects {
-		out[sym] = make(map[string]time.Time)
-		for w, t := range workers {
-			out[sym][w] = t
+		out[sym] = make(map[string]DisconnectInfo)
+		for w, info := range workers {
+			out[sym][w] = info
 		}
 	}
 	return out

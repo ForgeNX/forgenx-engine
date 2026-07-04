@@ -121,7 +121,7 @@ type Config struct {
 	Logger sv2Logger
 	// OnDisconnect is called when a worker disconnects, with the worker name
 	// and remote address. Optional.
-	OnDisconnect func(workerName, remoteAddr string)
+	OnDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
 }
 
 // Server is the SV2 Mining Protocol server.
