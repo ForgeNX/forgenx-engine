@@ -211,6 +211,9 @@ func (s *Session) handleAuthorize(req *Request) {
 	}
 
 	s.logger.Info("[%s] authorized worker: %s (diff: %.2f)", s.ID, s.workerName, s.difficulty)
+	if s.server.onSessionAuthorized != nil {
+		s.server.onSessionAuthorized(s)
+	}
 }
 
 func (s *Session) handleSubmit(req *Request) {

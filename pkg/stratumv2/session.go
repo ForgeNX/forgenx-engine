@@ -102,6 +102,7 @@ type Session struct {
 	// Callback to the engine when a share / block solution is found.
 	onShare      shareSubmitCallback
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
+	onConnect    func(workerName, remoteAddr string)
 
 	// Solo-mode coinbase builder. Nil in pool mode — channels then use the
 	// template's shared Coinbase1/Coinbase2 unmodified.
@@ -156,6 +157,7 @@ func newSession(
 	connectionTimeoutSeconds int,
 	srv *Server,
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time),
+	onConnect    func(workerName, remoteAddr string),
 ) *Session {
 	return &Session{
 		id:                       conn.RemoteAddr().String(),
@@ -173,6 +175,7 @@ func newSession(
 		logger:                   logger,
 		closeCh:                  make(chan struct{}),
 		onDisconnect:             onDisconnect,
+		onConnect:                onConnect,
 	}
 }
 
@@ -313,6 +316,9 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 
 	s.logf("[sv2] session %s: opened channel %d for worker %q (hashrate=%.2f GH/s)",
 		s.id, ch.ID(), req.UserIdentity, float64(req.NominalHashrate)/1e9)
+	if s.onConnect != nil {
+		s.onConnect(req.UserIdentity, s.id)
+	}
 
 	// Solo mode: build this channel's own coinbase paying out to its
 	// UserIdentity address. Errors are logged but non-fatal — the channel

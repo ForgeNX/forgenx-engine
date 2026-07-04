@@ -188,6 +188,11 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			return jobMgr.GetJobForAddress(session.MiningAddress())
 		}
 
+		serverCfg.OnSessionAuthorized = func(session *stratum.Session) {
+			if wn := session.WorkerName(); wn != "" {
+				runner.stats.RecordConnect(runner.symbol, wn)
+			}
+		}
 		serverCfg.OnSessionRemoved = func(session *stratum.Session) {
 			if addr := session.MiningAddress(); addr != "" {
 				jobMgr.UnregisterAddress(addr)
@@ -335,6 +340,11 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				// follow-up patch if unified accounting is needed later.
 			}
 
+			sv2Cfg.OnConnect = func(workerName, remoteAddr string) {
+				if workerName != "" {
+					runner.stats.RecordConnect(runner.symbol, workerName)
+				}
+			}
 			sv2Cfg.OnDisconnect = func(workerName, remoteAddr string, connectedAt time.Time) {
 				if workerName != "" {
 					runner.stats.RecordDisconnect(runner.symbol, workerName, connectedAt)

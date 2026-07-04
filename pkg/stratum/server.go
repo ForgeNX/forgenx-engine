@@ -42,6 +42,7 @@ type Server struct {
 	authorizeHandler     AuthorizeHandler
 	jobForSessionHandler JobForSessionHandler
 	onSessionRemoved     func(session *Session)
+	onSessionAuthorized  func(session *Session)
 	extraNonceSize       int
 	defaultDiff          float64
 	acceptSuggestDiff    bool
@@ -72,6 +73,7 @@ type ServerConfig struct {
 	AuthorizeHandler     AuthorizeHandler
 	JobForSessionHandler JobForSessionHandler
 	OnSessionRemoved     func(session *Session)
+	OnSessionAuthorized  func(session *Session)
 }
 
 // NewServer creates a new Stratum server.
@@ -86,6 +88,7 @@ func NewServer(cfg ServerConfig, shareHandler ShareHandler) *Server {
 		authorizeHandler:     cfg.AuthorizeHandler,
 		jobForSessionHandler: cfg.JobForSessionHandler,
 		onSessionRemoved:     cfg.OnSessionRemoved,
+		onSessionAuthorized:  cfg.OnSessionAuthorized,
 		extraNonceSize:       cfg.ExtraNonceSize,
 		defaultDiff:          cfg.DefaultDiff,
 		acceptSuggestDiff:    cfg.AcceptSuggestDiff,

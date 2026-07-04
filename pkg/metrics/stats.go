@@ -107,6 +107,7 @@ type Stats struct {
 	coins              map[string]*CoinStats
 	workers            map[string]map[string]*WorkerStats // coin symbol -> worker name -> stats
 	recentDisconnects  map[string]map[string]DisconnectInfo    // coin symbol -> worker name -> disconnect info
+	recentConnects     map[string]map[string]time.Time              // coin symbol -> worker name -> connect time
 	mu                 sync.RWMutex
 	startedAt          time.Time
 }
@@ -162,6 +163,7 @@ func NewStats() *Stats {
 		coins:             make(map[string]*CoinStats),
 		workers:           make(map[string]map[string]*WorkerStats),
 		recentDisconnects: make(map[string]map[string]DisconnectInfo),
+		recentConnects:    make(map[string]map[string]time.Time),
 		startedAt:         time.Now(),
 	}
 }
@@ -175,6 +177,42 @@ func (s *Stats) InitCoin(symbol string) {
 	}
 	if _, exists := s.workers[symbol]; !exists {
 		s.workers[symbol] = make(map[string]*WorkerStats)
+	}
+}
+
+// RecordConnect records when a worker connects.
+func (s *Stats) RecordConnect(symbol, workerName string) {
+	if workerName == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.recentConnects[symbol] == nil {
+		s.recentConnects[symbol] = make(map[string]time.Time)
+	}
+	s.recentConnects[symbol][workerName] = time.Now()
+	s.mu.Unlock()
+}
+
+// RecentConnects returns a copy of the recent connects map.
+func (s *Stats) RecentConnects() map[string]map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]map[string]time.Time)
+	for sym, workers := range s.recentConnects {
+		out[sym] = make(map[string]time.Time)
+		for w, t := range workers {
+			out[sym][w] = t
+		}
+	}
+	return out
+}
+
+// DeleteConnect removes a worker from the recent connects map.
+func (s *Stats) DeleteConnect(symbol, workerName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recentConnects[symbol] != nil {
+		delete(s.recentConnects[symbol], workerName)
 	}
 }
 

@@ -119,6 +119,8 @@ func (a *APIServer) Start() error {
         staticDir := resolveStaticDir()
         mux.HandleFunc("/disconnects", a.handleDisconnects)
         mux.HandleFunc("/disconnects/", a.handleDeleteDisconnect)
+        mux.HandleFunc("/connects", a.handleConnects)
+        mux.HandleFunc("/connects/", a.handleDeleteConnect)
         mux.Handle("/", serveStaticUI(staticDir))
 
         a.server = &http.Server{
@@ -296,6 +298,35 @@ func (a *APIServer) handleDeleteDisconnect(w http.ResponseWriter, r *http.Reques
 	}
 	symbol, workerName := parts[0], parts[1]
 	a.stats.DeleteDisconnect(symbol, workerName)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (a *APIServer) handleConnects(w http.ResponseWriter, r *http.Request) {
+	connects := a.stats.RecentConnects()
+	result := make(map[string]map[string]string)
+	for symbol, workers := range connects {
+		result[symbol] = make(map[string]string)
+		for name, t := range workers {
+			result[symbol][name] = t.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (a *APIServer) handleDeleteConnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/connects/"), "/", 2)
+	if len(parts) != 2 {
+		http.Error(w, "usage: DELETE /connects/{symbol}/{worker}", http.StatusBadRequest)
+		return
+	}
+	symbol, workerName := parts[0], parts[1]
+	a.stats.DeleteConnect(symbol, workerName)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

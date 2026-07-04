@@ -122,6 +122,7 @@ type Config struct {
 	// OnDisconnect is called when a worker disconnects, with the worker name
 	// and remote address. Optional.
 	OnDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
+	OnConnect    func(workerName, remoteAddr string)
 }
 
 // Server is the SV2 Mining Protocol server.
@@ -266,7 +267,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.CoinbaseBuilder,
 		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds, srv, srv.cfg.OnDisconnect)
+		srv.cfg.ConnectionTimeoutSeconds, srv, srv.cfg.OnDisconnect, srv.cfg.OnConnect)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess
