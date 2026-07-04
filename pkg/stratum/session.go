@@ -517,6 +517,12 @@ func (s *Session) Close() {
 }
 
 // Info returns a summary of the session for metrics/API.
+func (s *Session) WorkerName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.workerName
+}
+
 func (s *Session) Info() SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()

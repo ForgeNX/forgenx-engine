@@ -30,6 +30,7 @@ type WorkerStats struct {
 	SharesStale    uint64    `json:"shares_stale"`
 	BlocksFound    uint64    `json:"blocks_found"`
 	LastShareTime  time.Time `json:"last_share_time,omitempty"`
+	LastSeenTime   time.Time `json:"last_seen_time,omitempty"`
 	BestDifficulty float64   `json:"best_difficulty"`
 	recentShares   []workerShareSample
 	mu             sync.Mutex
@@ -167,6 +168,17 @@ func (s *Stats) InitCoin(symbol string) {
 	if _, exists := s.workers[symbol]; !exists {
 		s.workers[symbol] = make(map[string]*WorkerStats)
 	}
+}
+
+// RecordDisconnect records when a worker disconnects.
+func (s *Stats) RecordDisconnect(symbol, workerName string) {
+	if workerName == "" {
+		return
+	}
+	ws := s.getOrCreateWorker(symbol, workerName)
+	ws.mu.Lock()
+	ws.LastSeenTime = time.Now()
+	ws.mu.Unlock()
 }
 
 // RecordShare records a share submission result.

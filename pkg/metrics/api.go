@@ -45,6 +45,7 @@ type MinerInfo struct {
 	SessionSharesRejected  uint64    `json:"session_shares_rejected"`
 	Protocol               string    `json:"protocol"`
 	BestDifficultySession  float64   `json:"best_difficulty_session"`
+	LastSeenTime           string    `json:"last_seen_time,omitempty"`
 	BlocksFound    uint64    `json:"blocks_found"`
 	LastShareTime  time.Time `json:"last_share_time,omitempty"`
 	BestDifficulty float64   `json:"best_difficulty"`
@@ -240,6 +241,9 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 				mi.SessionSharesRejected = sess.SharesRejected
 				mi.Protocol = sess.Protocol
 				mi.BestDifficultySession = sess.BestDifficulty
+				if !ws.LastSeenTime.IsZero() {
+					mi.LastSeenTime = ws.LastSeenTime.UTC().Format(time.RFC3339Nano)
+				}
 				mi.SharesStale = ws.SharesStale
 				mi.BlocksFound = ws.BlocksFound
 				mi.LastShareTime = ws.LastShareTime
