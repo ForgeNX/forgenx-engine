@@ -523,6 +523,7 @@ func (s *Session) WorkerName() string {
 	return s.workerName
 }
 
+
 func (s *Session) Info() SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()

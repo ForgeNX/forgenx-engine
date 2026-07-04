@@ -100,7 +100,8 @@ type Session struct {
 	lastTemplate *JobTemplate
 
 	// Callback to the engine when a share / block solution is found.
-	onShare shareSubmitCallback
+	onShare      shareSubmitCallback
+	onDisconnect func(workerName, remoteAddr string)
 
 	// Solo-mode coinbase builder. Nil in pool mode — channels then use the
 	// template's shared Coinbase1/Coinbase2 unmodified.

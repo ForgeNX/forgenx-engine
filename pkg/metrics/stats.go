@@ -98,10 +98,11 @@ type CoinStats struct {
 
 // Stats holds in-memory statistics for all coins.
 type Stats struct {
-	coins     map[string]*CoinStats
-	workers   map[string]map[string]*WorkerStats // coin symbol -> worker name -> stats
-	mu        sync.RWMutex
-	startedAt time.Time
+	coins              map[string]*CoinStats
+	workers            map[string]map[string]*WorkerStats // coin symbol -> worker name -> stats
+	recentDisconnects  map[string]map[string]time.Time    // coin symbol -> worker name -> disconnect time
+	mu                 sync.RWMutex
+	startedAt          time.Time
 }
 
 // Stats new section for sync status and percentage.
@@ -152,9 +153,10 @@ func (s *Stats) GetCoinsSnapshot() map[string]CoinStats {
 // NewStats creates a new Stats instance.
 func NewStats() *Stats {
 	return &Stats{
-		coins:     make(map[string]*CoinStats),
-		workers:   make(map[string]map[string]*WorkerStats),
-		startedAt: time.Now(),
+		coins:             make(map[string]*CoinStats),
+		workers:           make(map[string]map[string]*WorkerStats),
+		recentDisconnects: make(map[string]map[string]time.Time),
+		startedAt:         time.Now(),
 	}
 }
 
@@ -179,6 +181,20 @@ func (s *Stats) RecordDisconnect(symbol, workerName string) {
 	ws.mu.Lock()
 	ws.LastSeenTime = time.Now()
 	ws.mu.Unlock()
+}
+
+// RecentDisconnects returns a copy of the recent disconnects map.
+func (s *Stats) RecentDisconnects() map[string]map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]map[string]time.Time)
+	for sym, workers := range s.recentDisconnects {
+		out[sym] = make(map[string]time.Time)
+		for w, t := range workers {
+			out[sym][w] = t
+		}
+	}
+	return out
 }
 
 // RecordShare records a share submission result.
