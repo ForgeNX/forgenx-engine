@@ -494,6 +494,9 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 				SharesAccepted: accepted,
 				SharesRejected: rejected,
 				BestDifficulty: ch.BestDifficulty(),
+				Vendor:         sess.Vendor(),
+				Firmware:       sess.Firmware(),
+				DeviceID:       sess.DeviceID(),
 			})
 		}
 	}

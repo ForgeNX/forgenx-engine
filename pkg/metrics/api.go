@@ -52,6 +52,9 @@ type MinerInfo struct {
 	Hashrate1m     float64   `json:"hashrate_1m"`
 	Hashrate5m     float64   `json:"hashrate_5m"`
 	Hashrate15m    float64   `json:"hashrate_15m"`
+	Vendor         string    `json:"vendor,omitempty"`
+	Firmware       string    `json:"firmware,omitempty"`
+	DeviceID       string    `json:"device_id,omitempty"`
 }
 
 // MinersResponse is the JSON response for GET /miners.
@@ -236,6 +239,9 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 				RemoteAddr:  sess.RemoteAddr,
 				Difficulty:  sess.Difficulty,
 				ConnectedAt: sess.ConnectedAt,
+				Vendor:      sess.Vendor,
+				Firmware:    sess.Firmware,
+				DeviceID:    sess.DeviceID,
 			}
 			if ws, ok := workerStats[sess.WorkerName]; ok {
 				ws.mu.Lock()

@@ -126,6 +126,11 @@ type Session struct {
 	// format. When nil, falls back to log.Printf via s.logf.
 	logger sv2Logger
 
+	// Device info from SetupConnection (may be empty if miner does not send).
+	vendor   string
+	firmware string
+	deviceID string
+
 	// Signals
 	closeCh     chan struct{}
 	once        sync.Once
@@ -266,6 +271,9 @@ func (s *Session) handleSetupConnection() error {
 
 	s.logf("[sv2] session %s: SetupConnection OK — vendor=%q firmware=%q device=%q",
 		s.id, sc.Vendor, sc.Firmware, sc.DeviceID)
+	s.vendor = sc.Vendor
+	s.firmware = sc.Firmware
+	s.deviceID = sc.DeviceID
 
 	// Respond with success. SetupConnection.Success.flags is a SEPARATE
 	// namespace from the client's request flags (sc.Flags) — see the
@@ -902,6 +910,9 @@ func (s *Session) ConnectedAt() time.Time {
 	defer s.mu.RUnlock()
 	return s.connectedAt
 }
+func (s *Session) Vendor()   string { s.mu.RLock(); defer s.mu.RUnlock(); return s.vendor }
+func (s *Session) Firmware() string { s.mu.RLock(); defer s.mu.RUnlock(); return s.firmware }
+func (s *Session) DeviceID() string { s.mu.RLock(); defer s.mu.RUnlock(); return s.deviceID }
 func (s *Session) Channels() []*Channel {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
