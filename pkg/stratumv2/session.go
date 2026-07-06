@@ -281,6 +281,10 @@ func (s *Session) dispatch(frame *Frame) error {
 		return s.handleOpenChannel(frame.Payload)
 	case MsgSubmitSharesStandard:
 		return s.handleSubmitShares(frame.Payload)
+	case MsgOpenExtendedMiningChannel:
+		return s.handleOpenExtendedChannel(frame.Payload)
+	case MsgSubmitSharesExtended:
+		return s.handleSubmitSharesExtended(frame.Payload)
 	default:
 		// Unknown/unhandled message types are silently ignored per the spec.
 		s.logf("[sv2] session %s: unhandled msg type 0x%02X (%d bytes)", s.id, frame.MsgType, len(frame.Payload))
@@ -365,6 +369,88 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		} else {
 			s.logf("[sv2] session %s: initial job sent successfully", s.id)
+			s.templateMu.Lock()
+			s.lastTemplate = tmpl
+			s.templateMu.Unlock()
+		}
+	}
+	return nil
+}
+
+// handleOpenExtendedChannel processes an OpenExtendedMiningChannel request.
+// Mirrors handleOpenChannel's flow (allocate channel, build/send success,
+// send initial prevhash+job) but for an Extended Channel: the channel
+// negotiates its own extranonce2 space and the initial job is sent via
+// NewExtendedMiningJob (raw coinbase halves + merkle path) rather than
+// NewMiningJob (precomputed merkle root).
+func (s *Session) handleOpenExtendedChannel(payload []byte) error {
+	req, err := DecodeOpenExtendedMiningChannel(payload)
+	if err != nil {
+		return fmt.Errorf("decode OpenExtendedMiningChannel: %w", err)
+	}
+
+	s.mu.Lock()
+	if len(s.channels) >= maxChannelsPerSession {
+		s.mu.Unlock()
+		resp, _ := EncodeOpenExtendedMiningChannelError(req.RequestID, "max-channels-exceeded")
+		return s.codec.WriteFrame(ExtensionTypeMining, MsgOpenStandardMiningChannelError, resp)
+	}
+	s.mu.Unlock()
+
+	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, s.startDiff, req.MinExtranonceSize)
+	if err != nil {
+		resp, _ := EncodeOpenExtendedMiningChannelError(req.RequestID, "internal-error")
+		_ = s.codec.WriteFrame(ExtensionTypeMining, MsgOpenStandardMiningChannelError, resp)
+		return fmt.Errorf("newExtendedChannel: %w", err)
+	}
+
+	s.mu.Lock()
+	s.channels[ch.ID()] = ch
+	s.mu.Unlock()
+
+	s.logf("[sv2] session %s: opened EXTENDED channel %d for worker %q (hashrate=%.2f GH/s, extranonce2_size=%d)",
+		s.id, ch.ID(), req.UserIdentity, float64(req.NominalHashrate)/1e9, ch.ExtranonceSize())
+	if s.onConnect != nil {
+		s.onConnect(req.UserIdentity, s.id)
+	}
+
+	if s.coinbaseBuilder != nil {
+		cb1, cb2, err := s.coinbaseBuilder(req.UserIdentity)
+		if err != nil {
+			s.logf("[sv2] session %s ch=%d: coinbase build failed for %q: %v",
+				s.id, ch.ID(), req.UserIdentity, err)
+		} else {
+			ch.SetOwnCoinbase(cb1, cb2)
+		}
+	}
+
+	resp, err := EncodeOpenExtendedMiningChannelSuccess(
+		req.RequestID,
+		ch.ID(),
+		ch.PoolTarget(),
+		ch.ExtranonceSize(),
+		ch.Extranonce1Bytes(),
+	)
+	if err != nil {
+		return fmt.Errorf("encode OpenExtendedSuccess: %w", err)
+	}
+	if err := s.codec.WriteFrame(ExtensionTypeMining, MsgOpenExtendedMiningChannelSuccess, resp); err != nil {
+		return err
+	}
+
+	if s.srv == nil {
+		s.logf("[sv2] session %s: srv is nil, cannot send initial job", s.id)
+	} else if tmpl := s.srv.LatestTemplate(); tmpl == nil {
+		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
+	} else {
+		initTmpl := *tmpl
+		initTmpl.IsFutureJob = false
+		if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
+			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
+		} else if err := s.sendExtendedJobToChannel(ch, &initTmpl); err != nil {
+			s.logf("[sv2] session %s: initial extended job send failed: %v", s.id, err)
+		} else {
+			s.logf("[sv2] session %s: initial extended job sent successfully", s.id)
 			s.templateMu.Lock()
 			s.lastTemplate = tmpl
 			s.templateMu.Unlock()
@@ -467,6 +553,104 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesSuccess, resp)
 }
 
+// handleSubmitSharesExtended processes a SubmitSharesExtended message.
+// Nearly identical to handleSubmitShares, except the merkle root must be
+// computed with THIS SHARE's miner-rolled extranonce (not a fixed
+// per-channel root, since extended-channel miners roll their own
+// extranonce2 per share).
+func (s *Session) handleSubmitSharesExtended(payload []byte) error {
+	share, err := DecodeSubmitSharesExtended(payload)
+	if err != nil {
+		return fmt.Errorf("decode SubmitSharesExtended: %w", err)
+	}
+
+	s.mu.RLock()
+	ch, ok := s.channels[share.ChannelID]
+	s.mu.RUnlock()
+	if !ok {
+		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "unknown-channel")
+		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+	}
+
+	if !ch.IsJobValid(share.JobID) {
+		ch.RecordRejection()
+		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
+		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+	}
+
+	s.templateMu.RLock()
+	tmpl := s.lastTemplate
+	s.templateMu.RUnlock()
+
+	if tmpl == nil || tmpl.JobID != share.JobID {
+		ch.RecordRejection()
+		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
+		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+	}
+
+	// Extended channels: fold the miner's OWN extranonce2 into the coinbase
+	// hash for this specific share, unlike Standard Channels' fixed
+	// per-job merkle root (see channelMerkleRoot's doc comment).
+	merkleRoot := extendedChannelMerkleRoot(ch, tmpl, share.Extranonce)
+
+	result, err := ValidateShare(
+		share.Version,
+		tmpl.PrevHash,
+		merkleRoot,
+		share.NTime,
+		tmpl.NBits,
+		share.Nonce,
+		ch.PoolTarget(),
+		tmpl.NBits,
+	)
+	if err != nil {
+		return fmt.Errorf("ValidateShare: %w", err)
+	}
+
+	if !result.MeetsPool {
+		ch.RecordRejection()
+		s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
+			s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
+		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
+		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+	}
+
+	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)
+
+	if diag := vdResult.DiagString(); diag != "" {
+		if vdResult.Adjusted {
+			reason := "shares_too_fast"
+			if vdResult.ClampedDiff < vdResult.CurrentDiff {
+				reason = "shares_too_slow"
+			}
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF DIAG: %s",
+				s.id, ch.ID(), ch.UserIdentity(), diag)
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty adjustment pending (will send with next job): %.0f -> %.0f (%s)",
+				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, vdResult.ClampedDiff, reason)
+		} else if vdResult.Reason == "within_variance" {
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF: No adjustment - within_variance (difficulty stays at %.0f) | %s",
+				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, diag)
+		}
+	}
+	s.logf("[sv2] session %s ch=%d: %s Share accepted (diff %.2f) hash=%s block=%v",
+		s.id, share.ChannelID, ch.UserIdentity(), result.Difficulty, result.HashHex[:16], result.MeetsBlock)
+
+	if s.onShare != nil {
+		adapted := &MsgSubmitSharesStandardFields{
+			ChannelID:   share.ChannelID,
+			SequenceNum: share.SequenceNum,
+			JobID:       share.JobID,
+			Nonce:       share.Nonce,
+			NTime:       share.NTime,
+			Version:     share.Version,
+		}
+		go s.onShare(tmpl, ch, adapted, result)
+	}
+
+	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
+	return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesSuccess, resp)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Work Dispatch — called by the Server when a new block template arrives
 // ──────────────────────────────────────────────────────────────────────────────
@@ -506,12 +690,17 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 			}
 		}
 
-		// SetNewPrevHash first, then NewMiningJob.
+		// SetNewPrevHash first, then NewMiningJob (or NewExtendedMiningJob
+		// for extended channels).
 		if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
 			s.logf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
 			continue
 		}
-		if err := s.sendJobToChannel(ch, tmpl); err != nil {
+		if ch.IsExtended() {
+			if err := s.sendExtendedJobToChannel(ch, tmpl); err != nil {
+				s.logf("[sv2] session %s ch=%d: sendExtendedJob error: %v", s.id, ch.ID(), err)
+			}
+		} else if err := s.sendJobToChannel(ch, tmpl); err != nil {
 			s.logf("[sv2] session %s ch=%d: sendJob error: %v", s.id, ch.ID(), err)
 		}
 	}
@@ -536,6 +725,67 @@ func channelMerkleRoot(ch *Channel, tmpl *JobTemplate) [32]byte {
 	}
 	coinbaseTxHash := HashCoinbaseTx(coinb1, ch.Extranonce1Bytes(), nil, coinb2)
 	return ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
+}
+
+// extendedChannelMerkleRoot computes the merkle root for ONE SHARE from an
+// extended channel, using that share's own miner-rolled extranonce2 (unlike
+// channelMerkleRoot, which uses a fixed nil extranonce2 because Standard
+// Channels don't have one). Each share on an extended channel can carry a
+// different extranonce2, so unlike the standard-channel path this cannot be
+// cached per-job — it's recomputed per share.
+func extendedChannelMerkleRoot(ch *Channel, tmpl *JobTemplate, minerExtranonce []byte) [32]byte {
+	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
+	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = ownCb1, ownCb2
+	}
+	coinbaseTxHash := HashCoinbaseTx(coinb1, ch.Extranonce1Bytes(), minerExtranonce, coinb2)
+	return ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
+}
+
+// sendExtendedJobToChannel sends NewExtendedMiningJob to a single extended
+// channel. Mirrors sendJobToChannel's vardiff-flush + job-tracking logic,
+// but sends the raw coinbase halves + merkle path (NewExtendedMiningJob)
+// instead of a precomputed merkle root (NewMiningJob), since extended
+// clients assemble their own coinbase.
+func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error {
+	ch.SetCurrentJob(tmpl.JobID)
+
+	if _, hasPending := ch.PendingDiff(); hasPending {
+		shouldFlush := !ch.VarDiffOnNewBlock() || !tmpl.IsFutureJob
+		if shouldFlush {
+			targetBytes, newDiff, flushed := ch.FlushPendingDiff()
+			if flushed {
+				setTargetPayload, err := EncodeSetTarget(ch.ID(), targetBytes)
+				if err != nil {
+					return fmt.Errorf("encode SetTarget: %w", err)
+				}
+				if err := s.codec.WriteFrame(ExtensionTypeMining, MsgSetTarget, setTargetPayload); err != nil {
+					return fmt.Errorf("send SetTarget: %w", err)
+				}
+				s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty updated to %.0f (sent with new job)", s.id, ch.ID(), ch.UserIdentity(), newDiff)
+			}
+		}
+	}
+
+	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
+	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = ownCb1, ownCb2
+	}
+
+	payload, err := EncodeNewExtendedMiningJob(
+		ch.ID(),
+		tmpl.JobID,
+		!tmpl.IsFutureJob,
+		tmpl.NTime,
+		tmpl.Version,
+		tmpl.MerkleBranch,
+		coinb1,
+		coinb2,
+	)
+	if err != nil {
+		return fmt.Errorf("encode NewExtendedMiningJob: %w", err)
+	}
+	return s.codec.WriteFrame(ExtensionTypeMining, MsgNewExtendedMiningJob, payload)
 }
 
 // sendPrevHashToChannel sends SetNewPrevHash to a single channel.

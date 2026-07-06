@@ -58,6 +58,13 @@ type Channel struct {
 	// Extranonce allocation
 	extranonce1 [4]byte // assigned at open time, immutable
 
+	// isExtended distinguishes Extended Mining Channels (client builds its
+	// own coinbase, rolls its own extranonce2) from Standard Mining
+	// Channels (server computes everything, fixed extranonce1 only).
+	// extranonce2Size is meaningless when isExtended is false.
+	isExtended      bool
+	extranonce2Size uint16
+
 	// Current pool target (may change via SetTarget / vardiff).
 	poolTargetBytes []byte  // 32-byte LE B0_32 representation
 	poolDifficulty  float64 // human-readable difficulty (for logging / stats)
@@ -153,6 +160,53 @@ func newChannel(
 	}
 
 	return ch, nil
+}
+
+// maxExtranonce2Size caps how much extranonce2 space we grant an extended
+// channel, regardless of what it requests. Kept small and fixed for now
+// (minimal/option-1 implementation — one NerdQAxe++, not a multi-miner
+// extended-channel pool with per-miner nonce-space partitioning).
+const maxExtranonce2Size uint16 = 4
+
+// newExtendedChannel allocates a new extended-channel Channel. Mirrors
+// newChannel, but records isExtended + the granted extranonce2Size (clamped
+// to maxExtranonce2Size, and to at least 1 byte so the miner has SOME
+// rolling room even if it asked for 0).
+func newExtendedChannel(
+	sessionID string,
+	userIdentity string,
+	extranoncePool *extranoncePool,
+	vardiffCfg *stratum.VarDiffConfig,
+	vardiffOnNewBlock bool,
+	startDiff float64,
+	requestedExtranonceSize uint16,
+) (*Channel, error) {
+	ch, err := newChannel(sessionID, userIdentity, extranoncePool, vardiffCfg, vardiffOnNewBlock, startDiff)
+	if err != nil {
+		return nil, err
+	}
+	ch.isExtended = true
+	granted := requestedExtranonceSize
+	if granted == 0 || granted > maxExtranonce2Size {
+		granted = maxExtranonce2Size
+	}
+	ch.extranonce2Size = granted
+	return ch, nil
+}
+
+// IsExtended reports whether this is an Extended Mining Channel.
+func (c *Channel) IsExtended() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.isExtended
+}
+
+// ExtranonceSize returns the extranonce2 space (in bytes) granted to this
+// extended channel. Meaningless for standard channels.
+func (c *Channel) ExtranonceSize() uint16 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.extranonce2Size
 }
 
 // ID returns the channel's server-assigned identifier.
