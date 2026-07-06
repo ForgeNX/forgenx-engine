@@ -480,6 +480,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	// Validate job ID.
 	if !ch.IsJobValid(share.JobID) {
 		ch.RecordRejection()
+		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -491,6 +492,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 
 	if tmpl == nil || tmpl.JobID != share.JobID {
 		ch.RecordRejection()
+		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -576,6 +578,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 
 	if !ch.IsJobValid(share.JobID) {
 		ch.RecordRejection()
+		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -586,6 +589,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 
 	if tmpl == nil || tmpl.JobID != share.JobID {
 		ch.RecordRejection()
+		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
