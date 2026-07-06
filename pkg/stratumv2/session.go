@@ -430,6 +430,7 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 		ch.PoolTarget(),
 		ch.ExtranonceSize(),
 		ch.Extranonce1Bytes(),
+		0, // groupChannelID = 0 (not using group channels)
 	)
 	if err != nil {
 		return fmt.Errorf("encode OpenExtendedSuccess: %w", err)
@@ -778,6 +779,7 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error
 		!tmpl.IsFutureJob,
 		tmpl.NTime,
 		tmpl.Version,
+		true, // versionRollingAllowed — NerdQAxe++ and SV2 devices expect this
 		tmpl.MerkleBranch,
 		coinb1,
 		coinb2,

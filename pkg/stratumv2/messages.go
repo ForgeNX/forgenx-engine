@@ -331,6 +331,7 @@ func EncodeOpenExtendedMiningChannelSuccess(
 	targetBytes []byte,
 	extranonceSize uint16,
 	extranoncePrefix []byte,
+	groupChannelID uint32,
 ) ([]byte, error) {
 	targetEnc, err := encodeU256(targetBytes)
 	if err != nil {
@@ -340,7 +341,7 @@ func EncodeOpenExtendedMiningChannelSuccess(
 	if err != nil {
 		return nil, err
 	}
-	b := make([]byte, 4+4+len(targetEnc)+2+len(prefixEnc))
+	b := make([]byte, 4+4+len(targetEnc)+2+len(prefixEnc)+4)
 	putU32LE(b, 0, requestID)
 	putU32LE(b, 4, channelID)
 	off := 8
@@ -349,6 +350,8 @@ func EncodeOpenExtendedMiningChannelSuccess(
 	putU16LE(b, off, extranonceSize)
 	off += 2
 	copy(b[off:], prefixEnc)
+	off += len(prefixEnc)
+	putU32LE(b, off, groupChannelID)
 	return b, nil
 }
 
@@ -491,6 +494,7 @@ func EncodeNewExtendedMiningJob(
 	minNtimeSet bool,
 	minNtime uint32,
 	version uint32,
+	versionRollingAllowed bool,
 	merklePath [][32]byte,
 	coinbaseTxPrefix []byte,
 	coinbaseTxSuffix []byte,
@@ -510,7 +514,8 @@ func EncodeNewExtendedMiningJob(
 		return nil, fmt.Errorf("NewExtendedMiningJob coinbase_tx_suffix: %w", err)
 	}
 
-	size := 4 + 4 + optionLen + 4 + len(merkleEnc) + len(prefixEnc) + len(suffixEnc)
+	// +1 for version_rolling_allowed (BOOL, 1 byte)
+	size := 4 + 4 + optionLen + 4 + 1 + len(merkleEnc) + len(prefixEnc) + len(suffixEnc)
 	b := make([]byte, size)
 	off := 0
 
@@ -531,6 +536,16 @@ func EncodeNewExtendedMiningJob(
 
 	putU32LE(b, off, version)
 	off += 4
+
+	// version_rolling_allowed: BOOL (1 byte) — per spec §5.3.16,
+	// sits between version and merkle_path. We always allow version
+	// rolling (NerdQAxe++ and most SV2 devices expect true here).
+	if versionRollingAllowed {
+		b[off] = 1
+	} else {
+		b[off] = 0
+	}
+	off++
 
 	copy(b[off:], merkleEnc)
 	off += len(merkleEnc)
