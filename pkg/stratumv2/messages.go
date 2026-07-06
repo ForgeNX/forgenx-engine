@@ -36,6 +36,7 @@ const (
 	MsgSubmitSharesSuccess              uint8 = 0x1C
 	MsgSubmitSharesError                uint8 = 0x1D
 	MsgSubmitSharesExtended             uint8 = 0x1E
+	MsgSubmitSharesExtendedLegacy       uint8 = 0x1B // NerdQAxe++ firmware quirk: uses 0x1B instead of spec 0x1E
 	MsgNewExtendedMiningJob             uint8 = 0x1F
 	MsgSetTarget                        uint8 = 0x21
 )

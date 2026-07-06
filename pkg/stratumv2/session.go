@@ -283,7 +283,8 @@ func (s *Session) dispatch(frame *Frame) error {
 		return s.handleSubmitShares(frame.Payload)
 	case MsgOpenExtendedMiningChannel:
 		return s.handleOpenExtendedChannel(frame.Payload)
-	case MsgSubmitSharesExtended:
+	case MsgSubmitSharesExtended, MsgSubmitSharesExtendedLegacy:
+		// 0x1E = spec SubmitSharesExtended; 0x1B = NerdQAxe++ firmware quirk
 		return s.handleSubmitSharesExtended(frame.Payload)
 	default:
 		// Unknown/unhandled message types are silently ignored per the spec.
