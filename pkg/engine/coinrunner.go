@@ -282,6 +282,12 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 						submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, symbol)
 					}
 				},
+				OnStale: func(workerName string) {
+					runner.stats.RecordShare(symbol, metrics.ShareStale, workerName, 0)
+				},
+				OnRejected: func(workerName string) {
+					runner.stats.RecordShare(symbol, metrics.ShareInvalid, workerName, 0)
+				},
 			}
 
 			// Solo mode: each channel gets its own coinbase, built fresh

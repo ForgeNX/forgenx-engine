@@ -101,6 +101,8 @@ type Session struct {
 
 	// Callback to the engine when a share / block solution is found.
 	onShare      shareSubmitCallback
+	onStale      func(workerName string)
+	onRejected   func(workerName string)
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
 	onConnect    func(workerName, remoteAddr string)
 
@@ -153,7 +155,9 @@ func (s *Session) logf(format string, args ...interface{}) {
 func newSession(
 	conn net.Conn,
 	send, recv *sv2TransportCipher,
-	onShare shareSubmitCallback,
+	onShare     shareSubmitCallback,
+	onStale     func(workerName string),
+	onRejected  func(workerName string),
 	coinbaseBuilder CoinbaseBuilderFunc,
 	vardiffCfg *stratum.VarDiffConfig,
 	vardiffOnNewBlock bool,
@@ -171,6 +175,8 @@ func newSession(
 		codec:                    NewCodec(conn, send, recv),
 		channels:                 make(map[uint32]*Channel),
 		onShare:                  onShare,
+		onStale:                  onStale,
+		onRejected:               onRejected,
 		coinbaseBuilder:          coinbaseBuilder,
 		vardiffCfg:               vardiffCfg,
 		vardiffOnNewBlock:        vardiffOnNewBlock,
@@ -489,6 +495,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	if !ch.IsJobValid(share.JobID) {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
+		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -501,6 +508,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	if tmpl == nil || tmpl.JobID != share.JobID {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
+		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -530,6 +538,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
 			s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
+		if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -587,6 +596,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 	if !ch.IsJobValid(share.JobID) {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
+		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -598,6 +608,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 	if tmpl == nil || tmpl.JobID != share.JobID {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
+		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -625,6 +636,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
 			s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
+		if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
