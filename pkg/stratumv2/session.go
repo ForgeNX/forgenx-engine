@@ -95,9 +95,11 @@ type Session struct {
 	mu       sync.RWMutex
 	channels map[uint32]*Channel // channelID → Channel
 
-	// Current block template (updated by BroadcastJob from the server).
+	// Job template history keyed by JobID — mirrors V1 JobManager job map.
+	// Allows shares to find their template even after newer jobs broadcast.
 	templateMu   sync.RWMutex
-	lastTemplate *JobTemplate
+	templates    map[uint32]*JobTemplate
+	lastJobID    uint32
 
 	// Callback to the engine when a share / block solution is found.
 	onShare      shareSubmitCallback
@@ -177,6 +179,7 @@ func newSession(
 		onShare:                  onShare,
 		onStale:                  onStale,
 		onRejected:               onRejected,
+		templates:                make(map[uint32]*JobTemplate),
 		coinbaseBuilder:          coinbaseBuilder,
 		vardiffCfg:               vardiffCfg,
 		vardiffOnNewBlock:        vardiffOnNewBlock,
@@ -385,7 +388,8 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 		} else {
 			s.logf("[sv2] session %s: initial job sent successfully", s.id)
 			s.templateMu.Lock()
-			s.lastTemplate = tmpl
+			s.templates[tmpl.JobID] = tmpl
+			s.lastJobID = tmpl.JobID
 			s.templateMu.Unlock()
 		}
 	}
@@ -468,7 +472,8 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 		} else {
 			s.logf("[sv2] session %s: initial extended job sent successfully", s.id)
 			s.templateMu.Lock()
-			s.lastTemplate = tmpl
+			s.templates[tmpl.JobID] = tmpl
+			s.lastJobID = tmpl.JobID
 			s.templateMu.Unlock()
 		}
 	}
@@ -500,12 +505,12 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
 
-	// Look up the template for this job.
+	// Look up the template for this specific job ID.
 	s.templateMu.RLock()
-	tmpl := s.lastTemplate
+	tmpl := s.templates[share.JobID]
 	s.templateMu.RUnlock()
 
-	if tmpl == nil || tmpl.JobID != share.JobID {
+	if tmpl == nil {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
@@ -602,10 +607,10 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 	}
 
 	s.templateMu.RLock()
-	tmpl := s.lastTemplate
+	tmpl := s.templates[share.JobID]
 	s.templateMu.RUnlock()
 
-	if tmpl == nil || tmpl.JobID != share.JobID {
+	if tmpl == nil {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
@@ -681,11 +686,28 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 // Work Dispatch — called by the Server when a new block template arrives
 // ──────────────────────────────────────────────────────────────────────────────
 
+// maxTemplateHistory is the number of past job templates retained per session.
+// Mirrors V1's JobManager maxJobHistory. Keeping more templates means miners
+// can submit shares for recent jobs without stale rejections on job rotation.
+const maxTemplateHistory = 10
+
 // UpdateTemplate stores the latest block template and broadcasts new work to
 // all open channels on this session.
 func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 	s.templateMu.Lock()
-	s.lastTemplate = tmpl
+	s.templates[tmpl.JobID] = tmpl
+	s.lastJobID = tmpl.JobID
+	if len(s.templates) > maxTemplateHistory {
+		var oldestID uint32
+		var found bool
+		for id := range s.templates {
+			if !found || id < oldestID {
+				oldestID = id
+				found = true
+			}
+		}
+		delete(s.templates, oldestID)
+	}
 	s.templateMu.Unlock()
 
 	s.mu.RLock()
