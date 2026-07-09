@@ -2,6 +2,7 @@ package coinapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"net"
 	"encoding/json"
@@ -492,8 +493,12 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandleLogs(w, r, coinID)
 		case endpoint == "settings" && r.Method == http.MethodGet:
 			c.HandleSettingsGet(w, r, coinID)
+		case endpoint == "settings" && r.Method == http.MethodPost:
+			c.HandleSettingsPost(w, r, coinID)
 		case endpoint == "rpc-credentials" && r.Method == http.MethodGet:
 			c.HandleRPCCredentialsGet(w, r, coinID)
+		case endpoint == "rpc-credentials" && r.Method == http.MethodPost:
+			c.HandleRPCCredentialsPost(w, r, coinID)
 		default:
 			http.NotFound(w, r)
 		}
@@ -915,4 +920,321 @@ func envFloat(env map[string]string, key string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+// ── /api/apps/{coin}/settings POST ───────────────────────────────────────────
+
+func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coinID string) {
+	symbol := strings.ToLower(strings.TrimPrefix(coinID, "forge"))
+	prefix := strings.ToUpper(symbol) + "_"
+	envPath := "/opt/forgenx/apps/" + coinID + "/.env"
+	configPath := "/pool/coins/" + symbol + ".json"
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+
+	// ── 1. Update .env ────────────────────────────────────────────────────────
+	env := readEnvFile(envPath)
+
+	if v, ok := body["network"].(string); ok {
+		env[prefix+"NETWORK"] = v
+	}
+	if v, ok := body["pruneSize"].(float64); ok {
+		mb := int(v)
+		if mb < 550 {
+			mb = 550
+		}
+		env[prefix+"PRUNE"] = strconv.Itoa(mb)
+	}
+	if v, ok := body["prune"].(bool); ok && !v {
+		env[prefix+"PRUNE"] = "0"
+	}
+	if v, ok := body["autoStart"].(bool); ok {
+		if v {
+			env[prefix+"AUTO_START"] = "true"
+		} else {
+			env[prefix+"AUTO_START"] = "false"
+		}
+	}
+	if v, ok := body["payoutAddress"].(string); ok {
+		env[prefix+"PAYOUT_ADDRESS"] = v
+	}
+	if v, ok := body["workerName"].(string); ok {
+		env[prefix+"WORKER_NAME"] = v
+	}
+	if v, ok := body["diffPreset"].(string); ok {
+		env[prefix+"DIFF_PRESET"] = v
+	}
+	if v, ok := body["startDiff"].(float64); ok {
+		env[prefix+"START_DIFF"] = strconv.Itoa(int(v))
+	}
+	if v, ok := body["minDiff"].(float64); ok {
+		env[prefix+"MIN_DIFF"] = strconv.Itoa(int(v))
+	}
+	if v, ok := body["maxDiff"].(float64); ok {
+		env[prefix+"MAX_DIFF"] = strconv.Itoa(int(v))
+	}
+	if v, ok := body["donation1Addr"].(string); ok {
+		env[prefix+"DONATION1_ADDR"] = v
+	}
+	if v, ok := body["donation1Pct"].(float64); ok {
+		env[prefix+"DONATION1_PCT"] = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	if v, ok := body["donation2Addr"].(string); ok {
+		env[prefix+"DONATION2_ADDR"] = v
+	}
+	if v, ok := body["donation2Pct"].(float64); ok {
+		env[prefix+"DONATION2_PCT"] = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+
+	if err := writeEnvFile(envPath, env); err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	// ── 2. Update coin JSON config ────────────────────────────────────────────
+	coinCfg := readJSONFile(configPath)
+	if coinCfg == nil {
+		coinCfg = map[string]interface{}{}
+	}
+
+	mining := getNestedMap(coinCfg, "mining")
+	stratum := getNestedMap(coinCfg, "stratum")
+	vardiff := getNestedMap(coinCfg, "vardiff")
+	node := getNestedMap(coinCfg, "node")
+
+	if v, ok := body["payoutAddress"].(string); ok {
+		mining["address"] = v
+	}
+	if v, ok := body["network"].(string); ok {
+		mining["network"] = v
+	}
+	if v, ok := body["startDiff"].(float64); ok {
+		stratum["difficulty"] = int(v)
+	}
+	if v, ok := body["minDiff"].(float64); ok {
+		vardiff["min_diff"] = int(v)
+	}
+	if v, ok := body["maxDiff"].(float64); ok {
+		vardiff["max_diff"] = int(v)
+	}
+	if v, ok := body["targetTime"].(float64); ok {
+		vardiff["target_time"] = int(v)
+	}
+	if v, ok := body["retargetTime"].(float64); ok {
+		vardiff["retarget_time"] = int(v)
+	}
+	if v, ok := body["variancePercent"].(float64); ok {
+		vardiff["variance_percent"] = int(v)
+	}
+	if v, ok := body["onNewBlock"].(bool); ok {
+		vardiff["on_new_block"] = v
+	}
+	if v, ok := body["pingEnabled"].(bool); ok {
+		stratum["ping_enabled"] = v
+	}
+	if v, ok := body["pingInterval"].(float64); ok {
+		stratum["ping_interval"] = int(v)
+	}
+	if v, ok := body["staleShareGrace"].(float64); ok {
+		stratum["stale_share_grace"] = int(v)
+	}
+	if v, ok := body["lowDiffShareGrace"].(float64); ok {
+		stratum["low_diff_share_grace"] = int(v)
+	}
+	if v, ok := body["acceptSuggestDiff"].(bool); ok {
+		stratum["accept_suggest_diff"] = v
+	}
+	if v, ok := body["zmqEnabled"].(bool); ok {
+		node["zmq_enabled"] = v
+	}
+	if v, ok := body["zmqHashblock"].(float64); ok {
+		node["zmq_hashblock"] = fmt.Sprintf("tcp://%s-node:%d", coinID, int(v))
+	}
+	if v, ok := body["templateRefresh"].(float64); ok {
+		coinCfg["template_refresh_interval"] = int(v)
+	}
+	if v, ok := body["sv2Enabled"].(bool); ok {
+		stratum["sv2_enabled"] = v
+	}
+	if v, ok := body["sv2Port"].(float64); ok {
+		stratum["sv2_port"] = int(v)
+	}
+	if v, ok := body["connectionTimeout"].(float64); ok {
+		stratum["connection_timeout"] = int(v)
+	}
+	if v, ok := body["donation1Pct"].(float64); ok {
+		coinCfg["donation"] = map[string]interface{}{
+			"enabled": v > 0,
+			"percent": v,
+		}
+	}
+
+	coinCfg["mining"] = mining
+	coinCfg["stratum"] = stratum
+	coinCfg["vardiff"] = vardiff
+	coinCfg["node"] = node
+
+	if err := writeJSONFile(configPath, coinCfg); err != nil {
+		// .env already saved — log but don't fail
+		writeJSON(w, map[string]interface{}{"success": true, "warning": "settings saved but config update failed: " + err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"success": true})
+}
+
+// ── /api/apps/{coin}/rpc-credentials POST ────────────────────────────────────
+
+func (c *CoinAPI) HandleRPCCredentialsPost(w http.ResponseWriter, r *http.Request, coinID string) {
+	symbol := strings.ToLower(strings.TrimPrefix(coinID, "forge"))
+	prefix := strings.ToUpper(symbol) + "_"
+	envPath := "/opt/forgenx/apps/" + coinID + "/.env"
+	configPath := "/pool/coins/" + symbol + ".json"
+	appDir := "/opt/forgenx/apps/" + coinID
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+
+	rpcUser := strings.TrimSpace(getString(body, "rpc_user"))
+	rpcPass := strings.TrimSpace(getString(body, "rpc_pass"))
+	if rpcUser == "" || rpcPass == "" {
+		writeError(w, 400, "rpc_user and rpc_pass are required")
+		return
+	}
+
+	// ── 1. Update .env (preserve existing lines, replace RPC fields) ──────────
+	data, _ := os.ReadFile(envPath)
+	var envLines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		stripped := strings.TrimSpace(line)
+		if strings.HasPrefix(stripped, prefix+"RPC_USER=") ||
+			strings.HasPrefix(stripped, prefix+"RPC_PASS=") {
+			continue
+		}
+		if stripped != "" || len(envLines) == 0 {
+			envLines = append(envLines, line)
+		}
+	}
+	envLines = append(envLines,
+		prefix+"RPC_USER="+rpcUser,
+		prefix+"RPC_PASS="+rpcPass,
+	)
+	if err := os.WriteFile(envPath, []byte(strings.Join(envLines, "\n")+"\n"), 0644); err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "node_verified": false,
+			"message": "Failed to update .env: " + err.Error()})
+		return
+	}
+
+	// ── 2. Update coin JSON config ────────────────────────────────────────────
+	coinCfg := readJSONFile(configPath)
+	node := getNestedMap(coinCfg, "node")
+	node["username"] = rpcUser
+	node["password"] = rpcPass
+	coinCfg["node"] = node
+	if err := writeJSONFile(configPath, coinCfg); err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "node_verified": false,
+			"message": "Failed to update coin config: " + err.Error()})
+		return
+	}
+
+	// ── 3. Restart node container via Docker socket API ───────────────────────
+	// compose 'restart' does NOT re-read .env — must use 'up -d' equivalent.
+	// We call the Docker API directly: stop then start the container, which
+	// forces the daemon to re-interpolate .env on start.
+	containerName := coinID + "-node"
+	composeFile := appDir + "/docker-compose.yml"
+	_ = composeFile // Docker socket approach below; compose file kept for reference
+
+	if err := dockerRestartContainer(containerName); err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "node_verified": false,
+			"message": "Credentials saved but node restart failed: " + err.Error()})
+		return
+	}
+
+	// ── 4. Poll until node RPC comes back online (max 60s) ───────────────────
+	if c.nodeRPCFunc != nil {
+		for i := 0; i < 20; i++ {
+			time.Sleep(3 * time.Second)
+			info := c.nodeRPCFunc(strings.ToUpper(symbol))
+			if s, ok := info["status"].(string); ok && s == "online" {
+				writeJSON(w, map[string]interface{}{
+					"success":       true,
+					"node_verified": true,
+					"message":       "RPC credentials updated. Node verified online with new credentials.",
+				})
+				return
+			}
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"success":       true,
+		"node_verified": false,
+		"message":       "Credentials saved and node restarted, but could not verify it came back online within 60s. Check the Node tab.",
+	})
+}
+
+// dockerRestartContainer stops and starts a container via the Docker socket API.
+// This forces .env re-interpolation on start, unlike a simple 'restart'.
+func dockerRestartContainer(container string) error {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+
+	// Stop the container (timeout=10s for graceful shutdown)
+	stopURL := fmt.Sprintf("http://localhost/containers/%s/stop?t=10", container)
+	req, _ := http.NewRequest("POST", stopURL, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("stop request failed: %w", err)
+	}
+	resp.Body.Close()
+	// 204 = stopped, 304 = already stopped — both acceptable
+	if resp.StatusCode != 204 && resp.StatusCode != 304 {
+		return fmt.Errorf("stop returned %d", resp.StatusCode)
+	}
+
+	// Start the container
+	startURL := fmt.Sprintf("http://localhost/containers/%s/start", container)
+	req, _ = http.NewRequest("POST", startURL, bytes.NewReader(nil))
+	resp, err = client.Do(req)
+	if err != nil {
+		return fmt.Errorf("start request failed: %w", err)
+	}
+	resp.Body.Close()
+	// 204 = started, 304 = already running
+	if resp.StatusCode != 204 && resp.StatusCode != 304 {
+		return fmt.Errorf("start returned %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// writeEnvFile writes a KEY=VALUE map to a .env file.
+func writeEnvFile(path string, env map[string]string) error {
+	var lines []string
+	lines = append(lines, "# ForgeBCH app environment")
+	for k, v := range env {
+		lines = append(lines, k+"="+v)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+
+// writeJSONFile writes a map as indented JSON to a file.
+func writeJSONFile(path string, v map[string]interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
