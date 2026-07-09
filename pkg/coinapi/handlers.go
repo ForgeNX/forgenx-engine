@@ -381,6 +381,7 @@ func (c *CoinAPI) StartSnapshotThread() {
 		defer ticker.Stop()
 		for range ticker.C {
 			c.runSnapshot()
+			c.runHistorySnapshot()
 		}
 	}()
 }
@@ -489,6 +490,8 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandlePool(w, r, symbol)
 		case endpoint == "blocks":
 			c.HandleBlocks(w, r, symbol)
+		case endpoint == "history":
+			c.HandleHistory(w, r, symbol)
 		case endpoint == "logs":
 			c.HandleLogs(w, r, coinID)
 		case endpoint == "settings" && r.Method == http.MethodGet:
@@ -1237,4 +1240,67 @@ func writeJSONFile(path string, v map[string]interface{}) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// ── /api/apps/{coin}/history ──────────────────────────────────────────────────
+
+func (c *CoinAPI) HandleHistory(w http.ResponseWriter, r *http.Request, symbol string) {
+	metric := r.URL.Query().Get("metric")
+	trail := r.URL.Query().Get("trail")
+
+	validMetrics := map[string]bool{
+		"pool_hashrate_raw": true, "network_hashrate_raw": true, "difficulty": true,
+	}
+	if !validMetrics[metric] {
+		writeError(w, 400, "invalid metric")
+		return
+	}
+
+	t, ok := historyTrails[trail]
+	if !ok {
+		t = historyTrails["6h"]
+		trail = "6h"
+	}
+
+	data := c.store.GetHistory(symbol, t.Seconds, t.Points, metric)
+	writeJSON(w, map[string]interface{}{
+		"metric": metric,
+		"trail":  trail,
+		"data":   data,
+	})
+}
+
+// runHistorySnapshot records a metric sample for all active coins.
+func (c *CoinAPI) runHistorySnapshot() {
+	statsData, err := c.fetchEngineJSON("/stats")
+	if err != nil {
+		return
+	}
+	coins, _ := statsData["coins"].(map[string]interface{})
+	for symbol := range coins {
+		poolHashrate := 0.0
+		networkHashrate := 0.0
+		difficulty := 0.0
+
+		minersData, _ := c.fetchEngineJSON("/miners")
+		if minersData != nil {
+			if miners, ok := minersData["miners"].(map[string]interface{}); ok {
+				if coinMiners, ok := miners[symbol].([]interface{}); ok {
+					for _, mRaw := range coinMiners {
+						if m, ok := mRaw.(map[string]interface{}); ok {
+							poolHashrate += getFloat(m, "hashrate_5m")
+						}
+					}
+				}
+			}
+		}
+
+		if c.nodeRPCFunc != nil {
+			info := c.nodeRPCFunc(symbol)
+			networkHashrate = getFloat(info, "network_hashrate_raw")
+			difficulty = getFloat(info, "difficulty")
+		}
+
+		c.store.RecordSample(symbol, poolHashrate, networkHashrate, difficulty)
+	}
 }

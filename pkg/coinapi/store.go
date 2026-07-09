@@ -3,6 +3,7 @@ package coinapi
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -50,6 +51,14 @@ func (s *Store) init() error {
 			stale_shares INTEGER DEFAULT 0, snapshot_time TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_ws_symbol_time ON worker_shares(coin_symbol, snapshot_time)`,
 		`CREATE INDEX IF NOT EXISTS idx_ws_worker ON worker_shares(coin_symbol, worker_name, snapshot_time)`,
+		`CREATE TABLE IF NOT EXISTS metric_samples (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				coin_symbol TEXT NOT NULL,
+				pool_hashrate_raw REAL DEFAULT 0,
+				network_hashrate_raw REAL DEFAULT 0,
+				difficulty REAL DEFAULT 0,
+				recorded_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_samples_symbol_time ON metric_samples(coin_symbol, recorded_at)`,
 		`CREATE TABLE IF NOT EXISTS worker_best_diff (
 			coin_symbol TEXT NOT NULL, worker_name TEXT NOT NULL,
 			best_all_time REAL DEFAULT 0, updated_at TEXT NOT NULL,
@@ -344,6 +353,103 @@ func (s *Store) DeleteWorker(symbol, workerName string) error {
 	s.db.Exec(`DELETE FROM worker_shares WHERE coin_symbol=? AND worker_name=?`, symbol, workerName)
 	s.db.Exec(`DELETE FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`, symbol, workerName)
 	return nil
+}
+
+// ── Metric History ───────────────────────────────────────────────────────────
+
+func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, difficulty float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`INSERT INTO metric_samples
+		(coin_symbol, pool_hashrate_raw, network_hashrate_raw, difficulty, recorded_at)
+		VALUES (?,?,?,?,?)`,
+		symbol, poolHashrate, networkHashrate, difficulty, now)
+	if err == nil {
+		// Prune samples older than 8 days
+		s.db.Exec(`DELETE FROM metric_samples WHERE coin_symbol=? AND recorded_at < datetime('now','-8 days')`, symbol)
+	}
+	return err
+}
+
+// historyTrail maps trail label to (seconds, numPoints)
+type historyTrail struct{ Seconds, Points int }
+
+var historyTrails = map[string]historyTrail{
+	"30m": {30 * 60, 30},
+	"6h":  {6 * 3600, 72},
+	"1d":  {24 * 3600, 96},
+	"3d":  {3 * 24 * 3600, 72},
+	"6d":  {6 * 24 * 3600, 144},
+	"7d":  {7 * 24 * 3600, 168},
+}
+
+func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric string) []float64 {
+	validMetrics := map[string]bool{
+		"pool_hashrate_raw": true, "network_hashrate_raw": true, "difficulty": true,
+	}
+	if !validMetrics[metric] {
+		return make([]float64, numPoints)
+	}
+
+	s.mu.Lock()
+	rows, err := s.db.Query(
+		`SELECT recorded_at, `+metric+` FROM metric_samples
+		 WHERE coin_symbol=? AND recorded_at >= datetime('now','-`+fmt.Sprintf("%d", sinceSeconds)+` seconds')
+		 ORDER BY recorded_at ASC`, symbol)
+	s.mu.Unlock()
+
+	if err != nil {
+		return make([]float64, numPoints)
+	}
+	defer rows.Close()
+
+	type row struct {
+		recordedAt string
+		value      float64
+	}
+	var data []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.recordedAt, &r.value); err == nil {
+			data = append(data, r)
+		}
+	}
+
+	if len(data) == 0 {
+		return make([]float64, numPoints)
+	}
+
+	now := time.Now().UTC()
+	start := now.Add(-time.Duration(sinceSeconds) * time.Second)
+	bucketSec := float64(sinceSeconds) / float64(numPoints)
+
+	buckets := make([][]float64, numPoints)
+	for _, r := range data {
+		ts, err := time.Parse(time.RFC3339Nano, r.recordedAt)
+		if err != nil {
+			ts, _ = time.Parse(time.RFC3339, r.recordedAt)
+		}
+		offset := ts.Sub(start).Seconds()
+		idx := int(offset / bucketSec)
+		if idx >= 0 && idx < numPoints {
+			buckets[idx] = append(buckets[idx], r.value)
+		}
+	}
+
+	result := make([]float64, numPoints)
+	lastVal := 0.0
+	for i, b := range buckets {
+		if len(b) > 0 {
+			sum := 0.0
+			for _, v := range b {
+				sum += v
+			}
+			lastVal = math.Round((sum/float64(len(b)))*10000) / 10000
+		}
+		result[i] = lastVal
+	}
+	return result
 }
 
 func (s *Store) Close() error { return s.db.Close() }
