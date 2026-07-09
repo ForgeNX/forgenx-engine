@@ -720,7 +720,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	prefix := strings.ToUpper(symbol) + "_"
 
 	envPath := "/opt/forgenx/apps/" + coinID + "/.env"
-	configPath := "/var/lib/forgenx/shared/forgenx/coins/" + symbol + ".json"
+	configPath := "/pool/coins/" + symbol + ".json"
 	manifestPath := "/opt/forgenx/apps/" + coinID + "/umbrel-app.yml"
 
 	env := readEnvFile(envPath)
