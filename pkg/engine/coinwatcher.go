@@ -110,31 +110,10 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 	return &cfg, nil
 }
 
-func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
+	func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
 
-	// 🔥 ALWAYS register coin first (even if syncing/offline)
+	// ALWAYS register coin first (even if syncing/offline)
 	e.stats.InitCoin(symbol)
-
-	// 🔥 update sync progress even during IBD (before runner starts)
-	go func() {
-		rpc := noderpc.NewClient(
-			cfg.Node.Host,
-			cfg.Node.Port,
-			cfg.Node.Username,
-			cfg.Node.Password,
-		)
-
-		info, err := rpc.GetBlockchainInfo()
-		if err == nil {
-			progress := info.VerificationProgress
-
-			if progress > 0.999 {
-				progress = 1
-			}
-
-			e.stats.SetSyncProgress(symbol, progress)
-		}
-	}()
 
 	if !cfg.Enabled {
 		e.logger.Info("[%s] disabled — stopping pool", symbol)
@@ -142,7 +121,30 @@ func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donatio
 		return
 	}
 
-	if !cfg.IbdComplete {
+	// Live RPC check — engine determines node state itself, no external flags needed.
+	// This makes the engine fully self-contained on Umbrel OS and other platforms
+	// where there is no forgenxd process to update ibd_complete/node_online in the config.
+	rpc := noderpc.NewClient(cfg.Node.Host, cfg.Node.Port, cfg.Node.Username, cfg.Node.Password)
+	chain, err := rpc.GetBlockchainInfo()
+	if err != nil {
+		e.logger.Info("[%s] node offline (RPC unreachable: %v) — pool not started/stopped", symbol, err)
+		e.runnersMu.RLock()
+		_, exists := e.runners[symbol]
+		e.runnersMu.RUnlock()
+		if exists {
+			e.StopCoin(symbol)
+		}
+		return
+	}
+
+	// Update sync progress
+	progress := chain.VerificationProgress
+	if progress > 0.999 {
+		progress = 1
+	}
+	e.stats.SetSyncProgress(symbol, progress)
+
+	if chain.InitialBlockDownload {
 		e.runnersMu.RLock()
 		_, exists := e.runners[symbol]
 		e.runnersMu.RUnlock()
@@ -155,18 +157,6 @@ func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donatio
 		return
 	}
 
-	if !cfg.NodeOnline {
-		e.runnersMu.RLock()
-		_, exists := e.runners[symbol]
-		e.runnersMu.RUnlock()
-		if exists {
-			e.logger.Info("[%s] node offline (RPC unreachable) — stopping pool", symbol)
-			e.StopCoin(symbol)
-		} else {
-			e.logger.Info("[%s] node offline (RPC unreachable) — pool not started", symbol)
-		}
-		return
-	}
 
 	e.runnersMu.RLock()
 	_, exists := e.runners[symbol]
