@@ -22,6 +22,7 @@ type Config struct {
 	PoolName string                `json:"pool_name"`
 	LogLevel string                `json:"log_level"`
 	APIPort  int                   `json:"api_port"`
+	DBPath   string                `json:"db_path"`
 	Donation DonationConfig        `json:"donation"`
 	Coins    map[string]CoinConfig `json:"coins"`
 }
@@ -131,6 +132,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.APIPort == 0 {
 		cfg.APIPort = 8080
+	}
+	if cfg.DBPath == "" {
+		cfg.DBPath = "/pool/db/forgenx.db"
 	}
 	if cfg.Donation.Percent == 0 {
 		cfg.Donation.Enabled = true

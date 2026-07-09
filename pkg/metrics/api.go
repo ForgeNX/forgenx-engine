@@ -69,6 +69,7 @@ type APIServer struct {
 	stats           *Stats
 	sessionProvider SessionProvider
 	server          *http.Server
+	mux             *http.ServeMux
 	logger          *logging.Logger
 	startTime 	time.Time
 	metricsHandler  http.HandlerFunc
@@ -101,7 +102,8 @@ func (a *APIServer) SetSessionProvider(sp SessionProvider) {
 
 // Start begins serving the metrics API.
 func (a *APIServer) Start() error {
-        mux := http.NewServeMux()
+        a.mux = http.NewServeMux()
+        mux := a.mux
 
         // Existing endpoints
         mux.HandleFunc("/stats", a.handleStats)
@@ -189,6 +191,13 @@ func serveStaticUI(staticDir string) http.Handler {
 }
 
 // Stop shuts down the API server.
+func (a *APIServer) Mux() *http.ServeMux {
+	if a.mux == nil {
+		a.mux = http.NewServeMux()
+	}
+	return a.mux
+}
+
 func (a *APIServer) Stop() {
 	if a.server != nil {
 		a.server.Close()

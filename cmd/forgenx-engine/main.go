@@ -19,6 +19,7 @@ import (
 		// Import coin packages to trigger init() registration
 		_ "github.com/ForgeNX/forgenx-engine/pkg/coin"
 
+		"github.com/ForgeNX/forgenx-engine/pkg/coinapi"
 		"github.com/ForgeNX/forgenx-engine/pkg/config"
 		"github.com/ForgeNX/forgenx-engine/pkg/engine"
 		"github.com/ForgeNX/forgenx-engine/pkg/logging"
@@ -88,6 +89,17 @@ func main() {
 		if err := api.Start(); err != nil {
 					logger.Fatal("metrics API start: %v", err)
 				}
+		// Start CoinAPI
+		engineAPIURL := fmt.Sprintf("http://localhost:%d", cfg.APIPort)
+		store, storeErr := coinapi.NewStore(cfg.DBPath)
+		if storeErr != nil {
+			logger.Warn("CoinAPI store init failed: %v", storeErr)
+		} else {
+			coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
+			coinAPI.RegisterRoutes(api.Mux())
+			coinAPI.StartSnapshotThread()
+			logger.Info("CoinAPI started, DB: %s", cfg.DBPath)
+		}
 
 		logger.Info("ForgeNX Engine is running. Press Ctrl+C to stop.")
 

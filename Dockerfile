@@ -13,7 +13,7 @@ WORKDIR /app
 COPY --from=builder /app/forgenx-engine /app/forgenx-engine
 COPY static ./static
 
-RUN mkdir -p /pool/coins
+RUN mkdir -p /pool/coins /pool/db
 
 EXPOSE 3333
 EXPOSE 8080
