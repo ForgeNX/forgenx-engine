@@ -96,6 +96,17 @@ func main() {
 			logger.Warn("CoinAPI store init failed: %v", storeErr)
 		} else {
 			coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
+
+			coinAPI.SetNodeRPCFunc(func(symbol string) map[string]interface{} {
+
+				info, connected := eng.GetNodeStatus(symbol)
+
+				info["connected"] = connected
+
+				return info
+
+			})
+
 			coinAPI.RegisterRoutes(api.Mux())
 			coinAPI.StartSnapshotThread()
 			logger.Info("CoinAPI started, DB: %s", cfg.DBPath)

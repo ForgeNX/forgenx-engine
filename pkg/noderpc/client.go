@@ -107,6 +107,58 @@ func (c *Client) GetBlockchainInfo() (*BlockchainInfo, error) {
 	return &info, nil
 }
 
+// GetNetworkInfo returns node network information (peers, subversion).
+func (c *Client) GetNetworkInfo() (*NetworkInfo, error) {
+	result, err := c.call("getnetworkinfo", nil)
+	if err != nil {
+		return nil, err
+	}
+	var info NetworkInfo
+	if err := json.Unmarshal(result, &info); err != nil {
+		return nil, fmt.Errorf("parsing getnetworkinfo: %w", err)
+	}
+	return &info, nil
+}
+
+// GetMempoolInfo returns node mempool information.
+func (c *Client) GetMempoolInfo() (*MempoolInfo, error) {
+	result, err := c.call("getmempoolinfo", nil)
+	if err != nil {
+		return nil, err
+	}
+	var info MempoolInfo
+	if err := json.Unmarshal(result, &info); err != nil {
+		return nil, fmt.Errorf("parsing getmempoolinfo: %w", err)
+	}
+	return &info, nil
+}
+
+// GetMiningInfo returns node mining information (difficulty, network hashrate).
+func (c *Client) GetMiningInfo() (*MiningInfo, error) {
+	result, err := c.call("getmininginfo", nil)
+	if err != nil {
+		return nil, err
+	}
+	var info MiningInfo
+	if err := json.Unmarshal(result, &info); err != nil {
+		return nil, fmt.Errorf("parsing getmininginfo: %w", err)
+	}
+	return &info, nil
+}
+
+// GetBlockHeader returns header information for a given block hash.
+func (c *Client) GetBlockHeader(hash string) (*BlockHeader, error) {
+	result, err := c.call("getblockheader", []interface{}{hash})
+	if err != nil {
+		return nil, err
+	}
+	var header BlockHeader
+	if err := json.Unmarshal(result, &header); err != nil {
+		return nil, fmt.Errorf("parsing getblockheader: %w", err)
+	}
+	return &header, nil
+}
+
 // GetBlockTemplate requests a new block template from the node.
 func (c *Client) GetBlockTemplate(rules []string) (*BlockTemplate, error) {
 	params := []interface{}{

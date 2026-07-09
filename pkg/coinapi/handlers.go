@@ -1,10 +1,15 @@
 package coinapi
 
 import (
+	"bufio"
+	"context"
+	"net"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -326,11 +331,17 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 	}
 
 	nodeInfo := map[string]interface{}{}
+	engineConnected := false
 	if c.nodeRPCFunc != nil {
 		nodeInfo = c.nodeRPCFunc(symbol)
+		if v, ok := nodeInfo["connected"].(bool); ok {
+			engineConnected = v
+			delete(nodeInfo, "connected")
+		}
 	}
-
 	writeJSON(w, map[string]interface{}{
+		"engine_connected": engineConnected,
+		"zmq_connected":    engineConnected,
 		"pool": map[string]interface{}{
 			"shares_accepted":   sharesAccepted,
 			"shares_rejected":   sharesRejected,
@@ -471,9 +482,437 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandleWorkerShares48h(w, r, symbol)
 		case endpoint == "status":
 			c.HandleStatus(w, r, symbol)
+		case endpoint == "node":
+			c.HandleNode(w, r, symbol)
+		case endpoint == "pool":
+			c.HandlePool(w, r, symbol)
+		case endpoint == "blocks":
+			c.HandleBlocks(w, r, symbol)
+		case endpoint == "logs":
+			c.HandleLogs(w, r, coinID)
+		case endpoint == "settings" && r.Method == http.MethodGet:
+			c.HandleSettingsGet(w, r, coinID)
+		case endpoint == "rpc-credentials" && r.Method == http.MethodGet:
+			c.HandleRPCCredentialsGet(w, r, coinID)
 		default:
-			// Forward to node RPC or return 404
-			fmt.Fprintf(w, `{"error":"not implemented"}`)
+			http.NotFound(w, r)
 		}
 	})
+}
+
+// ── /api/apps/{coin}/node ─────────────────────────────────────────────────────
+
+func (c *CoinAPI) HandleNode(w http.ResponseWriter, r *http.Request, symbol string) {
+	if c.nodeRPCFunc == nil {
+		writeError(w, 503, "node RPC not available")
+		return
+	}
+	info := c.nodeRPCFunc(symbol)
+	delete(info, "connected")
+	writeJSON(w, info)
+}
+
+// ── /api/apps/{coin}/pool ─────────────────────────────────────────────────────
+
+func (c *CoinAPI) HandlePool(w http.ResponseWriter, r *http.Request, symbol string) {
+	statsData, _ := c.fetchEngineJSON("/stats")
+
+	coinStats := map[string]interface{}{}
+	if statsData != nil {
+		if coins, ok := statsData["coins"].(map[string]interface{}); ok {
+			if cs, ok := coins[symbol].(map[string]interface{}); ok {
+				coinStats = cs
+			}
+		}
+	}
+
+	persisted := c.store.GetLastCounters(symbol)
+	persistentAccepted := persisted.SharesAccepted + persisted.SharesOffset
+
+	engineConnected := statsData != nil
+	hashrate := 0.0
+	workers := 0
+
+	minersData, _ := c.fetchEngineJSON("/miners")
+	if minersData != nil {
+		if miners, ok := minersData["miners"].(map[string]interface{}); ok {
+			if coinMiners, ok := miners[symbol].([]interface{}); ok {
+				workers = len(coinMiners)
+				for _, mRaw := range coinMiners {
+					if m, ok := mRaw.(map[string]interface{}); ok {
+						hashrate += getFloat(m, "hashrate_5m")
+					}
+				}
+			}
+		}
+	}
+
+	syncProgress := 0.0
+	if c.nodeRPCFunc != nil {
+		if info := c.nodeRPCFunc(symbol); info != nil {
+			if v, ok := info["sync_pct"].(float64); ok {
+				syncProgress = v / 100.0
+			}
+		}
+	}
+
+	uptime := int64(0)
+	if statsData != nil {
+		uptime = int64(getFloat(statsData, "uptime_seconds"))
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"connected":         engineConnected,
+		"hashrate":          hashrate,
+		"max_pool_hashrate": 0,
+		"symbol":            symbol,
+		"sync_progress":     syncProgress,
+		"workers":           workers,
+		"shares_accepted":   max64(int64(persistentAccepted), int64(getFloat(coinStats, "shares_accepted"))),
+		"shares_rejected":   int64(getFloat(coinStats, "shares_rejected")),
+		"shares_stale":      int64(getFloat(coinStats, "shares_stale")),
+		"blocks_found":      int64(getFloat(coinStats, "blocks_found")),
+		"last_block_time":   getString(coinStats, "last_block_time"),
+		"uptime_seconds":    uptime,
+	})
+}
+
+// ── /api/apps/{coin}/blocks ───────────────────────────────────────────────────
+
+func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol string) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	blocks, err := c.store.GetBlocks(symbol, limit)
+	if err != nil {
+		writeError(w, 500, "failed to query blocks")
+		return
+	}
+	luck := c.store.GetLuckStats(symbol)
+	total := c.store.GetBlockCount(symbol)
+
+	var out []map[string]interface{}
+	for _, b := range blocks {
+		out = append(out, map[string]interface{}{
+			"id":                b.ID,
+			"coin_symbol":       b.CoinSymbol,
+			"height":            b.Height,
+			"block_hash":        b.BlockHash,
+			"block_time":        b.BlockTime,
+			"miner_address":     b.MinerAddress,
+			"shares_since_last": b.SharesSinceLast,
+			"luck_percent":      b.LuckPercent,
+			"created_at":        b.CreatedAt,
+		})
+	}
+	if out == nil {
+		out = []map[string]interface{}{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"blocks": out,
+		"luck_stats": map[string]interface{}{
+			"avg_luck":   luck.AvgLuck,
+			"luckiest":   luck.Luckiest,
+			"unluckiest": luck.Unluckiest,
+		},
+		"total": total,
+	})
+}
+
+// ── /api/apps/{coin}/logs ─────────────────────────────────────────────────────
+
+// HandleLogs fetches container logs via the Docker socket API directly.
+// This avoids any dependency on the docker CLI binary, making the engine
+// self-contained and deployable on Umbrel OS and other platforms where the
+// CLI is not available inside the container.
+func (c *CoinAPI) HandleLogs(w http.ResponseWriter, r *http.Request, coinID string) {
+	tailStr := r.URL.Query().Get("tail")
+	tail := 100
+	if tailStr != "" {
+		if n, err := strconv.Atoi(tailStr); err == nil && n > 0 {
+			tail = n
+		}
+	}
+	if tail > 5000 {
+		tail = 5000
+	}
+
+	// Derive container name: forgebch -> forgebch-node
+	container := coinID + "-node"
+
+	output, err := dockerLogs(container, tail)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{
+			"success": false,
+			"logs":    "",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"success": true,
+		"logs":    output,
+	})
+}
+
+// dockerLogs fetches the last `tail` lines of logs for a container by calling
+// the Docker daemon REST API over /var/run/docker.sock. No docker CLI needed.
+func dockerLogs(container string, tail int) (string, error) {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
+		},
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   20 * time.Second,
+	}
+
+	// Docker API: GET /containers/{name}/logs?stdout=1&stderr=1&tail=N
+	url := fmt.Sprintf("http://localhost/containers/%s/logs?stdout=1&stderr=1&tail=%d",
+		container, tail)
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("docker socket: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return "", fmt.Errorf("container %q not found", container)
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("docker API returned %d", resp.StatusCode)
+	}
+
+	// Docker multiplexes stdout/stderr with an 8-byte header per frame:
+	// [stream_type(1), 0, 0, 0, size(4 big-endian)] followed by `size` bytes of log data.
+	// We strip the headers and collect the raw log text.
+	var out strings.Builder
+	buf := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(resp.Body, buf)
+		if err != nil {
+			break // EOF or error — done
+		}
+		size := int(buf[4])<<24 | int(buf[5])<<16 | int(buf[6])<<8 | int(buf[7])
+		if size == 0 {
+			continue
+		}
+		payload := make([]byte, size)
+		if _, err := io.ReadFull(resp.Body, payload); err != nil {
+			break
+		}
+		out.Write(payload)
+	}
+
+	return strings.TrimRight(out.String(), "\n"), nil
+}
+
+// ── /api/apps/{coin}/settings GET ────────────────────────────────────────────
+
+func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coinID string) {
+	symbol := strings.ToLower(strings.TrimPrefix(coinID, "forge"))
+	prefix := strings.ToUpper(symbol) + "_"
+
+	envPath := "/opt/forgenx/apps/" + coinID + "/.env"
+	configPath := "/var/lib/forgenx/shared/forgenx/coins/" + symbol + ".json"
+	manifestPath := "/opt/forgenx/apps/" + coinID + "/umbrel-app.yml"
+
+	env := readEnvFile(envPath)
+	coinCfg := readJSONFile(configPath)
+
+	// Parse version/releaseDate from YAML manifest (simple line scan, no YAML dep)
+	appVersion := "1.0.0"
+	releaseDate := ""
+	if manifestData, err := os.ReadFile(manifestPath); err == nil {
+		for _, line := range strings.Split(string(manifestData), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "version:") {
+				appVersion = strings.Trim(strings.TrimPrefix(line, "version:"), " \"")
+			}
+			if strings.HasPrefix(line, "releaseDate:") {
+				releaseDate = strings.Trim(strings.TrimPrefix(line, "releaseDate:"), " \"")
+			}
+		}
+	}
+
+	vardiff := getNestedMap(coinCfg, "vardiff")
+	stratum := getNestedMap(coinCfg, "stratum")
+	node    := getNestedMap(coinCfg, "node")
+
+	// Extract ZMQ port from tcp://host:port
+	zmqHashblock := 28333
+	if zmqURL := getNestedStr(node, "zmq_hashblock"); zmqURL != "" {
+		if idx := strings.LastIndex(zmqURL, ":"); idx >= 0 {
+			if port, err := strconv.Atoi(zmqURL[idx+1:]); err == nil {
+				zmqHashblock = port
+			}
+		}
+	}
+
+	pruneSizeMb := envInt(env, prefix+"PRUNE", 550)
+
+	writeJSON(w, map[string]interface{}{
+		"appVersion":         appVersion,
+		"releaseDate":        releaseDate,
+		"network":            envStr(env, prefix+"NETWORK", "mainnet"),
+		"prune":              envStr(env, prefix+"PRUNE", "550") != "0",
+		"prune_size_mb":      pruneSizeMb,
+		"pruneSize":          pruneSizeMb,
+		"rpc_user":           envStr(env, prefix+"RPC_USER", "forgenx"),
+		"stratum_port":       getNestedInt(stratum, "port", 3334),
+		"payoutAddress":      envStr(env, prefix+"PAYOUT_ADDRESS", ""),
+		"workerName":         envStr(env, prefix+"WORKER_NAME", ""),
+		"targetTime":         getNestedFloat(vardiff, "target_time", 45),
+		"retargetTime":       getNestedFloat(vardiff, "retarget_time", 300),
+		"variancePercent":    getNestedFloat(vardiff, "variance_percent", 30),
+		"onNewBlock":         getNestedBool(vardiff, "on_new_block", true),
+		"pingEnabled":        getNestedBool(stratum, "ping_enabled", true),
+		"pingInterval":       getNestedInt(stratum, "ping_interval", 30),
+		"staleShareGrace":    getNestedInt(stratum, "stale_share_grace", 5),
+		"lowDiffShareGrace":  getNestedInt(stratum, "low_diff_share_grace", 5),
+		"zmqEnabled":         getNestedBool(node, "zmq_enabled", true),
+		"acceptSuggestDiff":  getNestedBool(stratum, "accept_suggest_diff", false),
+		"zmqHashblock":       zmqHashblock,
+		"templateRefresh":    getNestedInt(coinCfg, "template_refresh_interval", 100),
+		"diffPreset":         envStr(env, prefix+"DIFF_PRESET", "home"),
+		"startDiff":          envInt(env, prefix+"START_DIFF", 128),
+		"minDiff":            envInt(env, prefix+"MIN_DIFF", 32),
+		"maxDiff":            envInt(env, prefix+"MAX_DIFF", 4096),
+		"autoStart":          envStr(env, prefix+"AUTO_START", "true") == "true",
+		"donation1Addr":      envStr(env, prefix+"DONATION1_ADDR", ""),
+		"donation1Pct":       envFloat(env, prefix+"DONATION1_PCT", 1.0),
+		"donation2Addr":      envStr(env, prefix+"DONATION2_ADDR", ""),
+		"donation2Pct":       envFloat(env, prefix+"DONATION2_PCT", 0.0),
+		"configVersion":      getStr(coinCfg, "configVersion", "1.0"),
+		"sv2Enabled":         getNestedBool(stratum, "sv2_enabled", false),
+		"sv2Port":            getNestedInt(stratum, "sv2_port", 4334),
+		"sv2AuthorityPubkey": getNestedStr(stratum, "sv2_authority_pubkey"),
+		"connectionTimeout":  getNestedInt(stratum, "connection_timeout", 600),
+	})
+}
+
+// ── /api/apps/{coin}/rpc-credentials GET ─────────────────────────────────────
+
+func (c *CoinAPI) HandleRPCCredentialsGet(w http.ResponseWriter, r *http.Request, coinID string) {
+	symbol := strings.ToUpper(strings.TrimPrefix(coinID, "forge"))
+	prefix := symbol + "_"
+	envPath := "/opt/forgenx/apps/" + coinID + "/.env"
+	env := readEnvFile(envPath)
+	if len(env) == 0 {
+		writeError(w, 404, "could not read settings for "+coinID)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"rpc_user": envStr(env, prefix+"RPC_USER", "forgenx"),
+		"rpc_pass": envStr(env, prefix+"RPC_PASS", ""),
+	})
+}
+
+// ── File/env helpers ──────────────────────────────────────────────────────────
+
+func readEnvFile(path string) map[string]string {
+	env := make(map[string]string)
+	f, err := os.Open(path)
+	if err != nil {
+		return env
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx < 0 {
+			continue
+		}
+		env[strings.TrimSpace(line[:idx])] = strings.TrimSpace(line[idx+1:])
+	}
+	return env
+}
+
+func readJSONFile(path string) map[string]interface{} {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return map[string]interface{}{}
+	}
+	return result
+}
+
+func getNestedMap(m map[string]interface{}, key string) map[string]interface{} {
+	if v, ok := m[key].(map[string]interface{}); ok {
+		return v
+	}
+	return map[string]interface{}{}
+}
+
+func getNestedStr(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getStr(m map[string]interface{}, key, def string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return def
+}
+
+func getNestedFloat(m map[string]interface{}, key string, def float64) float64 {
+	if v, ok := m[key].(float64); ok {
+		return v
+	}
+	return def
+}
+
+func getNestedInt(m map[string]interface{}, key string, def int) int {
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	return def
+}
+
+func getNestedBool(m map[string]interface{}, key string, def bool) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return def
+}
+
+func envStr(env map[string]string, key, def string) string {
+	if v, ok := env[key]; ok && v != "" {
+		return v
+	}
+	return def
+}
+
+func envInt(env map[string]string, key string, def int) int {
+	if v, ok := env[key]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envFloat(env map[string]string, key string, def float64) float64 {
+	if v, ok := env[key]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
 }

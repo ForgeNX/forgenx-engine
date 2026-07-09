@@ -20,9 +20,9 @@ type rpcRequest struct {
 
 // rpcResponse is a JSON-RPC 1.0 response.
 type rpcResponse struct {
-	ID     interface{}      `json:"id"`
-	Result json.RawMessage  `json:"result"`
-	Error  *rpcError        `json:"error"`
+	ID     interface{}     `json:"id"`
+	Result json.RawMessage `json:"result"`
+	Error  *rpcError       `json:"error"`
 }
 
 type rpcError struct {
@@ -36,36 +36,36 @@ func (e *rpcError) Error() string {
 
 // BlockTemplate is the response from getblocktemplate.
 type BlockTemplate struct {
-	Version               uint32                 `json:"version"`
-	PreviousBlockHash     string                 `json:"previousblockhash"`
-	Transactions          []BlockTemplateTransaction `json:"transactions"`
-	CoinbaseAux           map[string]string      `json:"coinbaseaux"`
-	CoinbaseValue         int64                  `json:"coinbasevalue"`
-	Target                string                 `json:"target"`
-	MinTime               int64                  `json:"mintime"`
-	Mutable               []string               `json:"mutable"`
-	NonceRange            string                 `json:"noncerange"`
-	SigOpLimit            int                    `json:"sigoplimit"`
-	SizeLimit             int                    `json:"sizelimit"`
-	WeightLimit           int                    `json:"weightlimit"`
-	CurTime               int64                  `json:"curtime"`
-	Bits                  string                 `json:"bits"`
-	Height                int64                  `json:"height"`
-	DefaultWitnessCommitment string              `json:"default_witness_commitment"`
-	Rules                 []string               `json:"rules"`
+	Version                  uint32                     `json:"version"`
+	PreviousBlockHash        string                     `json:"previousblockhash"`
+	Transactions             []BlockTemplateTransaction `json:"transactions"`
+	CoinbaseAux              map[string]string          `json:"coinbaseaux"`
+	CoinbaseValue            int64                      `json:"coinbasevalue"`
+	Target                   string                     `json:"target"`
+	MinTime                  int64                      `json:"mintime"`
+	Mutable                  []string                   `json:"mutable"`
+	NonceRange               string                     `json:"noncerange"`
+	SigOpLimit               int                        `json:"sigoplimit"`
+	SizeLimit                int                        `json:"sizelimit"`
+	WeightLimit              int                        `json:"weightlimit"`
+	CurTime                  int64                      `json:"curtime"`
+	Bits                     string                     `json:"bits"`
+	Height                   int64                      `json:"height"`
+	DefaultWitnessCommitment string                     `json:"default_witness_commitment"`
+	Rules                    []string                   `json:"rules"`
 	// eCash-specific fields
-	CoinbaseTxn           *CoinbaseTxn           `json:"coinbasetxn,omitempty"`
-	RTT                   *RTTData               `json:"rtt,omitempty"`
+	CoinbaseTxn *CoinbaseTxn `json:"coinbasetxn,omitempty"`
+	RTT         *RTTData     `json:"rtt,omitempty"`
 }
 
 // BlockTemplateTransaction represents a transaction in a block template.
 type BlockTemplateTransaction struct {
-	Data    string `json:"data"`
-	TxID    string `json:"txid"`
-	Hash    string `json:"hash"`
-	Fee     int64  `json:"fee"`
-	SigOps  int    `json:"sigops"`
-	Weight  int    `json:"weight"`
+	Data   string `json:"data"`
+	TxID   string `json:"txid"`
+	Hash   string `json:"hash"`
+	Fee    int64  `json:"fee"`
+	SigOps int    `json:"sigops"`
+	Weight int    `json:"weight"`
 }
 
 // CoinbaseTxn represents eCash-specific coinbase transaction requirements.
@@ -101,11 +101,42 @@ type RTTData struct {
 
 // BlockchainInfo is the response from getblockchaininfo.
 type BlockchainInfo struct {
-        Chain                   string  `json:"chain"`
-        Blocks                  int64   `json:"blocks"`
-        Headers                 int64   `json:"headers"`
-        BestBlockHash           string  `json:"bestblockhash"`
-        Difficulty              float64 `json:"difficulty"`
-        VerificationProgress    float64 `json:"verificationprogress"`
-        InitialBlockDownload    bool    `json:"initialblockdownload"`
+	Chain                string  `json:"chain"`
+	Blocks               int64   `json:"blocks"`
+	Headers              int64   `json:"headers"`
+	BestBlockHash        string  `json:"bestblockhash"`
+	Difficulty           float64 `json:"difficulty"`
+	VerificationProgress float64 `json:"verificationprogress"`
+	InitialBlockDownload bool    `json:"initialblockdownload"`
+	Pruned               bool    `json:"pruned"`
+	PruneHeight          int64   `json:"pruneheight"`
+	SizeOnDisk           int64   `json:"size_on_disk"`
+	PruneTargetSize      int64   `json:"prune_target_size"`
+}
+
+// NetworkInfo is the response from getnetworkinfo.
+type NetworkInfo struct {
+	Subversion     string `json:"subversion"`
+	Connections    int    `json:"connections"`
+	ConnectionsIn  int    `json:"connections_in"`
+	ConnectionsOut int    `json:"connections_out"`
+}
+
+// MempoolInfo is the response from getmempoolinfo.
+type MempoolInfo struct {
+	Size  int64 `json:"size"`
+	Usage int64 `json:"usage"`
+}
+
+// MiningInfo is the response from getmininginfo.
+type MiningInfo struct {
+	Difficulty    float64 `json:"difficulty"`
+	NetworkHashPS float64 `json:"networkhashps"`
+}
+
+// BlockHeader is the response from getblockheader.
+type BlockHeader struct {
+	Hash   string `json:"hash"`
+	Time   int64  `json:"time"`
+	Height int64  `json:"height"`
 }
