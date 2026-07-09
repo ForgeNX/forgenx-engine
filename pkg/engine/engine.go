@@ -278,6 +278,12 @@ func round2(f float64) float64 {
 	return math.Round(f*100) / 100
 }
 
+// GetDonationAddress returns the donation address for a coin symbol and network
+// from the embedded AUTHORS file.
+func (e *Engine) GetDonationAddress(symbol, network string) (string, error) {
+	return loadDonationAddress(symbol, network)
+}
+
 // LoadExistingCoinConfigs scans the coin config directory and starts pools for existing configs.
 func (e *Engine) LoadExistingCoinConfigs(dir string, donation config.DonationConfig) {
 

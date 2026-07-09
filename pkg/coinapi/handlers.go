@@ -20,8 +20,9 @@ type CoinAPI struct {
 	store          *Store
 	engineAPIURL   string // e.g. "http://localhost:8080"
 	nodeRPCFunc    NodeRPCFunc
-	coinConfigFunc CoinConfigFunc
-	logsFunc       LogsFunc
+	coinConfigFunc  CoinConfigFunc
+	logsFunc        LogsFunc
+	donationFunc    DonationFunc
 }
 
 // NodeRPCFunc fetches node info for a coin symbol.
@@ -33,6 +34,9 @@ type CoinConfigFunc func(symbol string) map[string]interface{}
 // LogsFunc fetches recent logs for a coin.
 type LogsFunc func(symbol string, tail int) []string
 
+// DonationFunc looks up the donation address for a coin symbol and network.
+type DonationFunc func(symbol, network string) (string, error)
+
 func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 	return &CoinAPI{
 		store:        store,
@@ -43,6 +47,7 @@ func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 func (c *CoinAPI) SetNodeRPCFunc(f NodeRPCFunc)       { c.nodeRPCFunc = f }
 func (c *CoinAPI) SetCoinConfigFunc(f CoinConfigFunc) { c.coinConfigFunc = f }
 func (c *CoinAPI) SetLogsFunc(f LogsFunc)             { c.logsFunc = f }
+func (c *CoinAPI) SetDonationFunc(f DonationFunc)     { c.donationFunc = f }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────
 
@@ -461,6 +466,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	// Engine proxy
 	mux.HandleFunc("/api/engine/stats", c.HandleEngineStats)
 	mux.HandleFunc("/api/engine/miners", c.HandleEngineMiners)
+	mux.HandleFunc("/api/engine/donation-address/", c.HandleDonationAddress)
 
 	// Coin app routes — matched by prefix, coin ID extracted from path
 	mux.HandleFunc("/api/apps/", func(w http.ResponseWriter, r *http.Request) {
@@ -1303,4 +1309,35 @@ func (c *CoinAPI) runHistorySnapshot() {
 
 		c.store.RecordSample(symbol, poolHashrate, networkHashrate, difficulty)
 	}
+}
+
+// ── /api/engine/donation-address/{symbol} ────────────────────────────────────
+
+func (c *CoinAPI) HandleDonationAddress(w http.ResponseWriter, r *http.Request) {
+	// Path: /api/engine/donation-address/{symbol}
+	symbol := strings.TrimPrefix(r.URL.Path, "/api/engine/donation-address/")
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		writeError(w, 400, "symbol required")
+		return
+	}
+	network := r.URL.Query().Get("network")
+	if network == "" {
+		network = "mainnet"
+	}
+	if c.donationFunc == nil {
+		writeError(w, 503, "donation address lookup not available")
+		return
+	}
+	addr, err := c.donationFunc(symbol, network)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"success": true,
+		"symbol":  symbol,
+		"network": network,
+		"address": addr,
+	})
 }
