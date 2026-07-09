@@ -80,8 +80,9 @@ type Config struct {
 	// If the share's ShareResult.MeetsBlock is true, the engine should
 	// submit the block to the node via RPC.
 	OnShare    shareSubmitCallback
-	OnStale    func(workerName string)
-	OnRejected func(workerName string)
+	OnStale      func(workerName string)
+	OnRejected   func(workerName string)
+	LowDiffGrace time.Duration
 
 	// CoinbaseBuilder, if set, enables solo mode: each channel's coinbase
 	// is built individually from its UserIdentity instead of using the
@@ -269,7 +270,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.OnStale, srv.cfg.OnRejected, srv.cfg.CoinbaseBuilder,
 		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds, srv, srv.cfg.OnDisconnect, srv.cfg.OnConnect)
+		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.LowDiffGrace, srv, srv.cfg.OnDisconnect, srv.cfg.OnConnect)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess

@@ -166,6 +166,7 @@ func newSession(
 	startDiff float64,
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
+	lowDiffGrace time.Duration,
 	srv *Server,
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time),
 	onConnect    func(workerName, remoteAddr string),
