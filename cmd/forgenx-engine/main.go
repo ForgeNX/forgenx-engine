@@ -106,6 +106,7 @@ func main() {
 				return info
 
 			})
+			coinAPI.SetDonationFunc(eng.GetDonationAddress)
 
 			coinAPI.RegisterRoutes(api.Mux())
 			coinAPI.StartSnapshotThread()
