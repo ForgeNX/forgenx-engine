@@ -508,6 +508,8 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandleRPCCredentialsGet(w, r, coinID)
 		case endpoint == "rpc-credentials" && r.Method == http.MethodPost:
 			c.HandleRPCCredentialsPost(w, r, coinID)
+		case (endpoint == "start" || endpoint == "stop" || endpoint == "restart") && r.Method == http.MethodPost:
+			c.HandleAction(w, r, coinID, endpoint)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1340,4 +1342,94 @@ func (c *CoinAPI) HandleDonationAddress(w http.ResponseWriter, r *http.Request) 
 		"network": network,
 		"address": addr,
 	})
+}
+
+// ── /api/apps/{coin}/{start|stop|restart} POST ───────────────────────────────
+
+// HandleAction starts, stops, or restarts all containers in a coin app's
+// Docker Compose project using the Docker socket API directly.
+func (c *CoinAPI) HandleAction(w http.ResponseWriter, r *http.Request, coinID, action string) {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 120 * time.Second}
+
+	// List containers belonging to this compose project
+	listURL := fmt.Sprintf(
+		"http://localhost/containers/json?all=1&filters=%s",
+		`{"label":["com.docker.compose.project=`+coinID+`"]}`,
+	)
+	resp, err := client.Get(listURL)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "error": "docker socket: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var containers []map[string]interface{}
+	if err := json.Unmarshal(body, &containers); err != nil || len(containers) == 0 {
+		writeJSON(w, map[string]interface{}{"success": false, "error": "no containers found for " + coinID})
+		return
+	}
+
+	// Collect container IDs (skip app_proxy — it manages itself)
+	var ids []string
+	for _, c := range containers {
+		names, _ := c["Names"].([]interface{})
+		skip := false
+		for _, n := range names {
+			if name, ok := n.(string); ok && strings.Contains(name, "app_proxy") {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			if id, ok := c["Id"].(string); ok {
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	if len(ids) == 0 {
+		writeJSON(w, map[string]interface{}{"success": false, "error": "no non-proxy containers found for " + coinID})
+		return
+	}
+
+	var lastErr string
+	for _, id := range ids {
+		var url string
+		switch action {
+		case "start":
+			url = "http://localhost/containers/" + id + "/start"
+		case "stop":
+			url = "http://localhost/containers/" + id + "/stop?t=10"
+		case "restart":
+			url = "http://localhost/containers/" + id + "/restart?t=10"
+		}
+		req, _ := http.NewRequest("POST", url, bytes.NewReader(nil))
+		res, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		res.Body.Close()
+		if res.StatusCode != 204 && res.StatusCode != 304 {
+			lastErr = fmt.Sprintf("container %s: status %d", id[:12], res.StatusCode)
+		}
+	}
+
+	if lastErr != "" {
+		writeJSON(w, map[string]interface{}{"success": false, "error": lastErr})
+		return
+	}
+
+	statusMap := map[string]string{
+		"start":   "running",
+		"stop":    "stopped",
+		"restart": "running",
+	}
+	writeJSON(w, map[string]interface{}{"success": true, "status": statusMap[action]})
 }
