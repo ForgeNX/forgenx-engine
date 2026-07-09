@@ -392,11 +392,12 @@ func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric st
 		return make([]float64, numPoints)
 	}
 
+	cutoff := time.Now().UTC().Add(-time.Duration(sinceSeconds) * time.Second).Format(time.RFC3339Nano)
 	s.mu.Lock()
 	rows, err := s.db.Query(
 		`SELECT recorded_at, `+metric+` FROM metric_samples
-		 WHERE coin_symbol=? AND recorded_at >= datetime('now','-`+fmt.Sprintf("%d", sinceSeconds)+` seconds')
-		 ORDER BY recorded_at ASC`, symbol)
+		 WHERE coin_symbol=? AND recorded_at >= ?
+		 ORDER BY recorded_at ASC`, symbol, cutoff)
 	s.mu.Unlock()
 
 	if err != nil {
