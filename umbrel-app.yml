@@ -1,0 +1,27 @@
+manifestVersion: 1
+id: forgenx-engine
+category: bitcoin
+name: ForgeNX Engine
+version: "1.0.84"
+tagline: Multi-coin Stratum mining engine
+
+description: >-
+  ForgeNX Engine provides a lightweight Stratum mining server
+  capable of running multi-coin solo mining pools.
+
+developer: ForgeNX
+website: https://github.com/ForgeNX/forgenx-engine
+repo: https://github.com/ForgeNX/forgenx-engine
+support: https://github.com/ForgeNX/forgenx-engine
+
+dependencies: []
+port: 8080
+
+icon: icon.png
+gallery: []
+
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+
+submitter: ForgeNX
