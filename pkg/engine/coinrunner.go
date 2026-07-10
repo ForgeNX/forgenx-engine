@@ -774,3 +774,19 @@ func persistSV2AuthPubkey(symbol, authPubHex string, logger *logging.Logger) {
 // persistSV2AuthPubkey writes the SV2 authority public key into the coin's
 // JSON config so the ForgeNX UI can display it without needing root access
 // to the key files. Called once at SV2 server startup.
+
+// StratumRunning reports whether the Stratum V1 server is currently listening.
+func (r *CoinRunner) StratumRunning() bool {
+	if r.server == nil {
+		return false
+	}
+	return r.server.IsRunning()
+}
+
+// SV2Running reports whether the Stratum V2 server is currently listening.
+func (r *CoinRunner) SV2Running() bool {
+	if r.sv2Server == nil {
+		return false
+	}
+	return r.sv2Server.IsRunning()
+}

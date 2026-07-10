@@ -56,6 +56,7 @@ type Server struct {
 	pingIDSeq            atomic.Uint64
 	shutdownCh           chan struct{}
 	wg                   sync.WaitGroup
+	running              atomic.Bool
 }
 
 // ServerConfig holds configuration for the stratum server.
@@ -109,6 +110,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
 	s.listener = listener
+	s.running.Store(true)
 
 	s.logger.Info("Stratum server listening on %s", s.addr)
 
@@ -195,8 +197,12 @@ func (s *Server) Stop() {
 		s.logger.Warn("stratum server shutdown timed out")
 	}
 
+	s.running.Store(false)
 	s.logger.Info("Stratum server stopped")
 }
+
+// IsRunning reports whether the server is currently listening.
+func (s *Server) IsRunning() bool { return s.running.Load() }
 
 // BroadcastJob sends a new job to all authorized sessions.
 func (s *Server) BroadcastJob(job *Job) {

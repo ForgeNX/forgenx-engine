@@ -418,3 +418,14 @@ func (e *Engine) HandleFleet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+// GetCoinPortStatus returns whether the V1 and V2 stratum ports are live for a coin.
+func (e *Engine) GetCoinPortStatus(symbol string) (v1Running, v2Running bool) {
+	e.runnersMu.RLock()
+	runner, exists := e.runners[symbol]
+	e.runnersMu.RUnlock()
+	if !exists {
+		return false, false
+	}
+	return runner.StratumRunning(), runner.SV2Running()
+}

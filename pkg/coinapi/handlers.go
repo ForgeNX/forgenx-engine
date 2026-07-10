@@ -23,6 +23,7 @@ type CoinAPI struct {
 	coinConfigFunc  CoinConfigFunc
 	logsFunc        LogsFunc
 	donationFunc    DonationFunc
+	portStatusFunc  PortStatusFunc
 }
 
 // NodeRPCFunc fetches node info for a coin symbol.
@@ -37,6 +38,9 @@ type LogsFunc func(symbol string, tail int) []string
 // DonationFunc looks up the donation address for a coin symbol and network.
 type DonationFunc func(symbol, network string) (string, error)
 
+// PortStatusFunc returns whether V1 and V2 stratum ports are live for a coin symbol.
+type PortStatusFunc func(symbol string) (v1, v2 bool)
+
 func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 	return &CoinAPI{
 		store:        store,
@@ -48,6 +52,7 @@ func (c *CoinAPI) SetNodeRPCFunc(f NodeRPCFunc)       { c.nodeRPCFunc = f }
 func (c *CoinAPI) SetCoinConfigFunc(f CoinConfigFunc) { c.coinConfigFunc = f }
 func (c *CoinAPI) SetLogsFunc(f LogsFunc)             { c.logsFunc = f }
 func (c *CoinAPI) SetDonationFunc(f DonationFunc)     { c.donationFunc = f }
+func (c *CoinAPI) SetPortStatusFunc(f PortStatusFunc) { c.portStatusFunc = f }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────
 
@@ -346,8 +351,10 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 		}
 	}
 	writeJSON(w, map[string]interface{}{
-		"engine_connected": engineConnected,
-		"zmq_connected":    engineConnected,
+		"engine_connected":  engineConnected,
+		"zmq_connected":     engineConnected,
+		"stratum_v1_open":   func() bool { if c.portStatusFunc != nil { v1, _ := c.portStatusFunc(symbol); return v1 }; return engineConnected }(),
+		"stratum_v2_open":   func() bool { if c.portStatusFunc != nil { _, v2 := c.portStatusFunc(symbol); return v2 }; return false }(),
 		"pool": map[string]interface{}{
 			"shares_accepted":   sharesAccepted,
 			"shares_rejected":   sharesRejected,

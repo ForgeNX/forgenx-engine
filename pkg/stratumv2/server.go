@@ -141,8 +141,9 @@ type Server struct {
 	jobCounter uint32
 
 	// Shutdown signalling.
-	quit chan struct{}
-	once sync.Once
+	quit    chan struct{}
+	once    sync.Once
+	running atomic.Bool
 
 	// Statistics (atomic).
 	totalConnections  uint64
@@ -207,6 +208,7 @@ func (srv *Server) Start() error {
 		return fmt.Errorf("sv2 listen %s: %w", srv.cfg.ListenAddr, err)
 	}
 	srv.listener = ln
+	srv.running.Store(true)
 
 	pubHex := hex.EncodeToString(srv.cfg.StaticKeypair.ellSwiftPub[:])
 	authPubHex := hex.EncodeToString(func() []byte { b := srv.cfg.AuthorityKeypair.XOnlyPubKeyBytes(); return b[:] }())
@@ -242,9 +244,13 @@ func (srv *Server) Stop() {
 			sess.Close()
 		}
 		srv.mu.Unlock()
+		srv.running.Store(false)
 		srv.logInfo("[sv2-%s] server stopped", srv.cfg.CoinTicker)
 	})
 }
+
+// IsRunning reports whether the server is currently listening.
+func (srv *Server) IsRunning() bool { return srv.running.Load() }
 
 // handleConn runs the full lifecycle for one inbound TCP connection.
 func (srv *Server) handleConn(conn net.Conn) {
