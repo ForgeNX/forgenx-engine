@@ -256,6 +256,72 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 		})
 	}
 
+	// ── Offline workers from historical data ────────────────────────────────
+	onlineNames := make(map[string]bool)
+	for _, w := range workers {
+		if name, ok := w["name"].(string); ok {
+			onlineNames[name] = true
+		}
+	}
+	allKnown := c.store.GetWorkerBestDiffs(symbol)
+	for workerName, info := range allKnown {
+		if onlineNames[workerName] {
+			continue
+		}
+		// Skip workers with no last_seen (freshly deleted or never connected)
+		if info.LastSeen == "" {
+			continue
+		}
+		// 48h shares using alltime as effective current (worker is offline)
+		alltimeShares := c.store.GetWorkerSharesAlltime(symbol, workerName)
+		w48 := c.store.GetWorkerShares48hLive(symbol, workerName, alltimeShares.Valid, alltimeShares.Invalid)
+
+		// Compute last session duration
+		lastSessionDuration := ""
+		if info.LastSeen != "" && info.ConnectedAt != "" {
+			if tDisc, err1 := time.Parse(time.RFC3339Nano, info.LastSeen); err1 == nil {
+				if tConn, err2 := time.Parse(time.RFC3339Nano, info.ConnectedAt); err2 == nil {
+					secs := int(tDisc.Sub(tConn).Seconds())
+					if secs > 0 {
+						switch {
+						case secs < 60:
+							lastSessionDuration = fmt.Sprintf("%ds", secs)
+						case secs < 3600:
+							lastSessionDuration = fmt.Sprintf("%dm %ds", secs/60, secs%60)
+						case secs < 86400:
+							lastSessionDuration = fmt.Sprintf("%dh %dm", secs/3600, (secs%3600)/60)
+						default:
+							lastSessionDuration = fmt.Sprintf("%dd %dh", secs/86400, (secs%86400)/3600)
+						}
+					}
+				}
+			}
+		}
+
+		workers = append(workers, map[string]interface{}{
+			"name":                    workerName,
+			"online":                  false,
+			"hashrate":                0,
+			"hashrate_15m":            0,
+			"hashrate_5m":             0,
+			"difficulty":              0,
+			"connected_at":            nil,
+			"best_session":            0,
+			"best_all_time":           info.BestAllTime,
+			"last_share":              nil,
+			"last_seen":               info.LastSeen,
+			"last_session_duration":   lastSessionDuration,
+			"valid_shares":            0,
+			"invalid_shares":          0,
+			"stale_shares":            0,
+			"shares_48h_valid":        w48.Valid,
+			"shares_48h_invalid":      w48.Invalid,
+			"shares_alltime_valid":    alltimeShares.Valid,
+			"shares_alltime_invalid":  alltimeShares.Invalid,
+			"protocol":                "v1",
+		})
+	}
+
 	if workers == nil {
 		workers = []map[string]interface{}{}
 	}
