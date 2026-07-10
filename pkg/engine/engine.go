@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/config"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
 	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
@@ -202,7 +203,35 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 	e.runnersMu.RUnlock()
 
 	if !exists || runner.rpcClient == nil {
-		return map[string]interface{}{}, false
+		// No runner (e.g. node is in IBD) — try reading coin config directly
+		// so the UI can still show sync progress during initial block download.
+		cfg, err := loadCoinConfig(CoinsDir + "/" + strings.ToLower(symbol) + ".json")
+		if err != nil || cfg == nil {
+			return map[string]interface{}{}, false
+		}
+		tmpRPC := noderpc.NewClient(cfg.Node.Host, cfg.Node.Port, cfg.Node.Username, cfg.Node.Password)
+		chain, err := tmpRPC.GetBlockchainInfo()
+		if err != nil {
+			return map[string]interface{}{"status": "offline", "rpcOnline": false}, false
+		}
+		progress := chain.VerificationProgress
+		if progress > 0.999 {
+			progress = 1
+		}
+		e.stats.SetSyncProgress(symbol, progress)
+		return map[string]interface{}{
+			"status":                 "online",
+			"rpcOnline":              true,
+			"chain":                  chain.Chain,
+			"blocks":                 chain.Blocks,
+			"headers":                chain.Headers,
+			"sync_pct":               round2(progress * 100),
+			"synced":                 chain.Blocks == chain.Headers,
+			"initial_block_download": chain.InitialBlockDownload,
+			"best_block_hash":        chain.BestBlockHash,
+			"pruned":                 chain.Pruned,
+			"connected":              false,
+		}, false
 	}
 
 	rpc := runner.rpcClient
