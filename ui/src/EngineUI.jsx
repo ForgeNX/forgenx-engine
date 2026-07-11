@@ -895,7 +895,7 @@ function EngineInformationTab() {
   )
 
   return (
-    <div style={{ display: "flex", gap: "0", marginTop: "-14px", overflow: "visible", alignItems: "flex-start" }}>
+    <div style={{ display: "flex", gap: "0", marginTop: "0", padding: "12px", overflow: "visible", alignItems: "flex-start" }}>
       {/* Left 50% */}
       <div style={{ flex: "0 0 50%", display: "flex", flexDirection: "column", gap: "4px", overflowY: "auto", paddingRight: "12px", paddingTop: "0" }}>
         {/* Header */}
