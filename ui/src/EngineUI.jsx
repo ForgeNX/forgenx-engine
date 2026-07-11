@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Zap, Users, BarChart2, Clock, Box, Cpu, Wifi, WifiOff, RefreshCw, Server, Hash, Globe } from "lucide-react"
+import { Zap, Users, BarChart2, Clock, Box, Cpu, Wifi, WifiOff, RefreshCw, Server, Hash, Globe, Package, Tag, GitBranch, User, ExternalLink, Headphones, Play, Square, RotateCcw, Download, Copy, Check, ChevronDown } from "lucide-react"
 
 const ENG = {
   color:       "#ff00b4",
@@ -853,7 +853,6 @@ const InfoField = ({ label, value, isLink = false, mono = false, icon: Icon }) =
 // ── Information Tab ──────────────────────────────────────────────────────────
 function EngineInformationTab() {
   const [engineApp, setEngineApp] = useState(null)
-  const [stats, setStats] = useState(null)
   const [actionLoading, setActionLoading] = useState(null)
   const [actionMsg, setActionMsg] = useState("")
   const [actionMsgColor, setActionMsgColor] = useState("#94a3b8")
@@ -864,12 +863,13 @@ function EngineInformationTab() {
   }
 
   useEffect(() => {
-    fetch('/stats').then(r => r.json()).then(setStats).catch(() => {})
-    fetch('/api/forgenx/apps').then(r => r.json()).then(data => {
-      const app = (data.apps || []).find(a => a.id === 'forgenx-engine')
-      if (app) setEngineApp(app)
-    }).catch(() => {})
-    // Fallback: use /api/engine/donation-address
+    fetch('/api/forgenx/apps')
+      .then(r => r.json())
+      .then(data => {
+        const app = (data.apps || []).find(a => a.id === 'forgenx-engine')
+        if (app) setEngineApp(app)
+      })
+      .catch(() => {})
   }, [])
 
   const handleAction = async (action) => {
@@ -885,65 +885,77 @@ function EngineInformationTab() {
     } catch (e) { showMsg(`Failed: ${e.message}`); setActionLoading(null) }
   }
 
-  const btnStyle = (color) => ({
-    padding: "6px 16px", borderRadius: "8px", border: `1px solid ${color}55`,
-    background: `${color}15`, color, fontSize: "12px", fontWeight: 600,
-    cursor: "pointer", fontFamily: "inherit"
-  })
-
   const hasUpdate = engineApp?.installedVersion && engineApp?.version &&
     engineApp.installedVersion !== engineApp.version
 
+  if (!engineApp) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#1e293b", fontSize: "13px" }}>
+      Loading engine info…
+    </div>
+  )
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "12px" }}>
-      {/* Action buttons */}
-      <div style={{ background: "rgba(2,6,17,0.55)", border: "1px solid rgba(255,0,180,0.35)", borderRadius: "12px", padding: "14px 16px" }}>
-        <div style={{ fontSize: "13px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "#e2e8f0", marginBottom: "12px", borderLeft: "3px solid #ff00b4", paddingLeft: "8px" }}>Engine Controls</div>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <button style={btnStyle("#22c55e")} onClick={() => handleAction("start")} disabled={!!actionLoading}>
-            {actionLoading === "start" ? "Starting…" : "▶ Start"}
-          </button>
-          <button style={btnStyle("#ff0080")} onClick={() => handleAction("stop")} disabled={!!actionLoading}>
-            {actionLoading === "stop" ? "Stopping…" : "■ Stop"}
-          </button>
-          <button style={btnStyle("#ff9a1f")} onClick={() => handleAction("restart")} disabled={!!actionLoading}>
-            {actionLoading === "restart" ? "Restarting…" : "↺ Restart"}
-          </button>
+    <div style={{ display: "flex", gap: "0", marginTop: "-14px", overflow: "visible", alignItems: "flex-start" }}>
+      {/* Left 50% */}
+      <div style={{ flex: "0 0 50%", display: "flex", flexDirection: "column", gap: "4px", overflowY: "auto", paddingRight: "12px", paddingTop: "0" }}>
+        {/* Header */}
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          <img src="/nodes/Engine.png" alt="ForgeNX Engine"
+            style={{ width: "96px", height: "96px", borderRadius: "16px", objectFit: "contain", flexShrink: 0 }}
+            onError={e => { e.target.style.display = "none" }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "14px", fontWeight: "700", color: "#f1f5f9", marginBottom: "4px" }}>{engineApp.name}</div>
+            <div style={{ fontSize: "12px", color: "#94a3b8", lineHeight: "1.5" }}>{engineApp.description}</div>
+          </div>
         </div>
-        {actionMsg && <div style={{ marginTop: "8px", fontSize: "12px", color: actionMsgColor }}>{actionMsg}</div>}
-      </div>
-
-      {/* Version info */}
-      <div style={{ background: "rgba(2,6,17,0.55)", border: "1px solid rgba(255,0,180,0.35)", borderRadius: "12px", padding: "14px 16px" }}>
-        <div style={{ fontSize: "13px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "#e2e8f0", marginBottom: "12px", borderLeft: "3px solid #ff00b4", paddingLeft: "8px" }}>App Information</div>
-        {[
-          ["Installed version", engineApp?.installedVersion ?? "—"],
-          ["Latest version", engineApp?.version ?? "—"],
-          ["Developer", engineApp?.developer ?? "ForgeNX"],
-          ["Pool name", stats?.pool_name ?? "—"],
-          ["Uptime", stats?.uptime_seconds ? Math.floor(stats.uptime_seconds / 60) + "m" : "—"],
-          ["Active coins", stats ? Object.keys(stats.coins ?? {}).join(", ") || "—" : "—"],
-        ].map(([l, v]) => (
-          <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid rgba(255,0,180,0.15)", fontSize: "13px" }}>
-            <span style={{ color: "#94a3b8" }}>{l}</span>
-            <span style={{ color: "#e2e8f0", fontWeight: 500 }}>{v}</span>
+        {/* Info fields */}
+        <div style={{ background: "rgba(2,6,17,0.5)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "0px 14px", marginTop: "-18px" }}>
+          <InfoField label="Description" value={engineApp.longDescription || engineApp.description} icon={Package} />
+          <InfoField label="Version"   value={engineApp.installedVersion || engineApp.version} icon={Tag} />
+          <InfoField label="Channel"   value={engineApp.channel ?? "stable"} icon={GitBranch} />
+          <InfoField label="Developer" value={engineApp.developer} icon={User} />
+          <InfoField label="Category"  value={engineApp.category} icon={Box} />
+          <InfoField label="Store ID"  value={engineApp.id} mono icon={Hash} />
+          <InfoField label="Website"   value={engineApp.website} isLink icon={ExternalLink} />
+          <InfoField label="Support"   value={engineApp.support} isLink icon={Headphones} />
+        </div>
+        {/* Actions */}
+        <div style={{ background: "rgba(2,6,17,0.5)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "10px 14px", marginTop: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+            <div style={{ fontSize: "10px", color: "#e2e8f0", textTransform: "uppercase", letterSpacing: "0.8px" }}>Actions</div>
+            {actionMsg && <div style={{ fontSize: "11px", color: actionMsgColor }}>{actionMsg}</div>}
           </div>
-        ))}
-        {hasUpdate && (
-          <div style={{ marginTop: "10px", padding: "8px 12px", background: "rgba(255,154,31,0.1)", border: "1px solid rgba(255,154,31,0.3)", borderRadius: "8px", fontSize: "12px", color: "#ff9a1f" }}>
-            Update available: v{engineApp.installedVersion} → v{engineApp.version}
+          <div style={{ display: "flex", gap: "18px", flexWrap: "wrap" }}>
+            <button onClick={() => handleAction("start")} disabled={actionLoading !== null}
+              style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px", cursor: actionLoading ? "wait" : "pointer", background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.3)", color: "#22c55e", fontSize: "12px", fontWeight: "600", fontFamily: "inherit" }}>
+              <Play size={12} /> {actionLoading === "start" ? "Starting…" : "Start"}
+            </button>
+            <button onClick={() => handleAction("stop")} disabled={actionLoading !== null}
+              style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px", cursor: actionLoading ? "wait" : "pointer", background: "rgba(255,0,128,0.08)", border: "1px solid rgba(255,0,128,0.3)", color: "#ff0080", fontSize: "12px", fontWeight: "600", fontFamily: "inherit" }}>
+              <Square size={12} /> {actionLoading === "stop" ? "Stopping…" : "Stop"}
+            </button>
+            <button onClick={() => handleAction("restart")} disabled={actionLoading !== null}
+              style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px", cursor: actionLoading ? "wait" : "pointer", background: "rgba(255,154,31,0.08)", border: "1px solid rgba(255,154,31,0.3)", color: "#ff9a1f", fontSize: "12px", fontWeight: "600", fontFamily: "inherit" }}>
+              <RotateCcw size={12} /> {actionLoading === "restart" ? "Restarting…" : "Restart"}
+            </button>
+            {hasUpdate && (
+              <button style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px", cursor: "pointer", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.35)", color: "#93c5fd", fontSize: "12px", fontWeight: "600", fontFamily: "inherit" }}>
+                <Download size={12} /> Update v{engineApp.version}
+              </button>
+            )}
           </div>
-        )}
+        </div>
       </div>
-
-      {/* Donation */}
-      <div style={{ background: "rgba(2,6,17,0.55)", border: "1px solid rgba(255,0,180,0.35)", borderRadius: "12px", padding: "14px 16px" }}>
-        <div style={{ fontSize: "13px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "#e2e8f0", marginBottom: "8px", borderLeft: "3px solid #ff00b4", paddingLeft: "8px" }}>Support ForgeNX</div>
-        <div style={{ fontSize: "12px", color: "#64748b" }}>If ForgeNX helps your mining, consider a donation to support development.</div>
+      {/* Divider */}
+      <div style={{ width: "1px", background: "rgba(255,255,255,0.08)", flexShrink: 0, margin: "0 12px" }} />
+      {/* Right 50% */}
+      <div style={{ flex: "0 0 calc(50% - 25px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: "12px", color: "#1e293b" }}>Reserved for future use</div>
       </div>
     </div>
   )
 }
+
 
 export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
   const { stats, miners, loading } = useEngineData(engineOnline, initialStats, initialMiners)
