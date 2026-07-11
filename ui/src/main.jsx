@@ -24,7 +24,7 @@ function StandaloneEngineUI() {
     return () => clearInterval(interval)
   }, [])
 
-  const tabs = ['Overview', 'Workers', 'Nodes', 'Settings']
+  const tabs = ['Overview', 'Workers', 'Nodes', 'Settings', 'Information', 'Logs']
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#020611', color: '#e2e8f0', fontFamily: 'Inter, -apple-system, sans-serif' }}>

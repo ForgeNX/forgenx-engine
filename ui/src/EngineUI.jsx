@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Zap, Users, BarChart2, Clock, Box, Cpu, Wifi, WifiOff, RefreshCw, Server, Hash, Globe } from "lucide-react"
+import { Zap, Users, BarChart2, Clock, Box, Cpu, Wifi, WifiOff, RefreshCw, Server, Hash, Globe, Copy, Check, ChevronDown } from "lucide-react"
 
 const ENG = {
   color:       "#ff00b4",
@@ -688,12 +688,208 @@ function EngineSettingsTab() {
   )
 }
 
+function EngineLogsTab() {
+  const [logs, setLogs]     = useState("Loading logs…")
+  const [tail, setTail]     = useState(100)
+  const [live, setLive]     = useState(false)
+  const ref                 = useRef(null)
+  const liveRef             = useRef(null)
+  const [copyOk, setCopyOk] = useState(false)
+  const [userScrolled, setUserScrolled] = useState(false)
+  const userScrolledRef = useRef(false)
+  const logsRef = useRef("")
+  const handleScroll = () => {
+    if (!ref.current) return
+    const { scrollTop, scrollHeight, clientHeight } = ref.current
+    const atBottom = scrollHeight - scrollTop - clientHeight < 30
+    userScrolledRef.current = !atBottom
+    setUserScrolled(!atBottom)
+  }
+  const resumeScroll = () => {
+    userScrolledRef.current = false
+    setUserScrolled(false)
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight
+  }
+  const copyLogs = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(logsRef.current).catch(() => fallback())
+    } else { fallback() }
+    function fallback() {
+      const el = document.createElement("textarea")
+      el.value = logsRef.current
+      el.setAttribute("readonly", "")
+      el.style.cssText = "position:absolute;left:-9999px;top:0"
+      document.body.appendChild(el)
+      const selected = document.getSelection().rangeCount > 0 ? document.getSelection().getRangeAt(0) : false
+      el.select()
+      el.setSelectionRange(0, 99999)
+      const success = document.execCommand("copy")
+      if (success) { setCopyOk(true); setTimeout(() => setCopyOk(false), 1600) }
+      document.body.removeChild(el)
+      if (selected) { document.getSelection().removeAllRanges(); document.getSelection().addRange(selected) }
+    }
+  }
+
+  const fetchLogs = (silent = false) => {
+    if (!silent) setLogs("Loading…")
+    fetch(`/api/apps/forgenx-engine/logs?tail=${tail}`)
+      .then(r => r.json())
+      .then(data => {
+        setLogs(data.success ? (data.logs || "No log output.") : "Failed to fetch logs.")
+        logsRef.current = data.success ? (data.logs || "No log output.") : "Failed to fetch logs."
+        if (!userScrolledRef.current) { setTimeout(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight }, 50) }
+      })
+      .catch(() => setLogs("Could not connect to log API."))
+  }
+
+  useEffect(() => { fetchLogs() }, [tail])
+
+  useEffect(() => {
+    if (live) {
+      fetchLogs(true)
+      liveRef.current = setInterval(() => fetchLogs(true), 2000)
+    } else {
+      if (liveRef.current) clearInterval(liveRef.current)
+    }
+    return () => { if (liveRef.current) clearInterval(liveRef.current) }
+  }, [live, tail])
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px", flex: 1, minHeight: 0, padding: "10px 0" }}>
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+        <select value={tail} onChange={e => { setTail(+e.target.value); setLive(false) }}
+          style={{ background: "rgba(2,6,17,0.7)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "6px", color: "#94a3b8", padding: "4px 8px", fontSize: "12px" }}>
+          {[50,100,200,500].map(v => <option key={v} value={v}>Last {v} lines</option>)}
+        </select>
+        <button onClick={() => setLive(v => !v)} style={{
+          padding: "4px 12px", borderRadius: "7px", fontSize: "12px", fontWeight: 600,
+          cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+          background: live ? "rgba(0,229,255,0.1)" : "rgba(255,0,128,0.08)",
+          border: live ? "1px solid rgba(0,229,255,0.3)" : "1px solid rgba(255,0,128,0.3)",
+          color: live ? "#00e5ff" : "#ff0080",
+        }}>{live ? "● Live" : "○ Live"}</button>
+        <button onClick={() => fetchLogs()} disabled={live}
+          style={{ padding: "4px 12px", borderRadius: "7px", background: live ? "rgba(255,255,255,0.03)" : "rgba(0,229,255,0.08)", border: `1px solid ${live ? "rgba(255,255,255,0.08)" : "rgba(0,229,255,0.25)"}`, color: live ? "#475569" : "#00e5ff", fontSize: "12px", fontWeight: 600, cursor: live ? "default" : "pointer", fontFamily: "inherit" }}>Refresh</button>
+        <button onClick={copyLogs}
+          style={{ padding: "4px 12px", borderRadius: "7px", background: "rgba(255,255,255,0.05)", border: `1px solid ${copyOk ? "rgba(0,229,255,0.4)" : "rgba(255,255,255,0.16)"}`, color: copyOk ? "#00e5ff" : "#e2e8f0", fontSize: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{copyOk ? "✓ Copied" : "Copy"}</button>
+        {live && <span style={{ fontSize: "10px", color: "#64748b" }}>Updating every 2s</span>}
+      </div>
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <div ref={ref} onScroll={handleScroll} style={{ height: "100%", background: "#010408", border: `1px solid ${live ? "rgba(0,229,255,0.3)" : "rgba(255,255,255,0.1)"}`, borderRadius: "10px", padding: "12px 14px", fontFamily: "monospace", fontSize: "11px", lineHeight: "1.7", color: "#94a3b8", overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", minHeight: "150px", transition: "border-color 0.3s" }}>
+          {logs}
+        </div>
+        {live && userScrolled && (
+          <div onClick={resumeScroll} style={{ position: "absolute", bottom: "12px", left: "50%", transform: "translateX(-50%)", background: "rgba(2,6,17,0.85)", backdropFilter: "blur(6px)", border: "1px solid rgba(0,229,255,0.5)", borderRadius: "999px", padding: "6px 16px", fontSize: "11px", fontWeight: 600, color: "#00e5ff", cursor: "pointer", whiteSpace: "nowrap", zIndex: 10, boxShadow: "0 2px 12px rgba(0,0,0,0.5)" }}>
+            ↓ Auto-scroll paused — Click to resume
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Tab Bar ────────────────────────────────────────────────────────────────
+const TabBar = ({ tabs, active, onSelect }) => (
+  <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0, overflowX: "auto" }}>
+    {tabs.map(tab => (
+      <button key={tab} onClick={() => onSelect(tab)} style={{
+        padding: "10px 18px", fontSize: "13px",
+        fontWeight: active === tab ? "600" : "400",
+        color: active === tab ? "#00e5ff" : "#94a3b8",
+        background: "transparent", border: "none",
+        borderBottom: active === tab ? "2px solid #00e5ff" : "2px solid transparent",
+        cursor: "pointer", transition: "all 0.15s",
+        fontFamily: "inherit", marginBottom: "-1px", whiteSpace: "nowrap",
+      }}>
+        {tab}
+      </button>
+    ))}
+  </div>
+)
+
+// ── Stat Chip ──────────────────────────────────────────────────────────────
+const StatChip = ({ icon: Icon, label, value, color = "#00e5ff" }) => (
+  <div style={{
+    background: "rgba(2,6,17,0.6)", border: "1px solid rgba(255,255,255,0.07)",
+    borderRadius: "14px", padding: "14px 18px",
+    display: "flex", alignItems: "center", gap: "12px",
+    flex: 1, minWidth: "120px",
+  }}>
+    <div style={{
+      width: "34px", height: "34px", borderRadius: "10px", flexShrink: 0,
+      background: `${color}18`, border: `1px solid ${color}30`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <Icon size={15} color={color} strokeWidth={1.5} />
+    </div>
+    <div>
+      <div style={{ fontSize: "11px", fontWeight: 600, color: "#94a3b8", marginBottom: "3px" }}>{label}</div>
+      <div style={{ fontSize: "16px", fontWeight: "600", color: "#f1f5f9" }}>{value}</div>
+    </div>
+  </div>
+)
+
+// ── Info Field Row ─────────────────────────────────────────────────────────
+const InfoField = ({ label, value, isLink = false, mono = false, icon: Icon }) => (
+  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.1)", gap: "12px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "5px", flexShrink: 0, paddingTop: "1px" }}>
+      {Icon && <Icon size={10} color="#94a3b8" strokeWidth={1.5} />}
+      <span style={{ fontSize: "11px", fontWeight: 600, color: "#94a3b8" }}>{label}</span>
+    </div>
+    {isLink && value ? (
+      <a href={value} target="_blank" rel="noopener noreferrer"
+        style={{ fontSize: "12px", color: "#00e5ff", textDecoration: "none", textAlign: "right", display: "flex", alignItems: "center", gap: "4px", wordBreak: "break-all" }}>
+        {value.replace("https://", "").replace("http://", "")}
+        <ExternalLink size={10} style={{ flexShrink: 0 }} />
+      </a>
+    ) : (
+      <div style={{ fontSize: "12px", color: "#e2e8f0", textAlign: "right", fontFamily: mono ? "monospace" : "inherit", wordBreak: "break-all" }}>{value || "—"}</div>
+    )}
+  </div>
+)
+
+
+// ── Information Tab ──────────────────────────────────────────────────────────
+function EngineInformationTab() {
+  const [appInfo, setAppInfo] = useState(null)
+  useEffect(() => {
+    fetch('/api/forgenx/apps')
+      .then(r => r.json())
+      .then(data => {
+        const app = (data.apps || []).find(a => a.id === 'forgenx-engine')
+        if (app) setAppInfo(app)
+      })
+      .catch(() => {})
+  }, [])
+  if (!appInfo) return <div style={{ padding: '20px', color: '#475569' }}>Loading...</div>
+  return (
+    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ background: 'rgba(2,6,17,0.55)', border: '1px solid rgba(255,0,180,0.35)', borderRadius: '12px', padding: '16px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.09em', color: '#e2e8f0', marginBottom: '12px', borderLeft: '3px solid #ff00b4', paddingLeft: '8px' }}>App Information</div>
+        {[['Version', appInfo.version ?? '—'], ['Developer', appInfo.developer ?? '—'], ['Category', appInfo.category ?? '—'], ['Store ID', appInfo.id ?? '—']].map(([l, v]) => (
+          <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid rgba(255,0,180,0.15)', fontSize: '13px' }}>
+            <span style={{ color: '#94a3b8' }}>{l}</span>
+            <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{v}</span>
+          </div>
+        ))}
+      </div>
+      {appInfo.longDescription && (
+        <div style={{ background: 'rgba(2,6,17,0.55)', border: '1px solid rgba(255,0,180,0.35)', borderRadius: '12px', padding: '16px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.09em', color: '#e2e8f0', marginBottom: '12px', borderLeft: '3px solid #ff00b4', paddingLeft: '8px' }}>Description</div>
+          <div style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{appInfo.longDescription}</div>
+        </div>
+      )}
+    </div>
+  )
+}
 export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
   const { stats, miners, loading } = useEngineData(engineOnline, initialStats, initialMiners)
 
-  if (activeTab === "Overview") return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
-  if (activeTab === "Workers")   return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
-  if (activeTab === "Nodes")     return <EngineNodes     nodes={nodes} stats={stats} />
-  if (activeTab === "Settings")  return <EngineSettingsTab />
+  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
+  if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
+  if (activeTab === "Nodes")       return <EngineNodes     nodes={nodes} stats={stats} />
+  if (activeTab === "Settings")    return <EngineSettingsTab />
+  if (activeTab === "Information") return <EngineInformationTab />
+  if (activeTab === "Logs")        return <EngineLogsTab />
   return null
 }
