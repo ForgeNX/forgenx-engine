@@ -862,14 +862,34 @@ function EngineInformationTab() {
     if (duration) setTimeout(() => setActionMsg(""), duration)
   }
 
+  const [forgenxdAvailable, setForgenxdAvailable] = useState(false)
+
   useEffect(() => {
+    // Try forgenxd store API first (ForgeNX platform)
     fetch('/api/forgenx/apps')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('not available')
+        return r.json()
+      })
       .then(data => {
         const app = (data.apps || []).find(a => a.id === 'forgenx-engine')
-        if (app) setEngineApp(app)
+        if (app) { setEngineApp(app); setForgenxdAvailable(true) }
       })
-      .catch(() => {})
+      .catch(() => {
+        // Fallback: use /stats for basic info (Umbrel OS or standalone)
+        setForgenxdAvailable(false)
+        fetch('/stats').then(r => r.json()).then(data => {
+          setEngineApp({
+            name: 'ForgeNX Engine',
+            description: 'Multi-coin Stratum mining engine',
+            developer: 'ForgeNX',
+            category: 'bitcoin',
+            id: 'forgenx-engine',
+            version: null,
+            installedVersion: null,
+          })
+        }).catch(() => {})
+      })
   }, [])
 
   const handleAction = async (action) => {
@@ -919,7 +939,8 @@ function EngineInformationTab() {
           <InfoField label="Website"   value={engineApp.website} isLink icon={ExternalLink} />
           <InfoField label="Support"   value={engineApp.support} isLink icon={Headphones} />
         </div>
-        {/* Actions */}
+        {/* Actions — only shown when forgenxd is available (ForgeNX platform) */}
+        {forgenxdAvailable && (
         <div style={{ background: "rgba(2,6,17,0.5)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "10px 14px", marginTop: "8px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
             <div style={{ fontSize: "10px", color: "#e2e8f0", textTransform: "uppercase", letterSpacing: "0.8px" }}>Actions</div>
@@ -945,6 +966,7 @@ function EngineInformationTab() {
             )}
           </div>
         </div>
+        )}
       </div>
       {/* Divider */}
       <div style={{ width: "1px", background: "rgba(255,255,255,0.08)", flexShrink: 0, margin: "0 12px" }} />
