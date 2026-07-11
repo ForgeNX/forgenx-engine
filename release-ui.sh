@@ -8,9 +8,9 @@ IMAGE="ghcr.io/forgenx/forgenx-engine"
 
 echo "=== ForgeNX Engine UI Release v${VERSION} ==="
 
-# 1. Copy latest EngineUI.jsx from forgenx-ui
-echo "--- Copying EngineUI.jsx ---"
-cp ~/forgenx-ui/src/pages/EngineUI.jsx ~/forgenx-engine/ui/src/EngineUI.jsx
+# 1. Sync base EngineUI.jsx from forgenx-ui (preserves standalone additions)
+echo "--- Note: EngineUI.jsx in ui/src/ is the standalone version with Logs+Info tabs ---"
+echo "--- To update from forgenx-ui, manually merge changes into ui/src/EngineUI.jsx ---"
 
 # 2. Build UI into static/
 echo "--- Building UI ---"
@@ -47,6 +47,15 @@ cd ~/ForgeNX-store
 git add forgenx-engine/umbrel-app.yml forgenx-engine/docker-compose.yml
 git commit -m "forgenx-engine: bump to v${VERSION}"
 git push
+
+# Regenerate proxy conf with API routes
+echo "--- Regenerating proxy conf ---"
+python3 -c "
+import sys; sys.path.insert(0, '/home/ellevix/forgenx-core')
+from services.proxy_manager import register_app
+register_app('forgenx-engine')
+" 2>/dev/null || true
+sudo docker exec forgenx-proxy nginx -s reload 2>/dev/null || true
 
 echo ""
 echo "=== Done! Sync App Store and update engine ==="
