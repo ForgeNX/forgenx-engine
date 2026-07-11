@@ -219,7 +219,8 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			progress = 1
 		}
 		e.stats.SetSyncProgress(symbol, progress)
-		return map[string]interface{}{
+		ibdNet, _ := tmpRPC.GetNetworkInfo()
+		ibdInfo := map[string]interface{}{
 			"status":                 "online",
 			"rpcOnline":              true,
 			"chain":                  chain.Chain,
@@ -231,7 +232,13 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			"best_block_hash":        chain.BestBlockHash,
 			"pruned":                 chain.Pruned,
 			"connected":              false,
-		}, false
+		}
+		if ibdNet != nil {
+			ibdInfo["peers"]     = ibdNet.Connections
+			ibdInfo["peers_in"]  = ibdNet.ConnectionsIn
+			ibdInfo["peers_out"] = ibdNet.ConnectionsOut
+		}
+		return ibdInfo, false
 	}
 
 	rpc := runner.rpcClient
