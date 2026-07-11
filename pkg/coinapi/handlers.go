@@ -540,6 +540,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/stats", c.HandleEngineStats)
 	mux.HandleFunc("/api/engine/miners", c.HandleEngineMiners)
 	mux.HandleFunc("/api/engine/donation-address/", c.HandleDonationAddress)
+	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
 
 	// Coin app routes — matched by prefix, coin ID extracted from path
 	mux.HandleFunc("/api/apps/", func(w http.ResponseWriter, r *http.Request) {
@@ -713,6 +714,32 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 }
 
 // ── /api/apps/{coin}/logs ─────────────────────────────────────────────────────
+
+// HandleEngineLogs fetches logs for the engine container itself.
+func (c *CoinAPI) HandleEngineLogs(w http.ResponseWriter, r *http.Request) {
+	tailStr := r.URL.Query().Get("tail")
+	tail := 100
+	if tailStr != "" {
+		if n, err := strconv.Atoi(tailStr); err == nil && n > 0 {
+			tail = n
+		}
+	}
+	// Try common engine container names
+	containerNames := []string{"forgenx-engine-engine-1", "forgenx-engine_engine_1", "forgenx-engine"}
+	var output string
+	var err error
+	for _, name := range containerNames {
+		output, err = dockerLogs(name, tail)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"success": false, "logs": "", "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"success": true, "logs": output})
+}
 
 // HandleLogs fetches container logs via the Docker socket API directly.
 // This avoids any dependency on the docker CLI binary, making the engine
