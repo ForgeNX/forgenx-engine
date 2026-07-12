@@ -4,7 +4,9 @@ WORKDIR /app
 
 COPY . .
 
-RUN go build -o forgenx-engine ./cmd/forgenx-engine
+ARG VERSION=dev
+ARG BUILD_DATE=unknown
+RUN go build -ldflags "-X main.version=${VERSION} -X main.buildDate=${BUILD_DATE}" -o forgenx-engine ./cmd/forgenx-engine
 
 FROM alpine:3.19
 

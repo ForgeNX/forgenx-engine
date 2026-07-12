@@ -19,7 +19,7 @@ cd ~/forgenx-engine/ui && npm run build
 # 3. Build and push Docker image
 echo "--- Building Docker image ---"
 cd ~/forgenx-engine
-docker build -t ${IMAGE}:${VERSION} .
+docker build --build-arg VERSION=${VERSION} --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") -t ${IMAGE}:${VERSION} .
 docker push ${IMAGE}:${VERSION}
 
 # 4. Bump versions
