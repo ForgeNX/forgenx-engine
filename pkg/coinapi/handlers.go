@@ -19,6 +19,8 @@ import (
 type CoinAPI struct {
 	store          *Store
 	engineAPIURL   string // e.g. "http://localhost:8080"
+	engineVersion   string
+	engineBuildDate string
 	nodeRPCFunc    NodeRPCFunc
 	coinConfigFunc  CoinConfigFunc
 	logsFunc        LogsFunc
@@ -46,6 +48,11 @@ func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 		store:        store,
 		engineAPIURL: engineAPIURL,
 	}
+}
+
+func (c *CoinAPI) SetEngineVersion(version, buildDate string) {
+	c.engineVersion = version
+	c.engineBuildDate = buildDate
 }
 
 func (c *CoinAPI) SetNodeRPCFunc(f NodeRPCFunc)       { c.nodeRPCFunc = f }
@@ -431,9 +438,11 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"best_session_diff": bestSessionDiff,
 			"last_share_time":   lastShareTime,
 			"hashrate":          totalHashrate,
-			"max_hashrate":      c.store.GetMaxPoolHashrate(symbol),
+			"max_hashrate":      c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
 			"worker_count":      workerCount,
 		},
+		"engine_version": c.engineVersion,
+		"engine_updated": c.engineBuildDate,
 		"node": nodeInfo,
 	})
 }

@@ -96,6 +96,7 @@ func main() {
 			logger.Warn("CoinAPI store init failed: %v", storeErr)
 		} else {
 			coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
+			coinAPI.SetEngineVersion(version, buildDate)
 
 			coinAPI.SetNodeRPCFunc(func(symbol string) map[string]interface{} {
 

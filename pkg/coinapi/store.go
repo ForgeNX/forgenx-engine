@@ -358,6 +358,15 @@ func (s *Store) DeleteWorker(symbol, workerName string) error {
 
 // ── Metric History ───────────────────────────────────────────────────────────
 
+func (s *Store) UpdateAndGetMaxPoolHashrate(symbol string, current float64) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current > s.maxHashrate[symbol] {
+		s.maxHashrate[symbol] = current
+	}
+	return s.maxHashrate[symbol]
+}
+
 func (s *Store) GetMaxPoolHashrate(symbol string) float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
