@@ -231,6 +231,9 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			"initial_block_download": chain.InitialBlockDownload,
 			"best_block_hash":        chain.BestBlockHash,
 			"pruned":                 chain.Pruned,
+			"prune_height":           chain.PruneHeight,
+			"size_on_disk":           chain.SizeOnDisk,
+			"prune_limit_mb":         chain.PruneTargetSize / (1024 * 1024),
 			"connected":              false,
 		}
 		if ibdNet != nil {

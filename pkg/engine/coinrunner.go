@@ -132,7 +132,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		Network:         cfg.Mining.Network,
 		CoinbaseText:    cfg.Mining.CoinbaseText,
 		ExtraNonceSize:  cfg.Mining.ExtraNonceSize,
-		PollInterval:    time.Duration(cfg.TemplateRefreshInterval) * time.Second,
+		PollInterval:    func() time.Duration { if cfg.TemplateRefreshInterval <= 0 { return 5 * time.Second }; return time.Duration(cfg.TemplateRefreshInterval) * time.Second }(),
 		SoloMode:        soloMode,
 		DonationScript:  donationScript,
 		DonationPercent: donationPercent,

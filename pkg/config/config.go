@@ -181,7 +181,7 @@ func applyDefaults(cfg *Config) {
 			coin.Mining.Network = "mainnet"
 		}
 		if coin.TemplateRefreshInterval == 0 {
-			coin.TemplateRefreshInterval = 5
+			coin.TemplateRefreshInterval = 100
 		}
 
 		// VarDiff defaults
