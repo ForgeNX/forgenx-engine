@@ -715,6 +715,30 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 
 // ── /api/apps/{coin}/logs ─────────────────────────────────────────────────────
 
+// restartContainer restarts a Docker container via the Docker socket API.
+func restartContainer(container string) error {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	url := fmt.Sprintf("http://localhost/containers/%s/restart?t=10", container)
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("restart request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker socket: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 {
+		return fmt.Errorf("docker restart returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // HandleEngineLogs fetches logs for the engine container itself.
 func (c *CoinAPI) HandleEngineLogs(w http.ResponseWriter, r *http.Request) {
 	tailStr := r.URL.Query().Get("tail")
@@ -1195,7 +1219,15 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{"success": true})
+	// Check if node settings changed (prune, network) — restart node container if so
+	_, pruneChanged   := body["prune"]
+	_, pruneSzChanged := body["pruneSize"]
+	_, networkChanged := body["network"]
+	needsNodeRestart := pruneChanged || pruneSzChanged || networkChanged
+	if needsNodeRestart {
+		go func() { restartContainer(coinID + "-node") }()
+	}
+	writeJSON(w, map[string]interface{}{"success": true, "nodeRestart": needsNodeRestart})
 }
 
 // ── /api/apps/{coin}/rpc-credentials POST ────────────────────────────────────
