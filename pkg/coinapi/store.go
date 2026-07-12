@@ -12,8 +12,9 @@ import (
 
 // Store handles all SQLite persistence for coin app data.
 type Store struct {
-	mu sync.Mutex
-	db *sql.DB
+	mu           sync.Mutex
+	db           *sql.DB
+	maxHashrate  map[string]float64  // in-memory peak pool hashrate per coin
 }
 
 func NewStore(path string) (*Store, error) {
@@ -21,7 +22,7 @@ func NewStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, maxHashrate: make(map[string]float64)}
 	if err := s.init(); err != nil {
 		db.Close()
 		return nil, err
@@ -357,7 +358,18 @@ func (s *Store) DeleteWorker(symbol, workerName string) error {
 
 // ── Metric History ───────────────────────────────────────────────────────────
 
+func (s *Store) GetMaxPoolHashrate(symbol string) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxHashrate[symbol]
+}
+
 func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, difficulty float64) error {
+	s.mu.Lock()
+	if poolHashrate > s.maxHashrate[symbol] {
+		s.maxHashrate[symbol] = poolHashrate
+	}
+	s.mu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)

@@ -431,6 +431,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"best_session_diff": bestSessionDiff,
 			"last_share_time":   lastShareTime,
 			"hashrate":          totalHashrate,
+			"max_hashrate":      c.store.GetMaxPoolHashrate(symbol),
 			"worker_count":      workerCount,
 		},
 		"node": nodeInfo,
