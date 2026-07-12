@@ -1167,6 +1167,7 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	}
 	if v, ok := body["onNewBlock"].(bool); ok {
 		vardiff["on_new_block"] = v
+	vardiff["enabled"] = true
 	}
 	if v, ok := body["pingEnabled"].(bool); ok {
 		stratum["ping_enabled"] = v
