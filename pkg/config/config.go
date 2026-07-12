@@ -172,7 +172,7 @@ func applyDefaults(cfg *Config) {
 			coin.Mining.CoinbaseText = "ForgeNX"
 		}
 		if coin.Mining.ExtraNonceSize == 0 {
-			coin.Mining.ExtraNonceSize = 8
+			coin.Mining.ExtraNonceSize = 10
 		}
 		if coin.Mining.Mode == "" {
 			coin.Mining.Mode = "pool"

@@ -166,7 +166,7 @@ func newChannel(
 // channel, regardless of what it requests. Kept small and fixed for now
 // (minimal/option-1 implementation — one NerdQAxe++, not a multi-miner
 // extended-channel pool with per-miner nonce-space partitioning).
-const maxExtranonce2Size uint16 = 4
+const maxExtranonce2Size uint16 = 6
 
 // newExtendedChannel allocates a new extended-channel Channel. Mirrors
 // newChannel, but records isExtended + the granted extranonce2Size (clamped

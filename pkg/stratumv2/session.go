@@ -418,6 +418,7 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 	s.mu.Unlock()
 
 	s.logf("[sv2] session %s: OpenExtendedMiningChannel requested MinExtranonceSize=%d", s.id, req.MinExtranonceSize)
+	s.logf("[sv2] session %s: OpenExtendedMiningChannel requested MinExtranonceSize=%d", s.id, req.MinExtranonceSize)
 	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, s.startDiff, req.MinExtranonceSize)
 	if err != nil {
 		resp, _ := EncodeOpenExtendedMiningChannelError(req.RequestID, "internal-error")
