@@ -952,10 +952,10 @@ func (s *Session) Close() {
 			ca := s.connectedAt
 			s.mu.RUnlock()
 			s.onDisconnect(workerName, s.id, ca)
-			if s.onDisconnectWithDiff != nil {
-				for wn, diff := range workerDiffs {
-					s.onDisconnectWithDiff(wn, diff)
-				}
+		}
+		if s.onDisconnectWithDiff != nil {
+			for wn, diff := range workerDiffs {
+				s.onDisconnectWithDiff(wn, diff)
 			}
 		}
 	})
