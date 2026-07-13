@@ -371,8 +371,11 @@ func (s *Store) UpdateAndGetMaxPoolHashrate(symbol string, current float64) floa
 }
 
 func (s *Store) SaveWorkerDifficulty(symbol, workerName string, difficulty float64) {
-	s.db.Exec(`UPDATE worker_best_diff SET last_difficulty=? WHERE coin_symbol=? AND worker_name=?`,
-		difficulty, symbol, workerName)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.db.Exec(`INSERT INTO worker_best_diff (coin_symbol, worker_name, best_all_time, updated_at, last_difficulty)
+		VALUES (?, ?, 0, ?, ?)
+		ON CONFLICT(coin_symbol, worker_name) DO UPDATE SET last_difficulty=excluded.last_difficulty, updated_at=excluded.updated_at`,
+		symbol, workerName, now, difficulty)
 }
 
 func (s *Store) GetWorkerLastDifficulty(symbol, workerName string) float64 {
