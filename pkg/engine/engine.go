@@ -41,7 +41,15 @@ type Engine struct {
 }
 
 // SetStore injects the worker difficulty store into the engine.
-func (e *Engine) SetStore(s workerDiffStore) { e.store = s }
+func (e *Engine) SetStore(s workerDiffStore) {
+	e.store = s
+	// Propagate to all existing runners
+	e.runnersMu.RLock()
+	for _, r := range e.runners {
+		r.SetStore(s)
+	}
+	e.runnersMu.RUnlock()
+}
 
 // New creates a new Engine from the given configuration.
 func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
