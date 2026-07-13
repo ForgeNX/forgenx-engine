@@ -37,9 +37,16 @@ type shareWork struct {
 }
 
 // CoinRunner manages the complete mining pipeline for a single coin.
+// workerDiffStore is a minimal interface for persisting worker difficulty.
+type workerDiffStore interface {
+	SaveWorkerDifficulty(symbol, workerName string, difficulty float64)
+	GetWorkerLastDifficulty(symbol, workerName string) float64
+}
+
 type CoinRunner struct {
 	symbol          string
 	coin            coin.Coin
+	store           workerDiffStore
 	rpcClient       *noderpc.Client
 	jobMgr          *JobManager
 	validator       *ShareValidator
@@ -55,6 +62,8 @@ type CoinRunner struct {
 }
 
 // NewCoinRunner creates and wires up all components for a single coin.
+func (r *CoinRunner) SetStore(s workerDiffStore) { r.store = s }
+
 func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.DonationConfig, stats *metrics.Stats) (*CoinRunner, error) {
 	soloMode := cfg.Mining.Mode == "solo"
 
@@ -191,6 +200,15 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		serverCfg.OnSessionAuthorized = func(session *stratum.Session) {
 			if wn := session.WorkerName(); wn != "" {
 				runner.stats.RecordConnect(runner.symbol, wn)
+				if runner.store != nil {
+					if lastDiff := runner.store.GetWorkerLastDifficulty(runner.symbol, wn); lastDiff > 0 {
+						minD := cfg.VarDiff.MinDiff
+						maxD := cfg.VarDiff.MaxDiff
+						if lastDiff < minD { lastDiff = minD }
+						if maxD > 0 && lastDiff > maxD { lastDiff = maxD }
+						session.SetInitialDifficulty(lastDiff)
+					}
+				}
 			}
 		}
 		serverCfg.OnSessionRemoved = func(session *stratum.Session) {
@@ -199,6 +217,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			}
 			if wn := session.WorkerName(); wn != "" {
 				runner.stats.RecordDisconnect(runner.symbol, wn, session.ConnectedAt())
+				runner.store.SaveWorkerDifficulty(runner.symbol, wn, session.GetDifficulty())
 			}
 		}
 	}
@@ -352,9 +371,24 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					runner.stats.RecordConnect(runner.symbol, workerName)
 				}
 			}
+			sv2Cfg.StartDiffFunc = func(workerName string) float64 {
+				if runner.store == nil { return cfg.Stratum.Difficulty }
+				lastDiff := runner.store.GetWorkerLastDifficulty(runner.symbol, workerName)
+				if lastDiff <= 0 { return cfg.Stratum.Difficulty }
+				minD := cfg.VarDiff.MinDiff
+				maxD := cfg.VarDiff.MaxDiff
+				if lastDiff < minD { lastDiff = minD }
+				if maxD > 0 && lastDiff > maxD { lastDiff = maxD }
+				return lastDiff
+			}
 			sv2Cfg.OnDisconnect = func(workerName, remoteAddr string, connectedAt time.Time) {
 				if workerName != "" {
 					runner.stats.RecordDisconnect(runner.symbol, workerName, connectedAt)
+				}
+			}
+			sv2Cfg.OnDisconnectWithDiff = func(workerName string, difficulty float64) {
+				if runner.store != nil && workerName != "" && difficulty > 0 {
+					runner.store.SaveWorkerDifficulty(runner.symbol, workerName, difficulty)
 				}
 			}
 			sv2Srv, err := stratumv2.NewServer(sv2Cfg)

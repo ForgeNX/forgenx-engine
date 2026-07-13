@@ -106,6 +106,7 @@ type Session struct {
 	onStale      func(workerName string)
 	onRejected   func(workerName string)
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
+	onDisconnectWithDiff func(workerName string, difficulty float64)
 	onConnect    func(workerName, remoteAddr string)
 
 	// Solo-mode coinbase builder. Nil in pool mode — channels then use the
@@ -119,6 +120,7 @@ type Session struct {
 	vardiffCfg        *stratum.VarDiffConfig
 	vardiffOnNewBlock bool
 	startDiff         float64
+	startDiffFunc     func(workerName string) float64
 
 	// ConnectionTimeoutSeconds is the read deadline per frame. If the miner
 	// sends nothing for this long, the connection is dropped. Equivalent to
@@ -164,11 +166,13 @@ func newSession(
 	vardiffCfg *stratum.VarDiffConfig,
 	vardiffOnNewBlock bool,
 	startDiff float64,
+	startDiffFunc func(workerName string) float64,
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
 	lowDiffGrace time.Duration,
 	srv *Server,
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time),
+	onDisconnectWithDiff func(workerName string, difficulty float64),
 	onConnect    func(workerName, remoteAddr string),
 ) *Session {
 	return &Session{
@@ -185,11 +189,13 @@ func newSession(
 		vardiffCfg:               vardiffCfg,
 		vardiffOnNewBlock:        vardiffOnNewBlock,
 		startDiff:                startDiff,
+		startDiffFunc:            startDiffFunc,
 		connectionTimeoutSeconds: connectionTimeoutSeconds,
 		srv:                      srv,
 		logger:                   logger,
 		closeCh:                  make(chan struct{}),
 		onDisconnect:             onDisconnect,
+		onDisconnectWithDiff:     onDisconnectWithDiff,
 		onConnect:                onConnect,
 	}
 }
@@ -326,7 +332,9 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	}
 	s.mu.Unlock()
 
-	ch, err := newChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, s.startDiff)
+	startD := s.startDiff
+	if s.startDiffFunc != nil { startD = s.startDiffFunc(req.UserIdentity) }
+	ch, err := newChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, startD)
 	if err != nil {
 		resp, _ := EncodeOpenStandardMiningChannelError(req.RequestID, "internal-error")
 		_ = s.codec.WriteFrame(ExtensionTypeMining, MsgOpenStandardMiningChannelError, resp)
@@ -419,7 +427,9 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 
 	s.logf("[sv2] session %s: OpenExtendedMiningChannel requested MinExtranonceSize=%d", s.id, req.MinExtranonceSize)
 	s.logf("[sv2] session %s: OpenExtendedMiningChannel requested MinExtranonceSize=%d", s.id, req.MinExtranonceSize)
-	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, s.startDiff, req.MinExtranonceSize)
+	startD2 := s.startDiff
+	if s.startDiffFunc != nil { startD2 = s.startDiffFunc(req.UserIdentity) }
+	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, startD2, req.MinExtranonceSize)
 	if err != nil {
 		resp, _ := EncodeOpenExtendedMiningChannelError(req.RequestID, "internal-error")
 		_ = s.codec.WriteFrame(ExtensionTypeMining, MsgOpenStandardMiningChannelError, resp)
@@ -935,6 +945,16 @@ func (s *Session) Close() {
 			ca := s.connectedAt
 			s.mu.RUnlock()
 			s.onDisconnect(workerName, s.id, ca)
+			if s.onDisconnectWithDiff != nil && workerName != "" {
+				var diff float64
+				s.mu.RLock()
+				for _, ch := range s.channels {
+					diff = ch.Difficulty()
+					break
+				}
+				s.mu.RUnlock()
+				s.onDisconnectWithDiff(workerName, diff)
+			}
 		}
 	})
 }

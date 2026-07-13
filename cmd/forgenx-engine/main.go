@@ -97,6 +97,7 @@ func main() {
 		} else {
 			coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
 			coinAPI.SetEngineVersion(version, buildDate)
+			eng.SetStore(store)
 
 			coinAPI.SetNodeRPCFunc(func(symbol string) map[string]interface{} {
 

@@ -65,8 +65,11 @@ func (s *Store) init() error {
 			best_all_time REAL DEFAULT 0, updated_at TEXT NOT NULL,
 			last_seen TEXT, connected_at TEXT,
 			shares_offset INTEGER DEFAULT 0, invalid_shares_offset INTEGER DEFAULT 0,
+			last_difficulty REAL DEFAULT 0,
 			PRIMARY KEY (coin_symbol, worker_name))`,
 	}
+	// Migrate: add last_difficulty column if missing (safe to run multiple times)
+	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, stmt := range stmts {
@@ -365,6 +368,18 @@ func (s *Store) UpdateAndGetMaxPoolHashrate(symbol string, current float64) floa
 		s.maxHashrate[symbol] = current
 	}
 	return s.maxHashrate[symbol]
+}
+
+func (s *Store) SaveWorkerDifficulty(symbol, workerName string, difficulty float64) {
+	s.db.Exec(`UPDATE worker_best_diff SET last_difficulty=? WHERE coin_symbol=? AND worker_name=?`,
+		difficulty, symbol, workerName)
+}
+
+func (s *Store) GetWorkerLastDifficulty(symbol, workerName string) float64 {
+	var diff float64
+	s.db.QueryRow(`SELECT COALESCE(last_difficulty,0) FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
+		symbol, workerName).Scan(&diff)
+	return diff
 }
 
 func (s *Store) GetMaxPoolHashrate(symbol string) float64 {

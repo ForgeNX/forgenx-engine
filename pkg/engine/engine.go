@@ -34,10 +34,14 @@ type Engine struct {
 	runners   map[string]*CoinRunner
 	runnersMu sync.RWMutex
 	stats     *metrics.Stats
+	store     workerDiffStore
 	logger    *logging.Logger
 	startTime time.Time
 	poolName  string
 }
+
+// SetStore injects the worker difficulty store into the engine.
+func (e *Engine) SetStore(s workerDiffStore) { e.store = s }
 
 // New creates a new Engine from the given configuration.
 func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
@@ -59,6 +63,7 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 		if err != nil {
 			return nil, fmt.Errorf("initializing %s: %w", symbol, err)
 		}
+		if e.store != nil { runner.SetStore(e.store) }
 		e.runners[symbol] = runner
 	}
 
@@ -158,6 +163,7 @@ func (e *Engine) StartCoin(symbol string, coinCfg *config.CoinConfig, donation c
 		return err
 	}
 
+	if e.store != nil { runner.SetStore(e.store) }
 	if err := runner.Start(); err != nil {
 		return err
 	}

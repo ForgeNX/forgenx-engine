@@ -495,6 +495,18 @@ func (s *Session) ExtraNonce1() string {
 }
 
 // GetDifficulty returns the session's current difficulty.
+// SetInitialDifficulty overrides the starting difficulty before the first job is sent.
+// Must be called after authorization and before the first job broadcast.
+func (s *Session) SetInitialDifficulty(diff float64) {
+	if diff <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.difficulty = diff
+	s.mu.Unlock()
+	s.sendJSON(SetDifficultyNotification(diff))
+}
+
 func (s *Session) GetDifficulty() float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

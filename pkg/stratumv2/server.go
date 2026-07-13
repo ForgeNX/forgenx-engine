@@ -126,6 +126,8 @@ type Config struct {
 	// and remote address. Optional.
 	OnDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
 	OnConnect    func(workerName, remoteAddr string)
+	OnDisconnectWithDiff func(workerName string, difficulty float64)
+	StartDiffFunc func(workerName string) float64 // optional: returns per-worker start diff
 }
 
 // Server is the SV2 Mining Protocol server.
@@ -275,8 +277,8 @@ func (srv *Server) handleConn(conn net.Conn) {
 	}
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.OnStale, srv.cfg.OnRejected, srv.cfg.CoinbaseBuilder,
-		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.LowDiffGrace, srv, srv.cfg.OnDisconnect, srv.cfg.OnConnect)
+		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.StartDiffFunc, srv.cfg.Logger,
+		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.LowDiffGrace, srv, srv.cfg.OnDisconnect, srv.cfg.OnDisconnectWithDiff, srv.cfg.OnConnect)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess
