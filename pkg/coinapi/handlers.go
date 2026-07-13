@@ -919,6 +919,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"stratum_port":       getNestedInt(stratum, "port", 3334),
 		"payoutAddress":      envStr(env, prefix+"PAYOUT_ADDRESS", ""),
 		"workerName":         envStr(env, prefix+"WORKER_NAME", ""),
+			"vardiffEnabled":     getNestedBool(vardiff, "enabled", true),
 		"targetTime":         getNestedFloat(vardiff, "target_time", 45),
 		"retargetTime":       getNestedFloat(vardiff, "retarget_time", 300),
 		"variancePercent":    getNestedFloat(vardiff, "variance_percent", 30),
