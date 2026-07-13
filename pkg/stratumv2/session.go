@@ -930,6 +930,13 @@ func (s *Session) Close() {
 		close(s.closeCh)
 		s.conn.Close()
 		s.mu.Lock()
+		// Snapshot worker difficulties before closing channels
+		workerDiffs := make(map[string]float64)
+		for _, ch := range s.channels {
+			if n := ch.UserIdentity(); n != "" {
+				workerDiffs[n] = ch.Difficulty()
+			}
+		}
 		for _, ch := range s.channels {
 			ch.Close()
 		}
@@ -945,15 +952,10 @@ func (s *Session) Close() {
 			ca := s.connectedAt
 			s.mu.RUnlock()
 			s.onDisconnect(workerName, s.id, ca)
-			if s.onDisconnectWithDiff != nil && workerName != "" {
-				var diff float64
-				s.mu.RLock()
-				for _, ch := range s.channels {
-					diff = ch.Difficulty()
-					break
+			if s.onDisconnectWithDiff != nil {
+				for wn, diff := range workerDiffs {
+					s.onDisconnectWithDiff(wn, diff)
 				}
-				s.mu.RUnlock()
-				s.onDisconnectWithDiff(workerName, diff)
 			}
 		}
 	})
