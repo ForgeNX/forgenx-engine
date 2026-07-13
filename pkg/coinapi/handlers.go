@@ -261,6 +261,7 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 			"ip":             ip,
 			"device":         vendor,
 		})
+		go c.store.RecordWorkerLastSeen(symbol, workerName, lastShare, getString(m, "connected_at"))
 	}
 
 	// ── Offline workers from historical data ────────────────────────────────
