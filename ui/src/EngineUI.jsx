@@ -698,12 +698,17 @@ function EngineLogsTab() {
   const [userScrolled, setUserScrolled] = useState(false)
   const userScrolledRef = useRef(false)
   const logsRef = useRef("")
+  const pendingScroll = useRef(null)
   const handleScroll = () => {
     if (!ref.current) return
     const { scrollTop, scrollHeight, clientHeight } = ref.current
     const atBottom = scrollHeight - scrollTop - clientHeight < 30
     userScrolledRef.current = !atBottom
     setUserScrolled(!atBottom)
+    if (!atBottom && pendingScroll.current) {
+      clearTimeout(pendingScroll.current)
+      pendingScroll.current = null
+    }
   }
   const resumeScroll = () => {
     userScrolledRef.current = false
@@ -737,7 +742,7 @@ function EngineLogsTab() {
       .then(data => {
         setLogs(data.success ? (data.logs || "No log output.") : "Failed to fetch logs.")
         logsRef.current = data.success ? (data.logs || "No log output.") : "Failed to fetch logs."
-        if (!userScrolledRef.current) { setTimeout(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight }, 50) }
+        if (!userScrolledRef.current) { pendingScroll.current = setTimeout(() => { pendingScroll.current = null; if (ref.current && !userScrolledRef.current) ref.current.scrollTop = ref.current.scrollHeight }, 50) }
       })
       .catch(() => setLogs("Could not connect to log API."))
   }
