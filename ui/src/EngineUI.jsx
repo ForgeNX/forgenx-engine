@@ -698,17 +698,13 @@ function EngineLogsTab() {
   const [userScrolled, setUserScrolled] = useState(false)
   const userScrolledRef = useRef(false)
   const logsRef = useRef("")
-  const pendingScroll = useRef(null)
-  const ignoreScroll = useRef(false)
   const handleScroll = () => {
-    if (!ref.current || ignoreScroll.current) return
+    if (!ref.current) return
     const { scrollTop, scrollHeight, clientHeight } = ref.current
     const atBottom = scrollHeight - scrollTop - clientHeight < 30
-    userScrolledRef.current = !atBottom
-    setUserScrolled(!atBottom)
-    if (!atBottom && pendingScroll.current) {
-      clearTimeout(pendingScroll.current)
-      pendingScroll.current = null
+    if (!atBottom) {
+      userScrolledRef.current = true
+      setUserScrolled(true)
     }
   }
   const resumeScroll = () => {
