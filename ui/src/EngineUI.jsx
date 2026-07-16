@@ -785,7 +785,7 @@ function EngineLogsTab() {
         {live && <span style={{ fontSize: "10px", color: "#64748b" }}>Updating every 2s</span>}
       </div>
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
-        <div ref={ref} onScroll={handleScroll} style={{ height: "100%", background: "#010408", border: `1px solid ${live ? "rgba(0,229,255,0.3)" : "rgba(255,255,255,0.1)"}`, borderRadius: "10px", padding: "12px 14px", fontFamily: "monospace", fontSize: "11px", lineHeight: "1.7", color: "#94a3b8", overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", minHeight: "150px", transition: "border-color 0.3s" }}>
+        <div ref={ref} onScroll={handleScroll} style={{ height: "100%", background: "#010408", border: `1px solid ${live ? "rgba(0,229,255,0.3)" : "rgba(255,255,255,0.1)"}`, borderRadius: "10px", padding: "12px 14px", fontFamily: "monospace", fontSize: "12px", lineHeight: "1.7", color: "#94a3b8", overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", minHeight: "150px", transition: "border-color 0.3s" }}>
           {logs}
         </div>
         {live && userScrolled && (
