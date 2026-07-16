@@ -29,7 +29,7 @@ echo "Bumping ${CURRENT} → ${VERSION}"
 
 # Update store manifest and compose
 sed -i "s/version: \"${CURRENT}\"/version: \"${VERSION}\"/" ~/ForgeNX-store/forgenx-engine/umbrel-app.yml
-sed -i "s|${IMAGE}:${CURRENT}|${IMAGE}:${VERSION}|" ~/ForgeNX-store/forgenx-engine/docker-compose.yml
+sed -i "s|${IMAGE}:[^ ]*|${IMAGE}:${VERSION}|g" ~/ForgeNX-store/forgenx-engine/docker-compose.yml
 
 # Update engine repo manifest
 sed -i "s/version: \"${CURRENT}\"/version: \"${VERSION}\"/" ~/forgenx-engine/umbrel-app.yml
