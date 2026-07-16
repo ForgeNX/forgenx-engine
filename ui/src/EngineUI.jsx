@@ -698,27 +698,17 @@ function EngineLogsTab() {
   const [userScrolled, setUserScrolled] = useState(false)
   const userScrolledRef = useRef(false)
   const logsRef = useRef("")
-  const isProgrammaticScroll = useRef(false)
-  const lastScrollTop = useRef(0)
   const handleScroll = () => {
     if (!ref.current) return
-    if (isProgrammaticScroll.current) return
     const { scrollTop, scrollHeight, clientHeight } = ref.current
     const atBottom = scrollHeight - scrollTop - clientHeight < 30
-    const scrolledUp = scrollTop < lastScrollTop.current
-    lastScrollTop.current = scrollTop
-    if (scrolledUp) {
-      userScrolledRef.current = true
-      setUserScrolled(true)
-    } else if (atBottom) {
-      userScrolledRef.current = false
-      setUserScrolled(false)
-    }
+    userScrolledRef.current = !atBottom
+    setUserScrolled(!atBottom)
   }
   const resumeScroll = () => {
     userScrolledRef.current = false
     setUserScrolled(false)
-    if (ref.current) { isProgrammaticScroll.current = true; ref.current.scrollTop = ref.current.scrollHeight; setTimeout(() => { isProgrammaticScroll.current = false }, 100) }
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight
   }
   const copyLogs = () => {
     if (navigator.clipboard) {
@@ -747,7 +737,7 @@ function EngineLogsTab() {
       .then(data => {
         setLogs(data.success ? (data.logs || "No log output.") : "Failed to fetch logs.")
         logsRef.current = data.success ? (data.logs || "No log output.") : "Failed to fetch logs."
-        if (!userScrolledRef.current) { setTimeout(() => { if (ref.current) { isProgrammaticScroll.current = true; ref.current.scrollTop = ref.current.scrollHeight; setTimeout(() => { isProgrammaticScroll.current = false }, 100) } }, 50) }
+        if (!userScrolledRef.current) { setTimeout(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight }, 50) }
       })
       .catch(() => setLogs("Could not connect to log API."))
   }
