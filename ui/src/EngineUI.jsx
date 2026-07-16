@@ -699,13 +699,21 @@ function EngineLogsTab() {
   const userScrolledRef = useRef(false)
   const logsRef = useRef("")
   const isProgrammaticScroll = useRef(false)
+  const lastScrollTop = useRef(0)
   const handleScroll = () => {
     if (!ref.current) return
     if (isProgrammaticScroll.current) return
     const { scrollTop, scrollHeight, clientHeight } = ref.current
     const atBottom = scrollHeight - scrollTop - clientHeight < 30
-    userScrolledRef.current = !atBottom
-    setUserScrolled(!atBottom)
+    const scrolledUp = scrollTop < lastScrollTop.current
+    lastScrollTop.current = scrollTop
+    if (scrolledUp) {
+      userScrolledRef.current = true
+      setUserScrolled(true)
+    } else if (atBottom) {
+      userScrolledRef.current = false
+      setUserScrolled(false)
+    }
   }
   const resumeScroll = () => {
     userScrolledRef.current = false
