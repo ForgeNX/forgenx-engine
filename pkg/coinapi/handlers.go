@@ -26,6 +26,7 @@ type CoinAPI struct {
 	logsFunc        LogsFunc
 	donationFunc    DonationFunc
 	portStatusFunc  PortStatusFunc
+	stats           statsResetter
 }
 
 // NodeRPCFunc fetches node info for a coin symbol.
@@ -48,6 +49,16 @@ func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 		store:        store,
 		engineAPIURL: engineAPIURL,
 	}
+}
+
+// statsResetter is satisfied by *metrics.Stats.
+type statsResetter interface {
+	ResetCoinStats(symbol string)
+}
+
+// SetStats wires the in-memory stats store into CoinAPI for reset operations.
+func (c *CoinAPI) SetStats(s statsResetter) {
+	c.stats = s
 }
 
 func (c *CoinAPI) SetEngineVersion(version, buildDate string) {
@@ -595,10 +606,19 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandleRPCCredentialsPost(w, r, coinID)
 		case (endpoint == "start" || endpoint == "stop" || endpoint == "restart") && r.Method == http.MethodPost:
 			c.HandleAction(w, r, coinID, endpoint)
+			case endpoint == "reset-stats" && r.Method == http.MethodPost:
+				c.HandleResetStats(w, r, symbol)
 		default:
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// ── /api/apps/{coin}/reset-stats ────────────────────────────────────────────────
+
+func (c *CoinAPI) HandleResetStats(w http.ResponseWriter, r *http.Request, symbol string) {
+	c.stats.ResetCoinStats(symbol)
+	writeJSON(w, map[string]interface{}{"success": true})
 }
 
 // ── /api/apps/{coin}/node ─────────────────────────────────────────────────────

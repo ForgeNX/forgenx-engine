@@ -431,3 +431,19 @@ func (s *Stats) GetWorkerStats(symbol string) map[string]*WorkerStats {
 func (s *Stats) UptimeSeconds() float64 {
 	return time.Since(s.startedAt).Seconds()
 }
+
+// ResetCoinStats zeros the all-time pool stats for a coin.
+func (s *Stats) ResetCoinStats(symbol string) {
+	s.mu.RLock()
+	cs, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	cs.mu.Lock()
+	cs.SharesAccepted = 0
+	cs.SharesRejected = 0
+	cs.SharesStale = 0
+	cs.BlocksFound = 0
+	cs.mu.Unlock()
+}

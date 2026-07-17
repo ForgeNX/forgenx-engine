@@ -96,6 +96,7 @@ func main() {
 			logger.Warn("CoinAPI store init failed: %v", storeErr)
 		} else {
 			coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
+				coinAPI.SetStats(stats)
 			coinAPI.SetEngineVersion(version, buildDate)
 			eng.SetStore(store)
 
