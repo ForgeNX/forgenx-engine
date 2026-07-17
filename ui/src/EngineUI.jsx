@@ -746,16 +746,10 @@ function EngineLogsTab() {
     fetch(`/api/engine/logs?tail=${tail}`)
       .then(r => r.json())
       .then(data => {
-        setLogs(data.success ? (data.logs || "No log output.") : "Failed to fetch logs.")
-        logsRef.current = data.success ? (data.logs || "No log output.") : "Failed to fetch logs."
-        if (!userScrolledRef.current) { pendingScroll.current = setTimeout(() => {
-          pendingScroll.current = null
-          if (ref.current && !userScrolledRef.current) {
-            ignoreScroll.current = true
-            ref.current.scrollTop = ref.current.scrollHeight
-            setTimeout(() => { ignoreScroll.current = false }, 50)
-          }
-        }, 500) }
+        const text = data.success ? (data.logs || "No log output.") : "Failed to fetch logs."
+        setLogs(text)
+        logsRef.current = text
+        if (!userScrolledRef.current) scrollToBottom()
       })
       .catch(() => setLogs("Could not connect to log API."))
   }
