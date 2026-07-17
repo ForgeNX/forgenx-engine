@@ -779,7 +779,7 @@ function EngineLogsTab() {
           background: live ? "rgba(0,229,255,0.1)" : "rgba(255,0,128,0.08)",
           border: live ? "1px solid rgba(0,229,255,0.3)" : "1px solid rgba(255,0,128,0.3)",
           color: live ? "#00e5ff" : "#ff0080",
-        }}>{live ? "● Live" : "○ Live"}</button>
+        }}>{live ? "● Stop Live" : "○ View Live"}</button>
         <button onClick={() => fetchLogs()} disabled={live}
           style={{ padding: "4px 12px", borderRadius: "7px", background: live ? "rgba(255,255,255,0.03)" : "rgba(0,229,255,0.08)", border: `1px solid ${live ? "rgba(255,255,255,0.08)" : "rgba(0,229,255,0.25)"}`, color: live ? "#475569" : "#00e5ff", fontSize: "12px", fontWeight: 600, cursor: live ? "default" : "pointer", fontFamily: "inherit" }}>Refresh</button>
         <button onClick={copyLogs}
