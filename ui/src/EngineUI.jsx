@@ -698,19 +698,27 @@ function EngineLogsTab() {
   const [userScrolled, setUserScrolled] = useState(false)
   const userScrolledRef = useRef(false)
   const logsRef = useRef("")
+  const lastProgTop = useRef(-1)
   const handleScroll = () => {
-    if (!ref.current) return
-    const { scrollTop, scrollHeight, clientHeight } = ref.current
-    const atBottom = scrollHeight - scrollTop - clientHeight < 30
-    if (!atBottom) {
-      userScrolledRef.current = true
-      setUserScrolled(true)
-    }
+    const el = ref.current
+    if (!el) return
+    const st = el.scrollTop
+    if (st === lastProgTop.current) return
+    const atBottom = el.scrollHeight - st - el.clientHeight < 30
+    userScrolledRef.current = !atBottom
+    setUserScrolled(!atBottom)
+  }
+  const scrollToBottom = () => {
+    const el = ref.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    lastProgTop.current = el.scrollTop
   }
   const resumeScroll = () => {
     userScrolledRef.current = false
     setUserScrolled(false)
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight
+    scrollToBottom()
+    fetchLogs(true)
   }
   const copyLogs = () => {
     if (navigator.clipboard) {
@@ -733,6 +741,7 @@ function EngineLogsTab() {
   }
 
   const fetchLogs = (silent = false) => {
+    if (silent && userScrolledRef.current) return
     if (!silent) setLogs("Loading…")
     fetch(`/api/engine/logs?tail=${tail}`)
       .then(r => r.json())
