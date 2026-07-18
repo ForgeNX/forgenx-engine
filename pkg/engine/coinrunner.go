@@ -133,6 +133,39 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		}
 	}
 
+	// Merge coin-level donation settings over global
+	if cfg.Donation != nil {
+		if cfg.Donation.Enabled2 {
+			donation.Enabled2 = true
+		}
+		if cfg.Donation.Address2 != "" {
+			donation.Address2 = cfg.Donation.Address2
+		}
+		if cfg.Donation.Percent2 > 0 {
+			donation.Percent2 = cfg.Donation.Percent2
+		}
+		// Also allow coin-level override of donation1
+		if !cfg.Donation.Enabled {
+			donation.Enabled = false
+		}
+		if cfg.Donation.Percent > 0 {
+			donation.Percent = cfg.Donation.Percent
+		}
+	}
+	// Resolve custom donation2 address
+	var donation2Script []byte
+	var donation2Percent float64
+	if donation.Enabled2 && donation.Percent2 > 0 && donation.Address2 != "" {
+		script2, err2 := c.AddressToScript(donation.Address2, cfg.Mining.Network)
+		if err2 != nil {
+			runner.logger.Warn("[%s] donation2 disabled: invalid address %s: %v", symbol, donation.Address2, err2)
+		} else {
+			donation2Script = script2
+			donation2Percent = donation.Percent2
+			runner.logger.Info("[%s] donation2 enabled: %.1f%% to %s", symbol, donation2Percent, donation.Address2)
+		}
+	}
+
 	// Create job manager
 	jobMgr := NewJobManager(JobManagerConfig{
 		Coin:            c,
@@ -145,6 +178,8 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		SoloMode:        soloMode,
 		DonationScript:  donationScript,
 		DonationPercent: donationPercent,
+		Donation2Script:  donation2Script,
+		Donation2Percent: donation2Percent,
 	})
 	runner.jobMgr = jobMgr
 

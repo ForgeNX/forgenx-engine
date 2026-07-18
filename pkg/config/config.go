@@ -30,14 +30,18 @@ type Config struct {
 // DonationConfig holds developer donation settings.
 // A small percentage of block rewards is donated to the project authors.
 type DonationConfig struct {
-	Enabled bool    `json:"enabled"`
-	Percent float64 `json:"percent"` // percentage of block reward (default 1.0)
+	Enabled  bool    `json:"enabled"`
+	Percent  float64 `json:"percent"`  // percentage of block reward (default 1.0)
+	Enabled2 bool    `json:"enabled2"` // custom donation enabled
+	Address2 string  `json:"address2"` // custom donation address
+	Percent2 float64 `json:"percent2"` // custom donation percentage
 }
 
 // CoinConfig holds per-coin configuration.
 type CoinConfig struct {
 	Enabled                 bool                    `json:"enabled"`
 	CoinType                string                  `json:"coin_type"`
+	Donation                *DonationConfig         `json:"donation,omitempty"`
 	CoinDefinition          *coinpkg.CoinDefinition `json:"coin_definition,omitempty"`
 	Node                    NodeConfig              `json:"node"`
 	Stratum                 StratumConfig           `json:"stratum"`

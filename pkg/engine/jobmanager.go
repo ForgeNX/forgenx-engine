@@ -67,8 +67,10 @@ type JobManager struct {
 	addrMu         sync.RWMutex
 
 	// Donation config
-	donationScript  []byte
-	donationPercent float64
+	donationScript   []byte
+	donationPercent  float64
+	donation2Script  []byte
+	donation2Percent float64
 
 	onNewJob       func(*stratum.Job)
 	onNewJobV2     func(NewJobEvent)
@@ -90,8 +92,10 @@ type JobManagerConfig struct {
 	OnNewJob        func(*stratum.Job)
 	OnNewJobV2      func(NewJobEvent)
 	SoloMode        bool
-	DonationScript  []byte
-	DonationPercent float64
+	DonationScript   []byte
+	DonationPercent  float64
+	Donation2Script  []byte
+	Donation2Percent float64
 }
 
 // NewJobManager creates a new job manager.
@@ -122,8 +126,10 @@ func NewJobManager(cfg JobManagerConfig) *JobManager {
 		jobs:            make(map[string]*JobData),
 		maxJobHistory:   10,
 		soloMode:        cfg.SoloMode,
-		donationScript:  cfg.DonationScript,
-		donationPercent: cfg.DonationPercent,
+		donationScript:   cfg.DonationScript,
+		donationPercent:  cfg.DonationPercent,
+		donation2Script:  cfg.Donation2Script,
+		donation2Percent: cfg.Donation2Percent,
 		onNewJob:        cfg.OnNewJob,
 		onNewJobV2:      cfg.OnNewJobV2,
 		logger:          logging.New(logging.ModuleEngine),
@@ -218,17 +224,21 @@ func (jm *JobManager) ExtraNonce2Size() int {
 // donationOutputs computes the donation coinbase output for a given template.
 // Returns nil if donation is not configured.
 func (jm *JobManager) donationOutputs(template *noderpc.BlockTemplate) []coinbase.CoinbaseOutput {
-	if jm.donationScript == nil || jm.donationPercent <= 0 {
-		return nil
-	}
 	poolReward := jm.coin.PoolReward(template)
-	donationValue := int64(float64(poolReward) * jm.donationPercent / 100.0)
-	if donationValue <= 0 {
-		return nil
+	var outputs []coinbase.CoinbaseOutput
+	if jm.donationScript != nil && jm.donationPercent > 0 {
+		v := int64(float64(poolReward) * jm.donationPercent / 100.0)
+		if v > 0 {
+			outputs = append(outputs, coinbase.CoinbaseOutput{Value: v, Script: jm.donationScript})
+		}
 	}
-	return []coinbase.CoinbaseOutput{
-		{Value: donationValue, Script: jm.donationScript},
+	if jm.donation2Script != nil && jm.donation2Percent > 0 {
+		v := int64(float64(poolReward) * jm.donation2Percent / 100.0)
+		if v > 0 {
+			outputs = append(outputs, coinbase.CoinbaseOutput{Value: v, Script: jm.donation2Script})
+		}
 	}
+	return outputs
 }
 
 func (jm *JobManager) pollLoop() {

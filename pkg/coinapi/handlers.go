@@ -1147,9 +1147,6 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	if v, ok := body["donation1Addr"].(string); ok {
 		env[prefix+"DONATION1_ADDR"] = v
 	}
-	if v, ok := body["donation1Pct"].(float64); ok {
-		env[prefix+"DONATION1_PCT"] = strconv.FormatFloat(v, 'f', -1, 64)
-	}
 	if v, ok := body["donation2Addr"].(string); ok {
 		env[prefix+"DONATION2_ADDR"] = v
 	}
@@ -1166,6 +1163,17 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	coinCfg := readJSONFile(configPath)
 	if coinCfg == nil {
 		coinCfg = map[string]interface{}{}
+	// Build donation section — preserve existing values, update only what was sent
+	{
+		don, _ := coinCfg["donation"].(map[string]interface{})
+		if don == nil { don = map[string]interface{}{} }
+		if v, ok := body["donation1Enabled"].(bool); ok { don["enabled"] = v }
+		if v, ok := body["donation1Pct"].(float64); ok { don["enabled"] = v > 0; don["percent"] = v }
+		if v, ok := body["donation2Enabled"].(bool); ok { don["enabled2"] = v }
+		if v, ok := body["donation2Addr"].(string); ok { don["address2"] = v }
+		if v, ok := body["donation2Pct"].(float64); ok { don["percent2"] = v }
+		coinCfg["donation"] = don
+	}
 	}
 
 	mining := getNestedMap(coinCfg, "mining")
