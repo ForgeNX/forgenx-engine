@@ -114,6 +114,11 @@ type BlockchainInfo struct {
 	PruneTargetSize      int64   `json:"prune_target_size"`
 }
 
+// PeerInfo is a single peer from getpeerinfo.
+type PeerInfo struct {
+	StartingHeight int64 `json:"startingheight"`
+}
+
 // NetworkInfo is the response from getnetworkinfo.
 type NetworkInfo struct {
 	Subversion     string `json:"subversion"`

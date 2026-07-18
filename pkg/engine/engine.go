@@ -305,6 +305,15 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 		"best_block_hash":        chain.BestBlockHash,
 		"prune_limit_mb":         chain.PruneTargetSize / (1024 * 1024),
 		"initial_block_download": chain.InitialBlockDownload,
+		"chain_tip": func() int64 {
+			peers, err := rpc.GetPeerInfo()
+			if err != nil { return 0 }
+			var max int64
+			for _, p := range peers {
+				if p.StartingHeight > max { max = p.StartingHeight }
+			}
+			return max
+		}(),
 		"difficulty":             0.0,
 		"network_hashrate":       netHashrate,
 		"network_hashrate_raw":   nhps,

@@ -107,6 +107,19 @@ func (c *Client) GetBlockchainInfo() (*BlockchainInfo, error) {
 	return &info, nil
 }
 
+// GetPeerInfo returns peer information including starting heights.
+func (c *Client) GetPeerInfo() ([]PeerInfo, error) {
+	result, err := c.call("getpeerinfo", nil)
+	if err != nil {
+		return nil, err
+	}
+	var peers []PeerInfo
+	if err := json.Unmarshal(result, &peers); err != nil {
+		return nil, fmt.Errorf("parsing getpeerinfo: %w", err)
+	}
+	return peers, nil
+}
+
 // GetNetworkInfo returns node network information (peers, subversion).
 func (c *Client) GetNetworkInfo() (*NetworkInfo, error) {
 	result, err := c.call("getnetworkinfo", nil)
