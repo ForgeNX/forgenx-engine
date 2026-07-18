@@ -255,6 +255,13 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			ibdInfo["peers_in"]  = ibdNet.ConnectionsIn
 			ibdInfo["peers_out"] = ibdNet.ConnectionsOut
 		}
+		if peers, err := tmpRPC.GetPeerInfo(); err == nil {
+			var maxTip int64
+			for _, p := range peers {
+				if p.StartingHeight > maxTip { maxTip = p.StartingHeight }
+			}
+			if maxTip > 0 { ibdInfo["chain_tip"] = maxTip }
+		}
 		return ibdInfo, false
 	}
 
