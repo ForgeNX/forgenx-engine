@@ -900,12 +900,23 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	// Parse version/releaseDate from YAML manifest (simple line scan, no YAML dep)
 	appVersion := "1.0.0"
 	releaseDate := ""
+	nodeImageTag := ""
 	if manifestData, err := os.ReadFile(manifestPath); err == nil {
 		for _, line := range strings.Split(string(manifestData), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "version:") {
 				appVersion = strings.Trim(strings.TrimPrefix(line, "version:"), " \"")
 			}
+	// Parse node image tag from docker-compose.yml
+	composePath := "/opt/forgenx/apps/" + coinID + "/docker-compose.yml"
+	if composeData, err := os.ReadFile(composePath); err == nil {
+		for _, line := range strings.Split(string(composeData), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+":") {
+				nodeImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+":")
+			}
+		}
+	}
 			if strings.HasPrefix(line, "releaseDate:") {
 				releaseDate = strings.Trim(strings.TrimPrefix(line, "releaseDate:"), " \"")
 			}
@@ -930,6 +941,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 
 	writeJSON(w, map[string]interface{}{
 		"appVersion":         appVersion,
+			"nodeImageTag":       nodeImageTag,
 		"releaseDate":        releaseDate,
 		"network":            envStr(env, prefix+"NETWORK", "mainnet"),
 		"prune":              envStr(env, prefix+"PRUNE", "550") != "0",
