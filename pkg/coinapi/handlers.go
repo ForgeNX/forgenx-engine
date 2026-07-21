@@ -969,8 +969,14 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"minDiff":            envInt(env, prefix+"MIN_DIFF", 32),
 		"maxDiff":            envInt(env, prefix+"MAX_DIFF", 4096),
 		"autoStart":          envStr(env, prefix+"AUTO_START", "true") == "true",
-			"donation1Enabled":   getNestedBool(getNestedMap(coinCfg, "donation"), "enabled", true),
-			"donation2Enabled":   getNestedBool(getNestedMap(coinCfg, "donation"), "enabled2", false),
+			"donation1Enabled":   func() bool {
+				if v := envStr(env, prefix+"DONATION1_ENABLED", ""); v != "" { return v == "true" }
+				return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled", true)
+			}(),
+			"donation2Enabled":   func() bool {
+				if v := envStr(env, prefix+"DONATION2_ENABLED", ""); v != "" { return v == "true" }
+				return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled2", false)
+			}(),
 		"donation1Addr":      envStr(env, prefix+"DONATION1_ADDR", ""),
 		"donation1Pct":       envFloat(env, prefix+"DONATION1_PCT", 1.0),
 		"donation2Addr":      envStr(env, prefix+"DONATION2_ADDR", ""),
@@ -1157,6 +1163,12 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	}
 	if v, ok := body["maxDiff"].(float64); ok {
 		env[prefix+"MAX_DIFF"] = strconv.Itoa(int(v))
+	}
+	if v, ok := body["donation1Enabled"].(bool); ok {
+		if v { env[prefix+"DONATION1_ENABLED"] = "true" } else { env[prefix+"DONATION1_ENABLED"] = "false" }
+	}
+	if v, ok := body["donation2Enabled"].(bool); ok {
+		if v { env[prefix+"DONATION2_ENABLED"] = "true" } else { env[prefix+"DONATION2_ENABLED"] = "false" }
 	}
 	if v, ok := body["donation1Addr"].(string); ok {
 		env[prefix+"DONATION1_ADDR"] = v
