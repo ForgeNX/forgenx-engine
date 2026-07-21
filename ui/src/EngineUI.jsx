@@ -993,7 +993,7 @@ function EngineInformationTab() {
 }
 
 
-export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
+export default function EngineUI({ activeTab, engineOnline, nodes = {}, initialStats, initialMiners }) {
   const { stats, miners, nodes: fetchedNodes, loading } = useEngineData(engineOnline, initialStats, initialMiners)
   const effectiveNodes = (nodes && Object.keys(nodes ?? {}).length > 0) ? nodes : (fetchedNodes ?? {})
 
