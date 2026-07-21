@@ -1177,6 +1177,7 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	coinCfg := readJSONFile(configPath)
 	if coinCfg == nil {
 		coinCfg = map[string]interface{}{}
+	}
 	// Build donation section — preserve existing values, update only what was sent
 	{
 		don, _ := coinCfg["donation"].(map[string]interface{})
@@ -1187,7 +1188,6 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 		if v, ok := body["donation2Addr"].(string); ok { don["address2"] = v }
 		if v, ok := body["donation2Pct"].(float64); ok { don["percent2"] = v }
 		coinCfg["donation"] = don
-	}
 	}
 
 	mining := getNestedMap(coinCfg, "mining")
