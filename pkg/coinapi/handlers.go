@@ -1276,9 +1276,13 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	}
 
 	// Check if node settings changed (prune, network) — restart node container if so
-	_, pruneChanged   := body["prune"]
-	_, pruneSzChanged := body["pruneSize"]
-	_, networkChanged := body["network"]
+	// Only restart node if prune/network values actually changed
+	newPrune, pruneInBody     := body["prune"]
+	newPruneSz, pruneSzInBody := body["pruneSize"]
+	newNetwork, networkInBody := body["network"]
+	pruneChanged   := pruneInBody   && fmt.Sprintf("%v", newPrune)   != envStr(env, prefix+"PRUNE", "0")
+	pruneSzChanged := pruneSzInBody && fmt.Sprintf("%v", newPruneSz) != fmt.Sprintf("%v", envInt(env, prefix+"PRUNE", 0))
+	networkChanged := networkInBody && fmt.Sprintf("%v", newNetwork)  != envStr(env, prefix+"NETWORK", "mainnet")
 	needsNodeRestart := pruneChanged || pruneSzChanged || networkChanged
 	if needsNodeRestart {
 		go func() { restartContainer(coinID + "-node") }()
