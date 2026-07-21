@@ -27,14 +27,16 @@ function useEngineData(online, initialStats, initialMiners) {
   const fetch_ = useCallback(async () => {
     if (!online) { setLoading(false); return }
     try {
-      const [s, m] = await Promise.all([
+      const [s, m, n] = await Promise.all([
         fetch("/api/engine/stats").then(r => r.json()),
         fetch("/api/engine/miners").then(r => r.json()),
+        fetch("/api/engine/nodes").then(r => r.json()).catch(() => ({})),
       ])
       if (s) { setStats(s); try { sessionStorage.setItem("forgenx_engine_stats", JSON.stringify(s)) } catch {} }
       const mm = m.miners ?? {}
       setMiners(mm)
       try { sessionStorage.setItem("forgenx_engine_miners", JSON.stringify(mm)) } catch {}
+      if (n && typeof n === "object") setNodes(n)
     } catch (e) {
       console.error("Engine data fetch failed:", e)
     } finally {
