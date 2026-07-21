@@ -1294,8 +1294,9 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	newPrune, pruneInBody     := body["prune"]
 	newPruneSz, pruneSzInBody := body["pruneSize"]
 	newNetwork, networkInBody := body["network"]
-	pruneChanged   := pruneInBody   && fmt.Sprintf("%v", newPrune)   != envStr(env, prefix+"PRUNE", "0")
-	pruneSzChanged := pruneSzInBody && fmt.Sprintf("%v", newPruneSz) != fmt.Sprintf("%v", envInt(env, prefix+"PRUNE", 0))
+	pruneEnabled   := envStr(env, prefix+"PRUNE", "0") != "0"
+	pruneChanged   := pruneInBody   && newPrune.(bool) != pruneEnabled
+	pruneSzChanged := pruneSzInBody && int(newPruneSz.(float64)) != envInt(env, prefix+"PRUNE", 0)
 	networkChanged := networkInBody && fmt.Sprintf("%v", newNetwork)  != envStr(env, prefix+"NETWORK", "mainnet")
 	needsNodeRestart := pruneChanged || pruneSzChanged || networkChanged
 	if needsNodeRestart {
