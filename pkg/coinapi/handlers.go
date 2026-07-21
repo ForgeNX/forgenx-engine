@@ -969,6 +969,8 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"minDiff":            envInt(env, prefix+"MIN_DIFF", 32),
 		"maxDiff":            envInt(env, prefix+"MAX_DIFF", 4096),
 		"autoStart":          envStr(env, prefix+"AUTO_START", "true") == "true",
+			"donation1Enabled":   getNestedBool(getNestedMap(coinCfg, "donation"), "enabled", true),
+			"donation2Enabled":   getNestedBool(getNestedMap(coinCfg, "donation"), "enabled2", false),
 		"donation1Addr":      envStr(env, prefix+"DONATION1_ADDR", ""),
 		"donation1Pct":       envFloat(env, prefix+"DONATION1_PCT", 1.0),
 		"donation2Addr":      envStr(env, prefix+"DONATION2_ADDR", ""),
@@ -1180,7 +1182,7 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 		don, _ := coinCfg["donation"].(map[string]interface{})
 		if don == nil { don = map[string]interface{}{} }
 		if v, ok := body["donation1Enabled"].(bool); ok { don["enabled"] = v }
-		if v, ok := body["donation1Pct"].(float64); ok { don["enabled"] = v > 0; don["percent"] = v }
+		if v, ok := body["donation1Pct"].(float64); ok { don["percent"] = v }
 		if v, ok := body["donation2Enabled"].(bool); ok { don["enabled2"] = v }
 		if v, ok := body["donation2Addr"].(string); ok { don["address2"] = v }
 		if v, ok := body["donation2Pct"].(float64); ok { don["percent2"] = v }
