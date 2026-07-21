@@ -27,16 +27,14 @@ function useEngineData(online, initialStats, initialMiners) {
   const fetch_ = useCallback(async () => {
     if (!online) { setLoading(false); return }
     try {
-      const [s, m, n] = await Promise.all([
+      const [s, m] = await Promise.all([
         fetch("/api/engine/stats").then(r => r.json()),
         fetch("/api/engine/miners").then(r => r.json()),
-        fetch("/api/engine/nodes").then(r => r.json()).catch(() => ({})),
       ])
       if (s) { setStats(s); try { sessionStorage.setItem("forgenx_engine_stats", JSON.stringify(s)) } catch {} }
       const mm = m.miners ?? {}
       setMiners(mm)
       try { sessionStorage.setItem("forgenx_engine_miners", JSON.stringify(mm)) } catch {}
-      if (n && typeof n === "object") setNodesData(n)
     } catch (e) {
       console.error("Engine data fetch failed:", e)
     } finally {
@@ -52,7 +50,7 @@ function useEngineData(online, initialStats, initialMiners) {
     return () => clearInterval(timerRef.current)
   }, [fetch_])
 
-  return { stats, miners, nodesData, loading }
+  return { stats, miners, loading }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -994,8 +992,8 @@ function EngineInformationTab() {
 
 
 export default function EngineUI({ activeTab, engineOnline, nodes = {}, initialStats, initialMiners }) {
-  const { stats, miners, nodesData: fetchedNodes, loading } = useEngineData(engineOnline, initialStats, initialMiners)
-  const effectiveNodes = (nodes && Object.keys(nodes ?? {}).length > 0) ? nodes : (fetchedNodes ?? {})
+  const { stats, miners, loading } = useEngineData(engineOnline, initialStats, initialMiners)
+  const effectiveNodes = nodes ?? {}
 
   if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
   if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
