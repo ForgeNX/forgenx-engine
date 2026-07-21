@@ -995,7 +995,7 @@ function EngineInformationTab() {
 
 export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
   const { stats, miners, nodes: fetchedNodes, loading } = useEngineData(engineOnline, initialStats, initialMiners)
-  const effectiveNodes = (nodes && Object.keys(nodes).length > 0) ? nodes : fetchedNodes
+  const effectiveNodes = (nodes && Object.keys(nodes ?? {}).length > 0) ? nodes : (fetchedNodes ?? {})
 
   if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
   if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
