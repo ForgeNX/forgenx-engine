@@ -30,7 +30,7 @@ function StandaloneEngineUI() {
                 const d = await r.json()
                 nodeMap[sym.toLowerCase()] = {
                   ...d.node,
-                  stratum_port: d.node?.stratum_port ?? d.pool?.stratum_port ?? null,
+                  stratum_port: d.node?.stratum_port ?? 3334,
                   zmq_connected: d.zmq_connected,
                 }
               }

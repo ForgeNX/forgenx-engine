@@ -204,7 +204,7 @@ function CoinCard({ symbol, engineData, nodeData, engineOnline, miners }) {
     { label: "Node RPC",          ok: nodeOnline,                                                                        warnColor: "#ff0080" },
     { label: "Blockchain synced", ok: synced,                                                                            warnColor: nodeOnline ? "#f59e0b" : "#ff0080" },
     { label: "Engine online",     ok: engineOnline,                                                                      warnColor: "#ff0080" },
-    { label: "Stratum port",      ok: nodeData?.stratum_v1_open === true,                                                 warnColor: "#ff0080" },
+    { label: "Stratum port",      ok: !!(nodeData?.stratum_port),                                                        warnColor: "#ff0080" },
     { label: nodeOnline ? (zmqOk ? "ZMQ connected" : "Polling (no ZMQ)") : "Not connected", ok: nodeOnline && zmqOk,   okColor: "#22c55e", warnColor: nodeOnline ? "#ff0080" : "#ff0080" },
   ]
 
@@ -991,13 +991,12 @@ function EngineInformationTab() {
 }
 
 
-export default function EngineUI({ activeTab, engineOnline, nodes = {}, initialStats, initialMiners }) {
+export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
   const { stats, miners, loading } = useEngineData(engineOnline, initialStats, initialMiners)
-  const effectiveNodes = nodes ?? {}
 
-  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
-  if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
-  if (activeTab === "Nodes")       return <EngineNodes     nodes={effectiveNodes} stats={stats} />
+  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
+  if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
+  if (activeTab === "Nodes")       return <EngineNodes     nodes={nodes} stats={stats} />
   if (activeTab === "Settings")    return <EngineSettingsTab />
   if (activeTab === "Information") return <EngineInformationTab />
   if (activeTab === "Logs")        return <EngineLogsTab />

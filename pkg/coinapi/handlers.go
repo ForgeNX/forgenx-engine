@@ -559,7 +559,6 @@ func symFromCoinID(coinID string) string {
 // RegisterRoutes adds all coin API routes to the given mux.
 func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	// Engine proxy
-	mux.HandleFunc("/api/engine/nodes", c.HandleEngineNodes)
 	mux.HandleFunc("/api/engine/stats", c.HandleEngineStats)
 	mux.HandleFunc("/api/engine/miners", c.HandleEngineMiners)
 	mux.HandleFunc("/api/engine/donation-address/", c.HandleDonationAddress)
@@ -1522,19 +1521,6 @@ func (c *CoinAPI) runHistorySnapshot() {
 }
 
 // ── /api/engine/donation-address/{symbol} ────────────────────────────────────
-
-// HandleEngineNodes proxies /api/nodes from forgenxd for the engine UI.
-func (c *CoinAPI) HandleEngineNodes(w http.ResponseWriter, r *http.Request) {
-	resp, err := http.Get("http://localhost:8000/api/nodes")
-	if err != nil {
-		writeError(w, 502, "could not reach forgenxd: "+err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
 
 func (c *CoinAPI) HandleDonationAddress(w http.ResponseWriter, r *http.Request) {
 	// Path: /api/engine/donation-address/{symbol}
