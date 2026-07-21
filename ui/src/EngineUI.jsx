@@ -204,7 +204,7 @@ function CoinCard({ symbol, engineData, nodeData, engineOnline, miners }) {
     { label: "Node RPC",          ok: nodeOnline,                                                                        warnColor: "#ff0080" },
     { label: "Blockchain synced", ok: synced,                                                                            warnColor: nodeOnline ? "#f59e0b" : "#ff0080" },
     { label: "Engine online",     ok: engineOnline,                                                                      warnColor: "#ff0080" },
-    { label: "Stratum port",      ok: !!(nodeData?.stratum_port),                                                        warnColor: "#ff0080" },
+    { label: "Stratum port",      ok: nodeData?.stratum_v1_open === true,                                                 warnColor: "#ff0080" },
     { label: nodeOnline ? (zmqOk ? "ZMQ connected" : "Polling (no ZMQ)") : "Not connected", ok: nodeOnline && zmqOk,   okColor: "#22c55e", warnColor: nodeOnline ? "#ff0080" : "#ff0080" },
   ]
 
