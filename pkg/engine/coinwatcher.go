@@ -166,6 +166,8 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 		e.ReloadCoin(symbol, cfg, donation)
 	} else {
 		e.logger.Info("[%s] config valid — starting pool", symbol)
-		e.StartCoin(symbol, cfg, donation)
+		if err := e.StartCoin(symbol, cfg, donation); err != nil {
+			e.logger.Error("[%s] failed to start pool: %v", symbol, err)
+		}
 	}
 }
