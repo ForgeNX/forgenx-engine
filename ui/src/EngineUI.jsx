@@ -50,7 +50,7 @@ function useEngineData(online, initialStats, initialMiners) {
     return () => clearInterval(timerRef.current)
   }, [fetch_])
 
-  return { stats, miners, loading }
+  return { stats, miners, nodes, loading }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -992,11 +992,12 @@ function EngineInformationTab() {
 
 
 export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
-  const { stats, miners, loading } = useEngineData(engineOnline, initialStats, initialMiners)
+  const { stats, miners, nodes: fetchedNodes, loading } = useEngineData(engineOnline, initialStats, initialMiners)
+  const effectiveNodes = (nodes && Object.keys(nodes).length > 0) ? nodes : fetchedNodes
 
-  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
-  if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
-  if (activeTab === "Nodes")       return <EngineNodes     nodes={nodes} stats={stats} />
+  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
+  if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={effectiveNodes} />
+  if (activeTab === "Nodes")       return <EngineNodes     nodes={effectiveNodes} stats={stats} />
   if (activeTab === "Settings")    return <EngineSettingsTab />
   if (activeTab === "Information") return <EngineInformationTab />
   if (activeTab === "Logs")        return <EngineLogsTab />
