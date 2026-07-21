@@ -439,6 +439,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 		"engine_connected":  engineConnected,
 		"zmq_connected":     engineConnected,
 		"stratum_v1_open":   func() bool { if c.portStatusFunc != nil { v1, _ := c.portStatusFunc(symbol); return v1 }; return engineConnected }(),
+			"stratum_port":      func() int { cfg := readJSONFile("/pool/coins/" + strings.ToLower(symbol) + ".json"); if cfg == nil { return 0 }; return getNestedInt(getNestedMap(cfg, "stratum"), "port", 0) }(),
 		"stratum_v2_open":   func() bool { if c.portStatusFunc != nil { _, v2 := c.portStatusFunc(symbol); return v2 }; return false }(),
 		"pool": map[string]interface{}{
 			"shares_accepted":   sharesAccepted,
