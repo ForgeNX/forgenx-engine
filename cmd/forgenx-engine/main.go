@@ -80,6 +80,7 @@ func main() {
 				}
 
 		eng.WatchCoins(engine.CoinsDir, cfg.Donation)
+		eng.StartNodeRetryLoop(engine.CoinsDir, cfg.Donation)
 
 		// Start metrics API
 		api := metrics.NewAPIServer(cfg.APIPort, cfg.PoolName, stats)
