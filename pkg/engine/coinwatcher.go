@@ -164,6 +164,9 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 		e.logger.Info("[%s] node has no peers yet — waiting before starting pool", symbol)
 		return
 	}
+	if err == nil && netInfo.Connections > 0 {
+		e.logger.Info("[%s] node has %d peer(s) — proceeding to start pool", symbol, netInfo.Connections)
+	}
 	e.runnersMu.RLock()
 	_, exists := e.runners[symbol]
 	e.runnersMu.RUnlock()
