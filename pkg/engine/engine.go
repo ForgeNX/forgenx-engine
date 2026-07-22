@@ -125,6 +125,32 @@ func (e *Engine) Start() error {
 	return nil
 }
 
+// StartNodeRetryLoop periodically retries starting coin pools that failed due to
+// transient conditions (no peers, node loading, etc). Runs every 15 seconds.
+func (e *Engine) StartNodeRetryLoop(dir string, donation config.DonationConfig) {
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			// Find coin configs that exist but have no running pool
+			files, err := os.ReadDir(dir)
+			if err != nil { continue }
+			for _, file := range files {
+				if file.IsDir() || filepath.Ext(file.Name()) != ".json" { continue }
+				symbol := strings.ToUpper(strings.TrimSuffix(file.Name(), ".json"))
+				e.runnersMu.RLock()
+				_, running := e.runners[symbol]
+				e.runnersMu.RUnlock()
+				if running { continue }
+				// Pool not running — try loading config and starting
+				cfg, err := loadCoinConfig(filepath.Join(dir, file.Name()))
+				if err != nil { continue }
+				e.handleCoinConfig(symbol, cfg, donation)
+			}
+		}
+	}()
+}
+
 // Stop shuts down all coin runners.
 func (e *Engine) Stop() {
 	snapshot := e.snapshotRunners()
