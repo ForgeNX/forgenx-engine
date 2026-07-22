@@ -603,7 +603,7 @@ function EngineSettingsTab() {
 
   useEffect(() => {
     // Fetch SV2 key info from each known coin's settings endpoint
-    const KNOWN_COINS = ["forgebch"]
+    const KNOWN_COINS = ["forgebch", "forgedgb", "forgebtc", "forgexec", "forgefb", "forgebc2", "forgebsv", "forgeppc"]
     Promise.all(
       KNOWN_COINS.map(id =>
         fetch(`/api/apps/${id}/settings`)
