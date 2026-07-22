@@ -118,6 +118,14 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		}
 	}
 
+	// Apply coin-level donation overrides before resolving scripts
+	if cfg.Donation != nil {
+		if !cfg.Donation.Enabled { donation.Enabled = false }
+		if cfg.Donation.Percent > 0 { donation.Percent = cfg.Donation.Percent }
+		if cfg.Donation.Enabled2 { donation.Enabled2 = true }
+		if cfg.Donation.Address2 != "" { donation.Address2 = cfg.Donation.Address2 }
+		if cfg.Donation.Percent2 > 0 { donation.Percent2 = cfg.Donation.Percent2 }
+	}
 	// Resolve donation output script from AUTHORS file
 	var donationScript []byte
 	var donationPercent float64
