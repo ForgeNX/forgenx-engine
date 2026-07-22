@@ -158,6 +158,12 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 	}
 
 
+	// Wait for at least 1 peer before starting pool — prevents "not connected" errors
+	netInfo, err := rpc.GetNetworkInfo()
+	if err == nil && netInfo.Connections == 0 {
+		e.logger.Info("[%s] node has no peers yet — waiting before starting pool", symbol)
+		return
+	}
 	e.runnersMu.RLock()
 	_, exists := e.runners[symbol]
 	e.runnersMu.RUnlock()
