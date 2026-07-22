@@ -31,13 +31,15 @@ const CoinsDir = "/pool/coins"
 
 // Engine is the top-level orchestrator that manages all coin runners.
 type Engine struct {
-	runners   map[string]*CoinRunner
-	runnersMu sync.RWMutex
-	stats     *metrics.Stats
-	store     workerDiffStore
-	logger    *logging.Logger
-	startTime time.Time
-	poolName  string
+	runners    map[string]*CoinRunner
+	runnersMu  sync.RWMutex
+	stats      *metrics.Stats
+	store      workerDiffStore
+	logger     *logging.Logger
+	startTime  time.Time
+	poolName   string
+	configSigs map[string][32]byte  // hash of meaningful config fields per coin
+	configSigsMu sync.RWMutex
 }
 
 // SetStore injects the worker difficulty store into the engine.
@@ -54,10 +56,11 @@ func (e *Engine) SetStore(s workerDiffStore) {
 // New creates a new Engine from the given configuration.
 func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 	e := &Engine{
-		runners:   make(map[string]*CoinRunner),
-		stats:     stats,
-		logger:    logging.New(logging.ModuleEngine),
-		startTime: time.Now(),
+		runners:    make(map[string]*CoinRunner),
+		configSigs: make(map[string][32]byte),
+		stats:      stats,
+		logger:     logging.New(logging.ModuleEngine),
+		startTime:  time.Now(),
 		poolName:  cfg.PoolName,
 	}
 

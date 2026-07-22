@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -110,6 +111,27 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 	return &cfg, nil
 }
 
+// configSignature computes a SHA256 hash of all meaningful pool config fields,
+// excluding runtime-only fields written by the entrypoint (ibd_complete, node_online, enabled).
+func configSignature(cfg *config.CoinConfig) [32]byte {
+	type sig struct {
+		Mining   interface{}
+		Donation interface{}
+		VarDiff  interface{}
+		Stratum  interface{}
+		Node     interface{}
+	}
+	s := sig{
+		Mining:   cfg.Mining,
+		Donation: cfg.Donation,
+		VarDiff:  cfg.VarDiff,
+		Stratum:  cfg.Stratum,
+		Node:     cfg.Node,
+	}
+	data, _ := json.Marshal(s)
+	return sha256.Sum256(data)
+}
+
 	func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
 
 	// ALWAYS register coin first (even if syncing/offline)
@@ -167,14 +189,28 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 	if err == nil && netInfo.Connections > 0 {
 		e.logger.Info("[%s] node has %d peer(s) — proceeding to start pool", symbol, netInfo.Connections)
 	}
+	newSig := configSignature(cfg)
+	e.configSigsMu.RLock()
+	oldSig, hasSig := e.configSigs[symbol]
+	e.configSigsMu.RUnlock()
 	e.runnersMu.RLock()
 	_, exists := e.runners[symbol]
 	e.runnersMu.RUnlock()
 	if exists {
-		e.logger.Info("[%s] config valid — reloading pool", symbol)
+		if hasSig && oldSig == newSig {
+			// Config unchanged — no reload needed
+			return
+		}
+		e.logger.Info("[%s] config changed — reloading pool", symbol)
+		e.configSigsMu.Lock()
+		e.configSigs[symbol] = newSig
+		e.configSigsMu.Unlock()
 		e.ReloadCoin(symbol, cfg, donation)
 	} else {
 		e.logger.Info("[%s] config valid — starting pool", symbol)
+		e.configSigsMu.Lock()
+		e.configSigs[symbol] = newSig
+		e.configSigsMu.Unlock()
 		if err := e.StartCoin(symbol, cfg, donation); err != nil {
 			e.logger.Error("[%s] failed to start pool: %v", symbol, err)
 		}
