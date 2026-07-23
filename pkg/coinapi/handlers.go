@@ -914,14 +914,13 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	if composeData, err := os.ReadFile(composePath); err == nil {
 		for _, line := range strings.Split(string(composeData), "\n") {
 			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+":") {
+			if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:") {
+				uiImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:")
+			} else if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+":") {
 				nodeImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+":")
-				if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:") {
-					uiImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:")
-				}
+			}
 			}
 		}
-	}
 			if strings.HasPrefix(line, "releaseDate:") {
 				releaseDate = strings.Trim(strings.TrimPrefix(line, "releaseDate:"), " \"")
 			}
