@@ -902,6 +902,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	appVersion := "1.0.0"
 	releaseDate := ""
 	nodeImageTag := ""
+	uiImageTag := ""
 	if manifestData, err := os.ReadFile(manifestPath); err == nil {
 		for _, line := range strings.Split(string(manifestData), "\n") {
 			line = strings.TrimSpace(line)
@@ -915,6 +916,9 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+":") {
 				nodeImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+":")
+				if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:") {
+					uiImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:")
+				}
 			}
 		}
 	}
@@ -943,6 +947,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	writeJSON(w, map[string]interface{}{
 		"appVersion":         appVersion,
 			"nodeImageTag":       nodeImageTag,
+			"uiImageTag":         uiImageTag,
 		"releaseDate":        releaseDate,
 		"network":            envStr(env, prefix+"NETWORK", "mainnet"),
 		"prune":              envStr(env, prefix+"PRUNE", "550") != "0",
