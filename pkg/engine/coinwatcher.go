@@ -227,6 +227,18 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 			if oldCfg.Mining.Network != cfg.Mining.Network {
 				e.logger.Info("[%s] config: network %s → %s", symbol, oldCfg.Mining.Network, cfg.Mining.Network)
 			}
+			if oldCfg.Stratum.ConnectionTimeout != cfg.Stratum.ConnectionTimeout {
+				e.logger.Info("[%s] config: connection_timeout %ds → %ds", symbol, oldCfg.Stratum.ConnectionTimeout, cfg.Stratum.ConnectionTimeout)
+			}
+			if oldCfg.Stratum.AcceptSuggestDiff != cfg.Stratum.AcceptSuggestDiff {
+				e.logger.Info("[%s] config: accept_suggest_diff %v → %v", symbol, oldCfg.Stratum.AcceptSuggestDiff, cfg.Stratum.AcceptSuggestDiff)
+			}
+			if oldCfg.Stratum.LowDiffShareGrace != cfg.Stratum.LowDiffShareGrace {
+				e.logger.Info("[%s] config: low_diff_share_grace %ds → %ds", symbol, oldCfg.Stratum.LowDiffShareGrace, cfg.Stratum.LowDiffShareGrace)
+			}
+			if oldCfg.VarDiff.OnNewBlock != nil && cfg.VarDiff.OnNewBlock != nil && *oldCfg.VarDiff.OnNewBlock != *cfg.VarDiff.OnNewBlock {
+				e.logger.Info("[%s] config: vardiff on_new_block %v → %v", symbol, *oldCfg.VarDiff.OnNewBlock, *cfg.VarDiff.OnNewBlock)
+			}
 		}
 		e.cfgsMu.Lock()
 		e.prevCfgs[symbol] = cfg
@@ -238,6 +250,9 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 		e.ReloadCoin(symbol, cfg, donation)
 	} else {
 		e.logger.Info("[%s] config valid — starting pool", symbol)
+		e.cfgsMu.Lock()
+		e.prevCfgs[symbol] = cfg
+		e.cfgsMu.Unlock()
 		e.configSigsMu.Lock()
 		e.configSigs[symbol] = newSig
 		e.configSigsMu.Unlock()
