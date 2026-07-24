@@ -237,6 +237,8 @@ func (e *Engine) StopCoin(symbol string) {
 // ReloadCoin stops and restarts a coin runner.
 func (e *Engine) ReloadCoin(symbol string, coinCfg *config.CoinConfig, donation config.DonationConfig) error {
 	e.StopCoin(symbol)
+	// Brief pause to allow the OS to release the port before rebinding
+	time.Sleep(2 * time.Second)
 	return e.StartCoin(symbol, coinCfg, donation)
 }
 
