@@ -56,9 +56,10 @@ type JobManager struct {
 
 	jobs          map[string]*JobData
 	currentTip    string
-	tipChangedAt     time.Time
+	tipChangedAt    time.Time
 	lastCleanJobAt  time.Time
-	jobCounter    uint64
+	cleanJobMu     sync.Mutex
+	jobCounter     uint64
 	maxJobHistory int
 	mu            sync.RWMutex
 
@@ -281,11 +282,6 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 	}
 
 	if cleanJobs {
-		// Debounce: skip if we already broadcast a clean job for this tip within 500ms
-		if time.Since(jm.lastCleanJobAt) < 500*time.Millisecond {
-			return nil
-		}
-		jm.lastCleanJobAt = time.Now()
 		jm.tipChangedAt = time.Now()
 	}
 	jm.currentTip = template.PreviousBlockHash
@@ -384,6 +380,16 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 
 	// Notify (unlock first to avoid holding lock during broadcast)
 	jm.mu.Unlock()
+	// Debounce clean job broadcasts — skip if we sent one within 500ms
+	if cleanJobs {
+		jm.cleanJobMu.Lock()
+		if time.Since(jm.lastCleanJobAt) < 500*time.Millisecond {
+			jm.cleanJobMu.Unlock()
+			return nil
+		}
+		jm.lastCleanJobAt = time.Now()
+		jm.cleanJobMu.Unlock()
+	}
 	if jm.onNewJob != nil {
 		jm.onNewJob(job)
 	}
