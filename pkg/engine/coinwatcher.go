@@ -241,7 +241,8 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 			}
 		}
 		e.cfgsMu.Lock()
-		e.prevCfgs[symbol] = cfg
+		cfgCopy := *cfg
+		e.prevCfgs[symbol] = &cfgCopy
 		e.cfgsMu.Unlock()
 		e.logger.Info("[%s] config changed — reloading pool", symbol)
 		e.configSigsMu.Lock()
@@ -251,7 +252,8 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 	} else {
 		e.logger.Info("[%s] config valid — starting pool", symbol)
 		e.cfgsMu.Lock()
-		e.prevCfgs[symbol] = cfg
+		cfgCopy := *cfg
+		e.prevCfgs[symbol] = &cfgCopy
 		e.cfgsMu.Unlock()
 		e.configSigsMu.Lock()
 		e.configSigs[symbol] = newSig
