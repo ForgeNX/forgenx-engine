@@ -379,33 +379,16 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		jm.logger.Info("new block detected at height %d", template.Height)
 	}
 
-	// Notify (unlock first to avoid holding lock during broadcast)
-	jm.mu.Unlock()
-	// Debounce clean job broadcasts — skip if we already sent one for this tip
-	if cleanJobs {
-		jm.cleanJobMu.Lock()
-		if jm.lastBroadcastTip == template.PreviousBlockHash {
-			jm.cleanJobMu.Unlock()
-			return nil
-		}
-		jm.lastBroadcastTip = template.PreviousBlockHash
-		jm.cleanJobMu.Unlock()
-	}
+
+	// Notify while holding the lock — prevents concurrent calls from double-broadcasting
 	if jm.onNewJob != nil {
 		jm.onNewJob(job)
 	}
 	if jm.onNewJobV2 != nil {
-		jm.onNewJobV2(NewJobEvent{
-			JobData:  jobData,
-			Template: template,
-		})
 		evt := NewJobEvent{JobData: jobData, Template: template}
-		jm.mu.Lock()
 		jm.latestJobEvent = &evt
-		jm.mu.Unlock()
+		jm.onNewJobV2(evt)
 	}
-	jm.mu.Lock()
-
 	return nil
 }
 
