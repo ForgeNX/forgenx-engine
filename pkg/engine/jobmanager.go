@@ -282,8 +282,8 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		return nil
 	}
 	if !cleanJobs && !force {
-		// Same block, no forced refresh — skip unless transactions changed
-		// For simplicity, always create a new job on poll to capture new transactions
+		// Same block, no forced refresh — skip
+		return nil
 	}
 
 	if cleanJobs {
