@@ -40,6 +40,8 @@ type Engine struct {
 	poolName   string
 	configSigs map[string][32]byte  // hash of meaningful config fields per coin
 	configSigsMu sync.RWMutex
+	prevCfgs map[string]*config.CoinConfig // previous config per coin for change logging
+	cfgsMu   sync.RWMutex
 }
 
 // SetStore injects the worker difficulty store into the engine.
@@ -58,6 +60,7 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 	e := &Engine{
 		runners:    make(map[string]*CoinRunner),
 		configSigs: make(map[string][32]byte),
+		prevCfgs:   make(map[string]*config.CoinConfig),
 		stats:      stats,
 		logger:     logging.New(logging.ModuleEngine),
 		startTime:  time.Now(),

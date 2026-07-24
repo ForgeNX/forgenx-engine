@@ -201,6 +201,36 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 			// Config unchanged — no reload needed
 			return
 		}
+		// Log what changed
+		e.cfgsMu.RLock()
+		oldCfg, hasOldCfg := e.prevCfgs[symbol]
+		e.cfgsMu.RUnlock()
+		if hasOldCfg {
+			if oldCfg.VarDiff.TargetTime != cfg.VarDiff.TargetTime {
+				e.logger.Info("[%s] config: vardiff target_time %.0fs → %.0fs", symbol, oldCfg.VarDiff.TargetTime, cfg.VarDiff.TargetTime)
+			}
+			if oldCfg.VarDiff.RetargetTime != cfg.VarDiff.RetargetTime {
+				e.logger.Info("[%s] config: vardiff retarget_time %.0fs → %.0fs", symbol, oldCfg.VarDiff.RetargetTime, cfg.VarDiff.RetargetTime)
+			}
+			if oldCfg.VarDiff.MinDiff != cfg.VarDiff.MinDiff {
+				e.logger.Info("[%s] config: vardiff min_diff %.0f → %.0f", symbol, oldCfg.VarDiff.MinDiff, cfg.VarDiff.MinDiff)
+			}
+			if oldCfg.VarDiff.MaxDiff != cfg.VarDiff.MaxDiff {
+				e.logger.Info("[%s] config: vardiff max_diff %.0f → %.0f", symbol, oldCfg.VarDiff.MaxDiff, cfg.VarDiff.MaxDiff)
+			}
+			if oldCfg.VarDiff.VariancePct != cfg.VarDiff.VariancePct {
+				e.logger.Info("[%s] config: vardiff variance_pct %.0f%% → %.0f%%", symbol, oldCfg.VarDiff.VariancePct, cfg.VarDiff.VariancePct)
+			}
+			if oldCfg.Mining.Address != cfg.Mining.Address {
+				e.logger.Info("[%s] config: payout address changed", symbol)
+			}
+			if oldCfg.Mining.Network != cfg.Mining.Network {
+				e.logger.Info("[%s] config: network %s → %s", symbol, oldCfg.Mining.Network, cfg.Mining.Network)
+			}
+		}
+		e.cfgsMu.Lock()
+		e.prevCfgs[symbol] = cfg
+		e.cfgsMu.Unlock()
 		e.logger.Info("[%s] config changed — reloading pool", symbol)
 		e.configSigsMu.Lock()
 		e.configSigs[symbol] = newSig
