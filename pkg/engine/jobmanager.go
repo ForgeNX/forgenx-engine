@@ -277,12 +277,17 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 
 	// Determine if this is a new block
 	cleanJobs := template.PreviousBlockHash != jm.currentTip
+	// If another goroutine already processed this tip while we waited for the lock, skip
+	if cleanJobs && jm.lastBroadcastTip == template.PreviousBlockHash {
+		return nil
+	}
 	if !cleanJobs && !force {
 		// Same block, no forced refresh — skip unless transactions changed
 		// For simplicity, always create a new job on poll to capture new transactions
 	}
 
 	if cleanJobs {
+		jm.lastBroadcastTip = template.PreviousBlockHash
 		jm.tipChangedAt = time.Now()
 	}
 	jm.currentTip = template.PreviousBlockHash
