@@ -282,13 +282,16 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		return nil
 	}
 	if !cleanJobs && !force {
-		// Same block, no forced refresh — skip
-		return nil
+		// Same block poll tick — only broadcast if enough time has passed (tx updates)
+		if time.Since(jm.lastCleanJobAt) < 30*time.Second {
+			return nil
+		}
 	}
 
 	if cleanJobs {
 		jm.lastBroadcastTip = template.PreviousBlockHash
 		jm.tipChangedAt = time.Now()
+		jm.lastCleanJobAt = time.Now()
 	}
 	jm.currentTip = template.PreviousBlockHash
 
