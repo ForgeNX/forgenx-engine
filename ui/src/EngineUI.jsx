@@ -771,7 +771,7 @@ function EngineLogsTab() {
       <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
         <select value={tail} onChange={e => { setTail(+e.target.value); setLive(false) }}
           style={{ background: "rgba(2,6,17,0.7)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "6px", color: "#94a3b8", padding: "4px 8px", fontSize: "12px" }}>
-          {[50,100,200,500].map(v => <option key={v} value={v}>Last {v} lines</option>)}
+          {[200,500,1000,2000,5000].map(v => <option key={v} value={v}>Last {v} lines</option>)}
         </select>
         <button onClick={() => setLive(v => !v)} style={{
           padding: "4px 12px", borderRadius: "7px", fontSize: "12px", fontWeight: 600,
