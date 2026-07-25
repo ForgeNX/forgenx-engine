@@ -312,6 +312,7 @@ func (s *Session) dispatch(frame *Frame) error {
 	case MsgOpenStandardMiningChannel:
 		return s.handleOpenChannel(frame.Payload)
 	case MsgSubmitSharesStandard:
+		s.logf("[sv2] session %s: received MsgSubmitSharesStandard (0x1A)", s.id)
 		return s.handleSubmitShares(frame.Payload)
 	case MsgOpenExtendedMiningChannel:
 		return s.handleOpenExtendedChannel(frame.Payload)
@@ -587,8 +588,8 @@ processShare:
 		}
 		if !graceAccepted {
 			ch.RecordRejection()
-				s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.6f poolDiff=%.0f",
-					s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty())
+				s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.6f poolDiff=%.0f isExtended=%v",
+					s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty(), ch.IsExtended())
 			if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
 			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
