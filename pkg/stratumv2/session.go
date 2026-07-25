@@ -859,11 +859,10 @@ func channelMerkleRoot(ch *Channel, tmpl *JobTemplate) [32]byte {
 // different extranonce2, so unlike the standard-channel path this cannot be
 // cached per-job — it's recomputed per share.
 func extendedChannelMerkleRoot(ch *Channel, tmpl *JobTemplate, minerExtranonce []byte) [32]byte {
-	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
-	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
-		coinb1, coinb2 = ownCb1, ownCb2
-	}
-	coinbaseTxHash := HashCoinbaseTx(coinb1, ch.Extranonce1Bytes(), minerExtranonce, coinb2)
+	// tmpl.Coinbase1/2 are set to the channel-specific coinbase in
+	// sendExtendedJobToChannel — use them directly so validation always
+	// uses the exact coinbase the miner received, not a later override.
+	coinbaseTxHash := HashCoinbaseTx(tmpl.Coinbase1, ch.Extranonce1Bytes(), minerExtranonce, tmpl.Coinbase2)
 	return ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
 }
 
@@ -896,6 +895,15 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error
 	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
 		coinb1, coinb2 = ownCb1, ownCb2
 	}
+
+	// Store the resolved coinbase in the template so share validation
+	// uses the same coinbase the miner received, not a later override.
+	tmplCopy := *tmpl
+	tmplCopy.Coinbase1 = coinb1
+	tmplCopy.Coinbase2 = coinb2
+	s.templateMu.Lock()
+	s.templates[tmpl.JobID] = &tmplCopy
+	s.templateMu.Unlock()
 
 	payload, err := EncodeNewExtendedMiningJob(
 		ch.ID(),
