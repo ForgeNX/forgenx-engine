@@ -267,6 +267,13 @@ func (c *Channel) PoolTarget() []byte {
 	return out
 }
 
+// PoolDifficulty returns the current pool difficulty as a float.
+func (c *Channel) PoolDifficulty() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.poolDifficulty
+}
+
 // GetPrevDifficulty returns the previous difficulty and when it last changed.
 // Used to implement the low-diff grace period in share validation.
 func (c *Channel) GetPrevDifficulty() (float64, time.Time) {
