@@ -119,6 +119,7 @@ type Session struct {
 	// algorithm and config V1 uses.
 	vardiffCfg        *stratum.VarDiffConfig
 	vardiffOnNewBlock bool
+	lowDiffGrace      time.Duration
 	startDiff         float64
 	startDiffFunc     func(workerName string) float64
 
@@ -188,6 +189,7 @@ func newSession(
 		coinbaseBuilder:          coinbaseBuilder,
 		vardiffCfg:               vardiffCfg,
 		vardiffOnNewBlock:        vardiffOnNewBlock,
+		lowDiffGrace:             lowDiffGrace,
 		startDiff:                startDiff,
 		startDiffFunc:            startDiffFunc,
 		connectionTimeoutSeconds: connectionTimeoutSeconds,
@@ -553,12 +555,27 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	}
 
 	if !result.MeetsPool {
-		ch.RecordRejection()
-		s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
-			s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
-		if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
-		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		// Low-diff grace period: accept shares at previous difficulty
+		// for a short window after a difficulty change (mirrors V1 behaviour)
+		graceAccepted := false
+		if s.lowDiffGrace > 0 {
+			prevDiff, changedAt := ch.GetPrevDifficulty()
+			if prevDiff > 0 && time.Since(changedAt) < s.lowDiffGrace {
+				if result.Difficulty >= prevDiff {
+					s.logf("[sv2] session %s ch=%d: %s low-diff share accepted within grace period (prevDiff=%.0f)",
+						s.id, share.ChannelID, ch.UserIdentity(), prevDiff)
+					graceAccepted = true
+				}
+			}
+		}
+		if !graceAccepted {
+			ch.RecordRejection()
+			s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
+				s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
+			if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
+			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
+			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		}
 	}
 
 	// Valid share.
@@ -651,12 +668,27 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 	}
 
 	if !result.MeetsPool {
-		ch.RecordRejection()
-		s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
-			s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
-		if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
-		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		// Low-diff grace period: accept shares at previous difficulty
+		// for a short window after a difficulty change (mirrors V1 behaviour)
+		graceAccepted := false
+		if s.lowDiffGrace > 0 {
+			prevDiff, changedAt := ch.GetPrevDifficulty()
+			if prevDiff > 0 && time.Since(changedAt) < s.lowDiffGrace {
+				if result.Difficulty >= prevDiff {
+					s.logf("[sv2] session %s ch=%d: %s low-diff share accepted within grace period (prevDiff=%.0f)",
+						s.id, share.ChannelID, ch.UserIdentity(), prevDiff)
+					graceAccepted = true
+				}
+			}
+		}
+		if !graceAccepted {
+			ch.RecordRejection()
+			s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s",
+				s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16])
+			if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
+			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
+			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		}
 	}
 
 	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)

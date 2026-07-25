@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 	"sync/atomic"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
@@ -80,8 +81,10 @@ type Channel struct {
 	// vardiffOnNewBlock is false), avoiding a difficulty change mid-search
 	// that would desync the miner's nonce space.
 	vardiff           *stratum.VarDiff
-	pendingDiff       float64 // 0 = none pending
-	vardiffOnNewBlock bool    // mirrors ServerConfig.VarDiffOnNewBlock from V1
+	pendingDiff       float64   // 0 = none pending
+	prevDiff          float64   // previous difficulty before last change (for grace period)
+	diffChangedAt     time.Time // when difficulty last changed
+	vardiffOnNewBlock bool      // mirrors ServerConfig.VarDiffOnNewBlock from V1
 
 	// Job tracking
 	currentJobID uint32 // the most recent job sent to this channel
@@ -264,6 +267,14 @@ func (c *Channel) PoolTarget() []byte {
 	return out
 }
 
+// GetPrevDifficulty returns the previous difficulty and when it last changed.
+// Used to implement the low-diff grace period in share validation.
+func (c *Channel) GetPrevDifficulty() (float64, time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prevDiff, c.diffChangedAt
+}
+
 // SetPoolDifficulty updates the channel's pool target.
 // Returns the new target bytes so the caller can send SetTarget to the miner.
 func (c *Channel) SetPoolDifficulty(diff float64) []byte {
@@ -372,6 +383,8 @@ func (c *Channel) FlushPendingDiff() (targetBytes []byte, newDiff float64, ok bo
 	}
 	newDiff = c.pendingDiff
 	c.pendingDiff = 0
+	c.prevDiff = c.poolDifficulty
+	c.diffChangedAt = time.Now()
 	target := DifficultyToTarget(newDiff)
 	c.poolTargetBytes = TargetToBytes(target)
 	c.poolDifficulty = newDiff
