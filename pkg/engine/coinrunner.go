@@ -350,7 +350,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				OnRejected: func(workerName string) {
 					runner.stats.RecordShare(symbol, metrics.ShareInvalid, workerName, 0)
 				},
-				LowDiffGrace: time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second,
+				LowDiffGrace:  time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second,
+				StaleGrace:    time.Duration(cfg.Stratum.StaleShareGrace) * time.Second,
+				TipChangedAt:  jobMgr.TipChangedAt,
 			}
 
 			// Solo mode: each channel gets its own coinbase, built fresh

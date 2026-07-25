@@ -82,7 +82,12 @@ type Config struct {
 	OnShare    shareSubmitCallback
 	OnStale      func(workerName string)
 	OnRejected   func(workerName string)
-	LowDiffGrace time.Duration
+	LowDiffGrace  time.Duration
+	StaleGrace    time.Duration
+	// TipChangedAt returns when the current block tip last changed.
+	// Used for stale share grace period — accept shares on old jobs if
+	// the block tip changed within StaleGrace seconds.
+	TipChangedAt  func() time.Time
 
 	// CoinbaseBuilder, if set, enables solo mode: each channel's coinbase
 	// is built individually from its UserIdentity instead of using the
@@ -278,7 +283,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.OnStale, srv.cfg.OnRejected, srv.cfg.CoinbaseBuilder,
 		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.StartDiffFunc, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.LowDiffGrace, srv, srv.cfg.OnDisconnect, srv.cfg.OnDisconnectWithDiff, srv.cfg.OnConnect)
+		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.LowDiffGrace, srv.cfg.StaleGrace, srv.cfg.TipChangedAt, srv, srv.cfg.OnDisconnect, srv.cfg.OnDisconnectWithDiff, srv.cfg.OnConnect)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess

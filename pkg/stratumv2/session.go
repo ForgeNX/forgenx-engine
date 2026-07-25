@@ -120,6 +120,8 @@ type Session struct {
 	vardiffCfg        *stratum.VarDiffConfig
 	vardiffOnNewBlock bool
 	lowDiffGrace      time.Duration
+	staleGrace        time.Duration
+	tipChangedAt      func() time.Time
 	startDiff         float64
 	startDiffFunc     func(workerName string) float64
 
@@ -171,6 +173,8 @@ func newSession(
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
 	lowDiffGrace time.Duration,
+	staleGrace time.Duration,
+	tipChangedAt func() time.Time,
 	srv *Server,
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time),
 	onDisconnectWithDiff func(workerName string, difficulty float64),
@@ -190,6 +194,8 @@ func newSession(
 		vardiffCfg:               vardiffCfg,
 		vardiffOnNewBlock:        vardiffOnNewBlock,
 		lowDiffGrace:             lowDiffGrace,
+		staleGrace:               staleGrace,
+		tipChangedAt:             tipChangedAt,
 		startDiff:                startDiff,
 		startDiffFunc:            startDiffFunc,
 		connectionTimeoutSeconds: connectionTimeoutSeconds,
@@ -513,6 +519,16 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 
 	// Validate job ID.
 	if !ch.IsJobValid(share.JobID) {
+		// Stale grace period: accept shares on old jobs if the block tip
+		// changed within staleGrace seconds (mirrors V1 behaviour)
+		if s.staleGrace > 0 && s.tipChangedAt != nil {
+			if time.Since(s.tipChangedAt()) < s.staleGrace {
+				s.logf("[sv2] session %s ch=%d: %s stale share accepted within grace period",
+					s.id, share.ChannelID, ch.UserIdentity())
+				// Fall through to normal share processing
+				goto processShare
+			}
+		}
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
@@ -520,6 +536,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
 
+processShare:
 	// Look up the template for this specific job ID.
 	s.templateMu.RLock()
 	tmpl := s.templates[share.JobID]
@@ -629,6 +646,14 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 	}
 
 	if !ch.IsJobValid(share.JobID) {
+		// Stale grace period: accept shares on old jobs if block tip changed recently
+		if s.staleGrace > 0 && s.tipChangedAt != nil {
+			if time.Since(s.tipChangedAt()) < s.staleGrace {
+				s.logf("[sv2] session %s ch=%d: %s stale share accepted within grace period",
+					s.id, share.ChannelID, ch.UserIdentity())
+				goto processExtendedShare
+			}
+		}
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
 		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
@@ -636,6 +661,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
 
+processExtendedShare:
 	s.templateMu.RLock()
 	tmpl := s.templates[share.JobID]
 	s.templateMu.RUnlock()
