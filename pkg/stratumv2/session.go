@@ -710,8 +710,10 @@ processExtendedShare:
 		}
 		if !graceAccepted {
 			ch.RecordRejection()
-			s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.0f poolDiff=%.0f",
-				s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty())
+			s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.6f poolDiff=%.0f extranonce=%x",
+				s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty(), share.Extranonce)
+			s.logf("[sv2] debug: coinb1_len=%d coinb2_len=%d en1=%x merkle_branches=%d",
+				len(tmpl.Coinbase1), len(tmpl.Coinbase2), ch.Extranonce1Bytes(), len(tmpl.MerkleBranch))
 			if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
 			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
