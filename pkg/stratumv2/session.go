@@ -157,6 +157,29 @@ func (s *Session) logf(format string, args ...interface{}) {
 	}
 }
 
+// logShareResult emits the vardiff diagnostic lines (if any) and the
+// "Share accepted" line for a validated share. Shared by both the standard
+// and extended submit handlers so the two logging paths never drift.
+func (s *Session) logShareResult(ch *Channel, channelID uint32, result *ShareResult, vdResult stratum.VarDiffResult) {
+	if diag := vdResult.DiagString(); diag != "" {
+		if vdResult.Adjusted {
+			reason := "shares_too_fast"
+			if vdResult.ClampedDiff < vdResult.CurrentDiff {
+				reason = "shares_too_slow"
+			}
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF DIAG: %s",
+				s.id, ch.ID(), ch.UserIdentity(), diag)
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty adjustment pending (will send with next job): %.0f -> %.0f (%s)",
+				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, vdResult.ClampedDiff, reason)
+		} else if vdResult.Reason == "within_variance" {
+			s.logf("[sv2] session %s ch=%d: %s VARDIFF: No adjustment - within_variance (difficulty stays at %.0f) | %s",
+				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, diag)
+		}
+	}
+	s.logf("[sv2] session %s ch=%d: %s Share accepted (diff %.2f) hash=%s block=%v",
+		s.id, channelID, ch.UserIdentity(), result.Difficulty, result.HashHex[:16], result.MeetsBlock)
+}
+
 // newSession wraps an already-handshaked conn, plus its transport-phase
 // ciphers, in a Session.
 func newSession(
@@ -598,24 +621,7 @@ processShare:
 	// Valid share.
 	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)
 
-	// GSS-style vardiff diagnostic logging
-	if diag := vdResult.DiagString(); diag != "" {
-		if vdResult.Adjusted {
-			reason := "shares_too_fast"
-			if vdResult.ClampedDiff < vdResult.CurrentDiff {
-				reason = "shares_too_slow"
-			}
-			s.logf("[sv2] session %s ch=%d: %s VARDIFF DIAG: %s",
-				s.id, ch.ID(), ch.UserIdentity(), diag)
-			s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty adjustment pending (will send with next job): %.0f -> %.0f (%s)",
-				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, vdResult.ClampedDiff, reason)
-		} else if vdResult.Reason == "within_variance" {
-			s.logf("[sv2] session %s ch=%d: %s VARDIFF: No adjustment - within_variance (difficulty stays at %.0f) | %s",
-				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, diag)
-		}
-	}
-	s.logf("[sv2] session %s ch=%d: %s Share accepted (diff %.2f) hash=%s block=%v",
-		s.id, share.ChannelID, ch.UserIdentity(), result.Difficulty, result.HashHex[:16], result.MeetsBlock)
+	s.logShareResult(ch, share.ChannelID, result, vdResult)
 
 	// Notify the engine (records stats synchronously; block submission,
 	// if any, is dispatched to its own goroutine inside the callback).
@@ -720,23 +726,7 @@ processExtendedShare:
 
 	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)
 
-	if diag := vdResult.DiagString(); diag != "" {
-		if vdResult.Adjusted {
-			reason := "shares_too_fast"
-			if vdResult.ClampedDiff < vdResult.CurrentDiff {
-				reason = "shares_too_slow"
-			}
-			s.logf("[sv2] session %s ch=%d: %s VARDIFF DIAG: %s",
-				s.id, ch.ID(), ch.UserIdentity(), diag)
-			s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty adjustment pending (will send with next job): %.0f -> %.0f (%s)",
-				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, vdResult.ClampedDiff, reason)
-		} else if vdResult.Reason == "within_variance" {
-			s.logf("[sv2] session %s ch=%d: %s VARDIFF: No adjustment - within_variance (difficulty stays at %.0f) | %s",
-				s.id, ch.ID(), ch.UserIdentity(), vdResult.CurrentDiff, diag)
-		}
-	}
-	s.logf("[sv2] session %s ch=%d: %s Share accepted (diff %.2f) hash=%s block=%v",
-		s.id, share.ChannelID, ch.UserIdentity(), result.Difficulty, result.HashHex[:16], result.MeetsBlock)
+	s.logShareResult(ch, share.ChannelID, result, vdResult)
 
 	if s.onShare != nil {
 		adapted := &MsgSubmitSharesStandardFields{
