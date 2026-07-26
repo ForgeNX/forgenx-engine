@@ -59,7 +59,6 @@ type JobManager struct {
 	tipChangedAt    time.Time
 	lastCleanJobAt   time.Time
 	lastBroadcastTip string
-	cleanJobMu      sync.Mutex
 	jobCounter     uint64
 	maxJobHistory int
 	mu            sync.RWMutex

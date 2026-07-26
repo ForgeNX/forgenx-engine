@@ -215,12 +215,14 @@ func (c *Channel) ExtranonceSize() uint16 {
 // ID returns the channel's server-assigned identifier.
 func (c *Channel) ID() uint32 { return c.id }
 
-// UserIdentity returns the miner-reported worker name.
+// Difficulty returns the channel's current pool difficulty. Alias for
+// PoolDifficulty, kept because several call sites use this shorter name.
 func (c *Channel) Difficulty() float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.poolDifficulty
 }
+// UserIdentity returns the miner-reported worker name.
 func (c *Channel) UserIdentity() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -416,8 +418,8 @@ func (c *Channel) RecordRejection() {
 
 // Stats returns a snapshot of the channel's cumulative statistics.
 func (c *Channel) BestDifficulty() float64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.bestDifficulty
 }
 
