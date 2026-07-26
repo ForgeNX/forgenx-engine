@@ -302,10 +302,13 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		jm.addrMu.RUnlock()
 
 		addressCoinb2s = make(map[string]string, len(addresses))
+		// donationOutputs depends only on the template, not the address —
+		// compute once instead of per-address inside the loop.
+		donOuts := jm.donationOutputs(template)
 		for i, addr := range addresses {
 			c1, c2, err := jm.coin.BuildCoinbase(
 				template, addr, jm.network, jm.coinbaseText,
-				jm.extraNonce1Size, jm.extraNonce2Size, jm.donationOutputs(template),
+				jm.extraNonce1Size, jm.extraNonce2Size, donOuts,
 			)
 			if err != nil {
 				jm.logger.Error("building coinbase for address %s: %v", addr, err)
@@ -320,7 +323,7 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		if coinb1 == "" && jm.address != "" {
 			coinb1, _, _ = jm.coin.BuildCoinbase(
 				template, jm.address, jm.network, jm.coinbaseText,
-				jm.extraNonce1Size, jm.extraNonce2Size, jm.donationOutputs(template),
+				jm.extraNonce1Size, jm.extraNonce2Size, donOuts,
 			)
 		}
 	} else {
