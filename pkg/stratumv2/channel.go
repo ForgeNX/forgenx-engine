@@ -443,10 +443,14 @@ func (c *Channel) Close() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Extranonce Pool
 //
-// The server allocates 4-byte extranonce1 values from a 32-bit counter.
-// Each channel gets a unique value; when the session closes, values are
-// returned for re-use (simple incrementing counter, no recycling needed
-// in practice for a solo-mining server with few concurrent connections).
+// The server allocates 4-byte extranonce1 values from a monotonic 32-bit
+// counter. Each channel gets a unique value; values are NOT recycled when a
+// session closes — the counter simply increments. This is deliberate: for a
+// solo-mining server with few concurrent connections, recycling adds
+// complexity for no benefit, and the counter would take ~4.3 billion channel
+// opens to wrap. The pool is process-global, so all coins share one counter;
+// this is harmless because extranonce1 only needs to be unique per active
+// session, not globally.
 // ──────────────────────────────────────────────────────────────────────────────
 
 type extranoncePool struct {

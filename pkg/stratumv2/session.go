@@ -766,6 +766,15 @@ processExtendedShare:
 // maxTemplateHistory is the number of past job templates retained per session.
 // Mirrors V1's JobManager maxJobHistory. Keeping more templates means miners
 // can submit shares for recent jobs without stale rejections on job rotation.
+//
+// NOTE: this bounds how far back the stale-share grace period (staleGrace) can
+// actually reach. A share accepted by the grace window still needs its template
+// present in s.templates to validate — if the job has already been evicted here,
+// the share is rejected as stale regardless of the grace window. So staleGrace
+// and this constant must be tuned together: on a fast chain (e.g. DGB ~15s
+// blocks), 20 templates ≈ 5 minutes of history, which comfortably exceeds any
+// reasonable staleGrace. If staleGrace is ever raised beyond that horizon,
+// raise this too.
 const maxTemplateHistory = 20 // keep in sync with engine.JobManager maxJobHistory
 
 // UpdateTemplate stores the latest block template and broadcasts new work to
