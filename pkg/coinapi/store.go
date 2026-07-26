@@ -167,6 +167,13 @@ func (s *Store) GetWorkerBestDiffs(symbol string) map[string]WorkerInfo {
 	return result
 }
 
+// GetPoolBestAllTime returns the highest all-time best share difficulty across all workers for a coin.
+func (s *Store) GetPoolBestAllTime(symbol string) float64 {
+	var best float64
+	s.db.QueryRow(`SELECT COALESCE(MAX(best_all_time), 0) FROM worker_best_diff WHERE coin_symbol=?`, symbol).Scan(&best)
+	return best
+}
+
 func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest float64) float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
