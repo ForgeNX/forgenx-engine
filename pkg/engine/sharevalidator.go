@@ -12,8 +12,10 @@ package engine
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"os"
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/coin"
@@ -292,12 +294,20 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 		// Build and submit the block
 		blockHex, err := sv.coin.BuildBlock(header, coinbaseBytes, jobData.Template)
 		if err != nil {
-			sv.logger.Error("building block: %v", err)
+			// A block was found but could not be assembled. Catastrophic for
+			// a solo pool — log loudly and persist for diagnosis.
+			sv.logger.Error("*** BLOCK BUILD FAILED — POSSIBLE LOST BLOCK *** height=%d hash=%s worker=%s err=%v",
+				jobData.Template.Height, blockHashHex, share.WorkerName, err)
+			sv.persistLostBlock(jobData.Template.Height, blockHashHex, share.WorkerName, "build-failed", "")
 			return nil // share is still valid
 		}
 
 		if err := sv.rpcClient.SubmitBlock(blockHex); err != nil {
-			sv.logger.Error("submitting block: %v", err)
+			// SubmitBlock already retried transient failures. Persist the
+			// full block hex so it can be manually resubmitted.
+			sv.logger.Error("*** BLOCK SUBMIT FAILED — POSSIBLE LOST BLOCK *** height=%d hash=%s worker=%s err=%v",
+				jobData.Template.Height, blockHashHex, share.WorkerName, err)
+			sv.persistLostBlock(jobData.Template.Height, blockHashHex, share.WorkerName, "submit-failed", blockHex)
 			return nil
 		}
 
@@ -321,6 +331,39 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 	}
 
 	return nil
+}
+
+// persistLostBlock writes a record of a block that was found but could not be
+// submitted, so it is never silently lost. The record includes the full block
+// hex (for submit-failed cases) so it can be manually resubmitted with
+// `bitcoin-cli submitblock <hex>`. Failures here are logged but not fatal —
+// the in-log record is the primary safety net.
+func (sv *ShareValidator) persistLostBlock(height int64, hash, worker, reason, blockHex string) {
+	dir := "/pool/lost-blocks"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		sv.logger.Error("could not create lost-blocks dir: %v", err)
+		return
+	}
+	fname := fmt.Sprintf("%s/%s-h%d-%s.json", dir, sv.symbol, height, hash[:16])
+	rec := map[string]interface{}{
+		"symbol":    sv.symbol,
+		"height":    height,
+		"hash":      hash,
+		"worker":    worker,
+		"reason":    reason,
+		"block_hex": blockHex,
+		"found_at":  time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		sv.logger.Error("could not marshal lost-block record: %v", err)
+		return
+	}
+	if err := os.WriteFile(fname, data, 0o644); err != nil {
+		sv.logger.Error("could not write lost-block record %s: %v", fname, err)
+		return
+	}
+	sv.logger.Error("*** LOST-BLOCK RECORD WRITTEN: %s — resubmit manually if needed ***", fname)
 }
 
 // swapEndianWords performs word-level (4-byte) endian swapping on a hex string.

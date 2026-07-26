@@ -191,17 +191,45 @@ func (c *Client) GetBlockTemplate(rules []string) (*BlockTemplate, error) {
 }
 
 // SubmitBlock submits a solved block to the network.
+//
+// bitcoind-family submitblock returns JSON null on success, or a reason on
+// rejection. The reason is normally a string ("duplicate", "inconclusive",
+// "high-hash", ...) but some forks return a structured object. We treat ANY
+// non-null result as a rejection so a structured error is never silently
+// swallowed — for a solo pool a dropped valid block is the worst outcome.
+//
+// Because block submission is the single most important RPC call, it is
+// retried a few times on transient transport errors (the retry does NOT
+// apply to an explicit node rejection, which is authoritative).
 func (c *Client) SubmitBlock(blockHex string) error {
-	result, err := c.call("submitblock", []interface{}{blockHex})
-	if err != nil {
-		return err
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result, err := c.call("submitblock", []interface{}{blockHex})
+		if err != nil {
+			// Transport / RPC-layer error — retry.
+			lastErr = err
+			c.logger.Warn("submitblock attempt %d/%d failed (will retry): %v", attempt, maxAttempts, err)
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			continue
+		}
+		// A JSON null result means success.
+		if len(result) == 0 || string(result) == "null" {
+			return nil
+		}
+		// Non-null result: the node is telling us why it rejected the block.
+		var resultStr string
+		if err := json.Unmarshal(result, &resultStr); err == nil {
+			if resultStr == "" {
+				return nil // empty string — treat as success
+			}
+			return fmt.Errorf("submitblock rejected: %s", resultStr)
+		}
+		// Structured (non-string) rejection — surface the raw JSON rather
+		// than silently dropping the block.
+		return fmt.Errorf("submitblock rejected (structured response): %s", string(result))
 	}
-	// submitblock returns null on success, or an error string
-	var resultStr string
-	if err := json.Unmarshal(result, &resultStr); err == nil && resultStr != "" {
-		return fmt.Errorf("submitblock rejected: %s", resultStr)
-	}
-	return nil
+	return fmt.Errorf("submitblock failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // GetBestBlockHash returns the hash of the best (tip) block.
