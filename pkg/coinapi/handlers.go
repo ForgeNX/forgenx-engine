@@ -389,6 +389,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 
 	// Pool stats from miners
 	bestSessionDiff := 0.0
+	bestAllTimeDiff := 0.0
 	lastShareTime := ""
 	workerCount := 0
 	totalHashrate := 0.0
@@ -404,6 +405,9 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 					}
 					if bd := getFloat(m, "best_difficulty"); bd > bestSessionDiff {
 						bestSessionDiff = bd
+					if abt := getFloat(m, "best_all_time"); abt > bestAllTimeDiff {
+						bestAllTimeDiff = abt
+					}
 					}
 					hr := getFloat(m, "hashrate_5m")
 					if hr == 0 {
@@ -449,6 +453,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"last_block_time":   getString(coinStats, "last_block_time"),
 			"uptime_seconds":    uptime,
 			"best_session_diff": bestSessionDiff,
+			"best_all_time_diff": bestAllTimeDiff,
 			"last_share_time":   lastShareTime,
 			"hashrate":          totalHashrate,
 			"max_hashrate":      c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
