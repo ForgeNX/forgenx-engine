@@ -77,6 +77,7 @@ type JobManager struct {
 	onNewJob       func(*stratum.Job)
 	onNewJobV2     func(NewJobEvent)
 	latestJobEvent *NewJobEvent
+	latestJob      *JobData // newest job, tracked to avoid O(n) scans
 	logger         *logging.Logger
 	stopCh         chan struct{}
 	wg             sync.WaitGroup
@@ -193,17 +194,10 @@ func (jm *JobManager) CurrentTip() string {
 func (jm *JobManager) LatestTemplate() *noderpc.BlockTemplate {
 	jm.mu.RLock()
 	defer jm.mu.RUnlock()
-
-	var latest *JobData
-	for _, jd := range jm.jobs {
-		if latest == nil || jd.Created.After(latest.Created) {
-			latest = jd
-		}
-	}
-	if latest == nil {
+	if jm.latestJob == nil {
 		return nil
 	}
-	return latest.Template
+	return jm.latestJob.Template
 }
 
 // TipChangedAt returns when the current tip was first seen.
@@ -376,6 +370,7 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 	}
 
 	jm.jobs[jobID] = jobData
+	jm.latestJob = jobData
 
 	// Prune old jobs
 	if len(jm.jobs) > jm.maxJobHistory {
@@ -541,17 +536,11 @@ func (jm *JobManager) GetJobForAddress(address string) *stratum.Job {
 	jm.mu.RLock()
 	defer jm.mu.RUnlock()
 
-	// Find the most recent job
-	var latest *JobData
-	for _, jd := range jm.jobs {
-		if latest == nil || jd.Created.After(latest.Created) {
-			latest = jd
-		}
-	}
+	// Newest job is tracked directly to avoid an O(n) scan.
+	latest := jm.latestJob
 	if latest == nil {
 		return nil
 	}
-
 	coinb2, ok := latest.AddressCoinb2s[address]
 	if !ok {
 		return nil
