@@ -57,12 +57,15 @@ func (e *Engine) WatchCoins(dir string, donation config.DonationConfig) error {
 				// ===== CREATE / WRITE =====
 				if event.Op&(fsnotify.Create|fsnotify.Write) != 0 {
 
-					// Give the editor time to finish writing the file
-					time.Sleep(200 * time.Millisecond)
-
-					cfg, err := loadCoinConfig(event.Name)
+					// Config writes are not atomic from fsnotify's view: a Write
+					// event can fire mid-write, leaving loadCoinConfig to parse
+					// truncated JSON. Rather than guess a fixed delay, retry the
+					// parse a few times — it succeeds the instant the file is
+					// complete and valid, and only gives up after the writer has
+					// clearly failed to produce valid JSON.
+					cfg, err := loadCoinConfigWithRetry(event.Name)
 					if err != nil {
-						e.logger.Error("config load failed: %v", err)
+						e.logger.Error("config load failed after retries: %v", err)
 						continue
 					}
 
@@ -109,6 +112,26 @@ func loadCoinConfig(path string) (*config.CoinConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+// loadCoinConfigWithRetry loads a coin config, retrying briefly to tolerate
+// non-atomic writes: an fsnotify Write event can arrive while the file is
+// still being written, so the first parse may see truncated JSON. Each
+// attempt re-reads and re-parses; it returns as soon as the file is complete
+// and valid. Total worst-case wait is small (~1s) and the common case (file
+// already complete) returns on the first attempt with no delay.
+func loadCoinConfigWithRetry(path string) (*config.CoinConfig, error) {
+	const maxAttempts = 10
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		cfg, err := loadCoinConfig(path)
+		if err == nil {
+			return cfg, nil
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 // configSignature computes a SHA256 hash of all meaningful pool config fields,
