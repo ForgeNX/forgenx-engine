@@ -12,6 +12,7 @@ package stratum
 import (
 	"fmt"
 	"math"
+	"sync"
 	"time"
 )
 
@@ -55,6 +56,7 @@ type VarDiff struct {
 	shareTimes   []time.Time // timestamps of last N shares
 	lastRetarget time.Time
 	maxShares    int // max share timestamps to track
+	mu           sync.Mutex // protects currentDiff, shareTimes, lastRetarget
 }
 
 // VarDiffConfig holds configuration for variable difficulty.
@@ -108,6 +110,8 @@ func (v *VarDiff) roundDifficulty(diff float64) float64 {
 
 // CurrentDiff returns the current difficulty.
 func (v *VarDiff) CurrentDiff() float64 {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	return v.currentDiff
 }
 
@@ -115,6 +119,8 @@ func (v *VarDiff) CurrentDiff() float64 {
 // Called after a pending difficulty change is delivered so the new difficulty
 // starts with a clean measurement window.
 func (v *VarDiff) ResetWindow(newDiff float64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.currentDiff = newDiff
 	v.shareTimes = v.shareTimes[:0]
 	v.lastRetarget = time.Now()
@@ -123,6 +129,8 @@ func (v *VarDiff) ResetWindow(newDiff float64) {
 // RecordShare records a share submission timestamp and returns a VarDiffResult
 // describing the retarget decision. Result.Adjusted indicates if difficulty changed.
 func (v *VarDiff) RecordShare() VarDiffResult {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	now := time.Now()
 
 	v.shareTimes = append(v.shareTimes, now)
