@@ -54,14 +54,14 @@ type JobManager struct {
 	extraNonce2Size int
 	pollInterval    time.Duration
 
-	jobs          map[string]*JobData
-	currentTip    string
-	tipChangedAt    time.Time
+	jobs             map[string]*JobData
+	currentTip       string
+	tipChangedAt     time.Time
 	lastCleanJobAt   time.Time
 	lastBroadcastTip string
-	jobCounter     uint64
-	maxJobHistory int
-	mu            sync.RWMutex
+	jobCounter       uint64
+	maxJobHistory    int
+	mu               sync.RWMutex
 
 	// Solo mode
 	soloMode       bool
@@ -85,16 +85,16 @@ type JobManager struct {
 
 // JobManagerConfig holds configuration for the job manager.
 type JobManagerConfig struct {
-	Coin            coin.Coin
-	RPCClient       *noderpc.Client
-	Address         string
-	Network         string
-	CoinbaseText    string
-	ExtraNonceSize  int
-	PollInterval    time.Duration
-	OnNewJob        func(*stratum.Job)
-	OnNewJobV2      func(NewJobEvent)
-	SoloMode        bool
+	Coin             coin.Coin
+	RPCClient        *noderpc.Client
+	Address          string
+	Network          string
+	CoinbaseText     string
+	ExtraNonceSize   int
+	PollInterval     time.Duration
+	OnNewJob         func(*stratum.Job)
+	OnNewJobV2       func(NewJobEvent)
+	SoloMode         bool
 	DonationScript   []byte
 	DonationPercent  float64
 	Donation2Script  []byte
@@ -118,25 +118,25 @@ func NewJobManager(cfg JobManagerConfig) *JobManager {
 	}
 
 	jm := &JobManager{
-		coin:            cfg.Coin,
-		rpcClient:       cfg.RPCClient,
-		address:         cfg.Address,
-		network:         cfg.Network,
-		coinbaseText:    cfg.CoinbaseText,
-		extraNonce1Size: en1Size,
-		extraNonce2Size: en2Size,
-		pollInterval:    cfg.PollInterval,
-		jobs:            make(map[string]*JobData),
-		maxJobHistory:   20, // keep in sync with stratumv2.maxTemplateHistory
-		soloMode:        cfg.SoloMode,
+		coin:             cfg.Coin,
+		rpcClient:        cfg.RPCClient,
+		address:          cfg.Address,
+		network:          cfg.Network,
+		coinbaseText:     cfg.CoinbaseText,
+		extraNonce1Size:  en1Size,
+		extraNonce2Size:  en2Size,
+		pollInterval:     cfg.PollInterval,
+		jobs:             make(map[string]*JobData),
+		maxJobHistory:    20, // keep in sync with stratumv2.maxTemplateHistory
+		soloMode:         cfg.SoloMode,
 		donationScript:   cfg.DonationScript,
 		donationPercent:  cfg.DonationPercent,
 		donation2Script:  cfg.Donation2Script,
 		donation2Percent: cfg.Donation2Percent,
-		onNewJob:        cfg.OnNewJob,
-		onNewJobV2:      cfg.OnNewJobV2,
-		logger:          logging.New(logging.ModuleEngine),
-		stopCh:          make(chan struct{}),
+		onNewJob:         cfg.OnNewJob,
+		onNewJobV2:       cfg.OnNewJobV2,
+		logger:           logging.New(logging.ModuleEngine),
+		stopCh:           make(chan struct{}),
 	}
 	if cfg.SoloMode {
 		jm.connectedAddrs = make(map[string]int)
@@ -383,7 +383,6 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 	if cleanJobs {
 		jm.logger.Info("new block detected at height %d", template.Height)
 	}
-
 
 	// Notify while holding the lock — prevents concurrent calls from double-broadcasting
 	if jm.onNewJob != nil {

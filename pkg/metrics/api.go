@@ -1,4 +1,4 @@
-		/*
+/*
  * Copyright 2026 Scott Walter, MMFP Solutions LLC
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-		"github.com/ForgeNX/forgenx-engine/pkg/logging"
-		"github.com/ForgeNX/forgenx-engine/pkg/stratum"
+	"github.com/ForgeNX/forgenx-engine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
 // SessionProvider returns active sessions grouped by coin symbol.
@@ -27,34 +27,34 @@ type SessionProvider func() map[string][]stratum.SessionInfo
 
 // PoolStatsResponse is the JSON response for GET /stats.
 type PoolStatsResponse struct {
-	PoolName      string               `json:"pool_name"`
-	UptimeSeconds float64              `json:"uptime_seconds"`
+	PoolName      string                `json:"pool_name"`
+	UptimeSeconds float64               `json:"uptime_seconds"`
 	Coins         map[string]*CoinStats `json:"coins"`
 }
 
 // MinerInfo combines live session info with historical worker stats.
 type MinerInfo struct {
-	WorkerName     string    `json:"worker_name"`
-	RemoteAddr     string    `json:"remote_addr"`
-	Difficulty     float64   `json:"difficulty"`
-	ConnectedAt    time.Time `json:"connected_at"`
+	WorkerName            string    `json:"worker_name"`
+	RemoteAddr            string    `json:"remote_addr"`
+	Difficulty            float64   `json:"difficulty"`
+	ConnectedAt           time.Time `json:"connected_at"`
 	SharesAccepted        uint64    `json:"shares_accepted"`
 	SharesRejected        uint64    `json:"shares_rejected"`
 	SharesStale           uint64    `json:"shares_stale"`
-	SessionSharesAccepted  uint64    `json:"session_shares_accepted"`
-	SessionSharesRejected  uint64    `json:"session_shares_rejected"`
-	Protocol               string    `json:"protocol"`
-	BestDifficultySession  float64   `json:"best_difficulty_session"`
-	LastSeenTime           string    `json:"last_seen_time,omitempty"`
-	BlocksFound    uint64    `json:"blocks_found"`
-	LastShareTime  time.Time `json:"last_share_time,omitempty"`
-	BestDifficulty float64   `json:"best_difficulty"`
-	Hashrate1m     float64   `json:"hashrate_1m"`
-	Hashrate5m     float64   `json:"hashrate_5m"`
-	Hashrate15m    float64   `json:"hashrate_15m"`
-	Vendor         string    `json:"vendor,omitempty"`
-	Firmware       string    `json:"firmware,omitempty"`
-	DeviceID       string    `json:"device_id,omitempty"`
+	SessionSharesAccepted uint64    `json:"session_shares_accepted"`
+	SessionSharesRejected uint64    `json:"session_shares_rejected"`
+	Protocol              string    `json:"protocol"`
+	BestDifficultySession float64   `json:"best_difficulty_session"`
+	LastSeenTime          string    `json:"last_seen_time,omitempty"`
+	BlocksFound           uint64    `json:"blocks_found"`
+	LastShareTime         time.Time `json:"last_share_time,omitempty"`
+	BestDifficulty        float64   `json:"best_difficulty"`
+	Hashrate1m            float64   `json:"hashrate_1m"`
+	Hashrate5m            float64   `json:"hashrate_5m"`
+	Hashrate15m           float64   `json:"hashrate_15m"`
+	Vendor                string    `json:"vendor,omitempty"`
+	Firmware              string    `json:"firmware,omitempty"`
+	DeviceID              string    `json:"device_id,omitempty"`
 }
 
 // MinersResponse is the JSON response for GET /miners.
@@ -71,28 +71,28 @@ type APIServer struct {
 	server          *http.Server
 	mux             *http.ServeMux
 	logger          *logging.Logger
-	startTime 	time.Time
+	startTime       time.Time
 	metricsHandler  http.HandlerFunc
-        fleetHandler http.HandlerFunc
+	fleetHandler    http.HandlerFunc
 }
 
 func (a *APIServer) SetFleetHandler(h http.HandlerFunc) {
-    a.fleetHandler = h
+	a.fleetHandler = h
 }
 
 // NewAPIServer creates a new metrics API server.
 func NewAPIServer(port int, poolName string, stats *Stats) *APIServer {
 	return &APIServer{
-		port:     port,
-		poolName: poolName,
-		stats:    stats,
-		logger:   logging.New(logging.ModuleMetrics),
+		port:      port,
+		poolName:  poolName,
+		stats:     stats,
+		logger:    logging.New(logging.ModuleMetrics),
 		startTime: time.Now(),
 	}
 }
 
 func (a *APIServer) SetMetricsHandler(h http.HandlerFunc) {
-        a.metricsHandler = h
+	a.metricsHandler = h
 }
 
 // SetSessionProvider sets the callback for retrieving active sessions.
@@ -102,46 +102,46 @@ func (a *APIServer) SetSessionProvider(sp SessionProvider) {
 
 // Start begins serving the metrics API.
 func (a *APIServer) Start() error {
-        a.mux = http.NewServeMux()
-        mux := a.mux
+	a.mux = http.NewServeMux()
+	mux := a.mux
 
-        // Existing endpoints
-        mux.HandleFunc("/stats", a.handleStats)
-        mux.HandleFunc("/miners", a.handleMiners)
-        mux.HandleFunc("/health", a.handleHealth)
-        mux.HandleFunc("/metrics", a.metricsHandler)
+	// Existing endpoints
+	mux.HandleFunc("/stats", a.handleStats)
+	mux.HandleFunc("/miners", a.handleMiners)
+	mux.HandleFunc("/health", a.handleHealth)
+	mux.HandleFunc("/metrics", a.metricsHandler)
 
-        // 🔥 NEW: Engine Fleet API
-        mux.HandleFunc("/api/engine/fleet", func(w http.ResponseWriter, r *http.Request) {
-            if a.fleetHandler != nil {
-                a.fleetHandler(w, r)
-                return
-            }
-            http.Error(w, "fleet handler not set", http.StatusInternalServerError)
-        })
+	// 🔥 NEW: Engine Fleet API
+	mux.HandleFunc("/api/engine/fleet", func(w http.ResponseWriter, r *http.Request) {
+		if a.fleetHandler != nil {
+			a.fleetHandler(w, r)
+			return
+		}
+		http.Error(w, "fleet handler not set", http.StatusInternalServerError)
+	})
 
-        // 🔥 NEW: Serve UI
-        staticDir := resolveStaticDir()
-        mux.HandleFunc("/disconnects", a.handleDisconnects)
-        mux.HandleFunc("/disconnects/", a.handleDeleteDisconnect)
-        mux.HandleFunc("/connects", a.handleConnects)
-        mux.HandleFunc("/connects/", a.handleDeleteConnect)
-        mux.Handle("/", serveStaticUI(staticDir))
+	// 🔥 NEW: Serve UI
+	staticDir := resolveStaticDir()
+	mux.HandleFunc("/disconnects", a.handleDisconnects)
+	mux.HandleFunc("/disconnects/", a.handleDeleteDisconnect)
+	mux.HandleFunc("/connects", a.handleConnects)
+	mux.HandleFunc("/connects/", a.handleDeleteConnect)
+	mux.Handle("/", serveStaticUI(staticDir))
 
-        a.server = &http.Server{
-                Addr:    fmt.Sprintf(":%d", a.port),
-                Handler: mux,
-        }
+	a.server = &http.Server{
+		Addr:    fmt.Sprintf(":%d", a.port),
+		Handler: mux,
+	}
 
-        a.logger.Info("Metrics API listening on :%d", a.port)
+	a.logger.Info("Metrics API listening on :%d", a.port)
 
-        go func() {
-                if err := a.server.ListenAndServe(); err != http.ErrServerClosed {
-                        a.logger.Error("metrics API error: %v", err)
-                }
-        }()
+	go func() {
+		if err := a.server.ListenAndServe(); err != http.ErrServerClosed {
+			a.logger.Error("metrics API error: %v", err)
+		}
+	}()
 
-        return nil
+	return nil
 }
 
 func resolveStaticDir() string {
@@ -354,20 +354,20 @@ func (a *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (a *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
-        miners := 0
-        if a.sessionProvider != nil {
-                sessions := a.sessionProvider()
-                for _, list := range sessions {
-                        miners += len(list)
-                }
-        }
+	miners := 0
+	if a.sessionProvider != nil {
+		sessions := a.sessionProvider()
+		for _, list := range sessions {
+			miners += len(list)
+		}
+	}
 
-        response := map[string]interface{}{
-                "pool_name":        a.poolName,
-                "uptime_seconds":   time.Since(a.startTime).Seconds(),
-                "miners_connected": miners,
-        }
+	response := map[string]interface{}{
+		"pool_name":        a.poolName,
+		"uptime_seconds":   time.Since(a.startTime).Seconds(),
+		"miners_connected": miners,
+	}
 
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(response)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

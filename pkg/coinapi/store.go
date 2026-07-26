@@ -12,9 +12,9 @@ import (
 
 // Store handles all SQLite persistence for coin app data.
 type Store struct {
-	mu           sync.Mutex
-	db           *sql.DB
-	maxHashrate  map[string]float64  // in-memory peak pool hashrate per coin
+	mu          sync.Mutex
+	db          *sql.DB
+	maxHashrate map[string]float64 // in-memory peak pool hashrate per coin
 }
 
 func NewStore(path string) (*Store, error) {
@@ -250,8 +250,12 @@ func (s *Store) GetWorkerShares48hLive(symbol, workerName string, currentValid, 
 	}
 	v := currentValid - minValid.Int64
 	i := currentInvalid - minInvalid.Int64
-	if v < 0 { v = 0 }
-	if i < 0 { i = 0 }
+	if v < 0 {
+		v = 0
+	}
+	if i < 0 {
+		i = 0
+	}
 	return ShareCounts{Valid: v, Invalid: i}
 }
 
@@ -264,7 +268,9 @@ func (s *Store) GetWorkerShares48h(symbol string) map[string]ShareCounts {
 		FROM worker_shares
 		WHERE coin_symbol=? AND snapshot_time >= datetime('now','-48 hours')
 		GROUP BY worker_name`, symbol)
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 	defer rows.Close()
 	result := make(map[string]ShareCounts)
 	for rows.Next() {
@@ -319,7 +325,9 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 		COALESCE(block_hash,''), COALESCE(block_time,''),
 		COALESCE(miner_address,''), shares_since_last, luck_percent, created_at
 		FROM blocks WHERE coin_symbol=? ORDER BY height DESC LIMIT ?`, symbol, limit)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var blocks []Block
 	for rows.Next() {

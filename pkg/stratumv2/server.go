@@ -79,15 +79,15 @@ type Config struct {
 	// OnShare is called (in a goroutine) for every accepted share.
 	// If the share's ShareResult.MeetsBlock is true, the engine should
 	// submit the block to the node via RPC.
-	OnShare    shareSubmitCallback
+	OnShare      shareSubmitCallback
 	OnStale      func(workerName string)
 	OnRejected   func(workerName string)
-	LowDiffGrace  time.Duration
-	StaleGrace    time.Duration
+	LowDiffGrace time.Duration
+	StaleGrace   time.Duration
 	// TipChangedAt returns when the current block tip last changed.
 	// Used for stale share grace period — accept shares on old jobs if
 	// the block tip changed within StaleGrace seconds.
-	TipChangedAt  func() time.Time
+	TipChangedAt func() time.Time
 
 	// CoinbaseBuilder, if set, enables solo mode: each channel's coinbase
 	// is built individually from its UserIdentity instead of using the
@@ -129,10 +129,10 @@ type Config struct {
 	Logger sv2Logger
 	// OnDisconnect is called when a worker disconnects, with the worker name
 	// and remote address. Optional.
-	OnDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
-	OnConnect    func(workerName, remoteAddr string)
+	OnDisconnect         func(workerName, remoteAddr string, connectedAt time.Time)
+	OnConnect            func(workerName, remoteAddr string)
 	OnDisconnectWithDiff func(workerName string, difficulty float64)
-	StartDiffFunc func(workerName string) float64 // optional: returns per-worker start diff
+	StartDiffFunc        func(workerName string) float64 // optional: returns per-worker start diff
 }
 
 // Server is the SV2 Mining Protocol server.
@@ -500,11 +500,11 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 		for _, ch := range sess.Channels() {
 			accepted, rejected, _ := ch.Stats()
 			out = append(out, stratum.SessionInfo{
-				ID:          fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
-				WorkerName:  ch.UserIdentity(),
-				RemoteAddr:  sess.RemoteAddr(),
-				Difficulty:  ch.Difficulty(),
-				ConnectedAt: sess.ConnectedAt(),
+				ID:             fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
+				WorkerName:     ch.UserIdentity(),
+				RemoteAddr:     sess.RemoteAddr(),
+				Difficulty:     ch.Difficulty(),
+				ConnectedAt:    sess.ConnectedAt(),
 				State:          "active",
 				Protocol:       "v2",
 				SharesAccepted: accepted,

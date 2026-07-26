@@ -97,17 +97,17 @@ type Session struct {
 
 	// Job template history keyed by JobID — mirrors V1 JobManager job map.
 	// Allows shares to find their template even after newer jobs broadcast.
-	templateMu   sync.RWMutex
-	templates    map[uint32]*JobTemplate
-	lastJobID    uint32
+	templateMu sync.RWMutex
+	templates  map[uint32]*JobTemplate
+	lastJobID  uint32
 
 	// Callback to the engine when a share / block solution is found.
-	onShare      shareSubmitCallback
-	onStale      func(workerName string)
-	onRejected   func(workerName string)
-	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time)
+	onShare              shareSubmitCallback
+	onStale              func(workerName string)
+	onRejected           func(workerName string)
+	onDisconnect         func(workerName, remoteAddr string, connectedAt time.Time)
 	onDisconnectWithDiff func(workerName string, difficulty float64)
-	onConnect    func(workerName, remoteAddr string)
+	onConnect            func(workerName, remoteAddr string)
 
 	// Solo-mode coinbase builder. Nil in pool mode — channels then use the
 	// template's shared Coinbase1/Coinbase2 unmodified.
@@ -185,9 +185,9 @@ func (s *Session) logShareResult(ch *Channel, channelID uint32, result *ShareRes
 func newSession(
 	conn net.Conn,
 	send, recv *sv2TransportCipher,
-	onShare     shareSubmitCallback,
-	onStale     func(workerName string),
-	onRejected  func(workerName string),
+	onShare shareSubmitCallback,
+	onStale func(workerName string),
+	onRejected func(workerName string),
 	coinbaseBuilder CoinbaseBuilderFunc,
 	vardiffCfg *stratum.VarDiffConfig,
 	vardiffOnNewBlock bool,
@@ -201,7 +201,7 @@ func newSession(
 	srv *Server,
 	onDisconnect func(workerName, remoteAddr string, connectedAt time.Time),
 	onDisconnectWithDiff func(workerName string, difficulty float64),
-	onConnect    func(workerName, remoteAddr string),
+	onConnect func(workerName, remoteAddr string),
 ) *Session {
 	return &Session{
 		id:                       conn.RemoteAddr().String(),
@@ -364,7 +364,9 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	s.mu.Unlock()
 
 	startD := s.startDiff
-	if s.startDiffFunc != nil { startD = s.startDiffFunc(req.UserIdentity) }
+	if s.startDiffFunc != nil {
+		startD = s.startDiffFunc(req.UserIdentity)
+	}
 	ch, err := newChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, startD)
 	if err != nil {
 		resp, _ := EncodeOpenStandardMiningChannelError(req.RequestID, "internal-error")
@@ -418,12 +420,11 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	} else if tmpl := s.srv.LatestTemplate(); tmpl == nil {
 		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
 	} else {
-			initTmpl := *tmpl // copy so we don't mutate the cached template
-			initTmpl.IsFutureJob = false
-			if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
-				s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
-			} else
-		if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
+		initTmpl := *tmpl // copy so we don't mutate the cached template
+		initTmpl.IsFutureJob = false
+		if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
+			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
+		} else if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		} else {
 			s.logf("[sv2] session %s: initial job sent successfully", s.id)
@@ -459,7 +460,9 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 	s.logf("[sv2] session %s: OpenExtendedMiningChannel requested MinExtranonceSize=%d", s.id, req.MinExtranonceSize)
 	s.logf("[sv2] session %s: OpenExtendedMiningChannel requested MinExtranonceSize=%d", s.id, req.MinExtranonceSize)
 	startD2 := s.startDiff
-	if s.startDiffFunc != nil { startD2 = s.startDiffFunc(req.UserIdentity) }
+	if s.startDiffFunc != nil {
+		startD2 = s.startDiffFunc(req.UserIdentity)
+	}
 	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, startD2, req.MinExtranonceSize)
 	if err != nil {
 		resp, _ := EncodeOpenExtendedMiningChannelError(req.RequestID, "internal-error")
@@ -554,7 +557,9 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 		}
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
-		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
+		if s.onStale != nil {
+			s.onStale(ch.UserIdentity())
+		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -568,7 +573,9 @@ processShare:
 	if tmpl == nil {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
-		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
+		if s.onStale != nil {
+			s.onStale(ch.UserIdentity())
+		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -610,9 +617,11 @@ processShare:
 		}
 		if !graceAccepted {
 			ch.RecordRejection()
-				s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.0f poolDiff=%.0f",
-					s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty())
-			if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
+			s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.0f poolDiff=%.0f",
+				s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty())
+			if s.onRejected != nil {
+				s.onRejected(ch.UserIdentity())
+			}
 			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 		}
@@ -663,7 +672,9 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 		}
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
-		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
+		if s.onStale != nil {
+			s.onStale(ch.UserIdentity())
+		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -676,7 +687,9 @@ processExtendedShare:
 	if tmpl == nil {
 		ch.RecordRejection()
 		s.logf("[sv2] session %s ch=%d: %s Share rejected (stale-share) job=%d", s.id, share.ChannelID, ch.UserIdentity(), share.JobID)
-		if s.onStale != nil { s.onStale(ch.UserIdentity()) }
+		if s.onStale != nil {
+			s.onStale(ch.UserIdentity())
+		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
 		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 	}
@@ -718,7 +731,9 @@ processExtendedShare:
 			ch.RecordRejection()
 			s.logf("[sv2] session %s ch=%d: %s Share rejected (low-difficulty) hash=%s shareDiff=%.0f poolDiff=%.0f",
 				s.id, share.ChannelID, ch.UserIdentity(), result.HashHex[:16], result.Difficulty, ch.PoolDifficulty())
-			if s.onRejected != nil { s.onRejected(ch.UserIdentity()) }
+			if s.onRejected != nil {
+				s.onRejected(ch.UserIdentity())
+			}
 			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
 			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
 		}
@@ -1026,7 +1041,7 @@ func (s *Session) ConnectedAt() time.Time {
 	defer s.mu.RUnlock()
 	return s.connectedAt
 }
-func (s *Session) Vendor()   string { s.mu.RLock(); defer s.mu.RUnlock(); return s.vendor }
+func (s *Session) Vendor() string   { s.mu.RLock(); defer s.mu.RUnlock(); return s.vendor }
 func (s *Session) Firmware() string { s.mu.RLock(); defer s.mu.RUnlock(); return s.firmware }
 func (s *Session) DeviceID() string { s.mu.RLock(); defer s.mu.RUnlock(); return s.deviceID }
 func (s *Session) Channels() []*Channel {

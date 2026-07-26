@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
-	"time"
 	"sync/atomic"
+	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
@@ -108,8 +108,8 @@ type Channel struct {
 	pendingSharesAcc uint64 // accumulated share difficulty since last ack
 
 	// Statistics
-	sharesAccepted  uint64
-	bestDifficulty  float64
+	sharesAccepted uint64
+	bestDifficulty float64
 	sharesRejected uint64
 	totalDiff      float64
 
@@ -222,6 +222,7 @@ func (c *Channel) Difficulty() float64 {
 	defer c.mu.RUnlock()
 	return c.poolDifficulty
 }
+
 // UserIdentity returns the miner-reported worker name.
 func (c *Channel) UserIdentity() string {
 	c.mu.RLock()

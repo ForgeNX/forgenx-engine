@@ -24,9 +24,9 @@ func init() {
 	Register("digibyte", &DigiByte{})
 }
 
-func (d *DigiByte) Name() string      { return "DigiByte" }
-func (d *DigiByte) Symbol() string    { return "DGB" }
-func (d *DigiByte) Algorithm() string { return "sha256d" }
+func (d *DigiByte) Name() string         { return "DigiByte" }
+func (d *DigiByte) Symbol() string       { return "DGB" }
+func (d *DigiByte) Algorithm() string    { return "sha256d" }
 func (d *DigiByte) SupportsSegWit() bool { return true }
 
 func (d *DigiByte) Params() CoinParams {

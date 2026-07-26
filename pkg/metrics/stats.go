@@ -119,12 +119,12 @@ type DisconnectInfo struct {
 
 // Stats holds in-memory statistics for all coins.
 type Stats struct {
-	coins              map[string]*CoinStats
-	workers            map[string]map[string]*WorkerStats // coin symbol -> worker name -> stats
-	recentDisconnects  map[string]map[string]DisconnectInfo    // coin symbol -> worker name -> disconnect info
-	recentConnects     map[string]map[string]time.Time              // coin symbol -> worker name -> connect time
-	mu                 sync.RWMutex
-	startedAt          time.Time
+	coins             map[string]*CoinStats
+	workers           map[string]map[string]*WorkerStats   // coin symbol -> worker name -> stats
+	recentDisconnects map[string]map[string]DisconnectInfo // coin symbol -> worker name -> disconnect info
+	recentConnects    map[string]map[string]time.Time      // coin symbol -> worker name -> connect time
+	mu                sync.RWMutex
+	startedAt         time.Time
 }
 
 // Stats new section for sync status and percentage.

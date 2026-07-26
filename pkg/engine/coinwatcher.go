@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/ForgeNX/forgenx-engine/pkg/config"
 	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
+	"github.com/fsnotify/fsnotify"
 )
 
 func (e *Engine) WatchCoins(dir string, donation config.DonationConfig) error {
@@ -132,7 +132,7 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 	return sha256.Sum256(data)
 }
 
-	func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
+func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donation config.DonationConfig) {
 
 	// ALWAYS register coin first (even if syncing/offline)
 	e.stats.InitCoin(symbol)
@@ -178,7 +178,6 @@ func configSignature(cfg *config.CoinConfig) [32]byte {
 		}
 		return
 	}
-
 
 	// Wait for at least 1 peer before starting pool — prevents "not connected" errors
 	netInfo, err := rpc.GetNetworkInfo()

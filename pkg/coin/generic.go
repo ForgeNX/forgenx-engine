@@ -32,9 +32,9 @@ func NewGenericCoin(coinType string, def CoinDefinition) *GenericCoin {
 	}
 }
 
-func (g *GenericCoin) Name() string      { return g.definition.Name }
-func (g *GenericCoin) Symbol() string    { return g.definition.Symbol }
-func (g *GenericCoin) Algorithm() string { return "sha256d" }
+func (g *GenericCoin) Name() string         { return g.definition.Name }
+func (g *GenericCoin) Symbol() string       { return g.definition.Symbol }
+func (g *GenericCoin) Algorithm() string    { return "sha256d" }
 func (g *GenericCoin) SupportsSegWit() bool { return g.definition.Segwit }
 
 func (g *GenericCoin) Params() CoinParams {

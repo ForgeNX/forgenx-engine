@@ -25,9 +25,9 @@ func init() {
 }
 
 func (b *BitcoinII) Name() string         { return "Bitcoin II" }
-func (b *BitcoinII) Symbol() string        { return "BC2" }
-func (b *BitcoinII) Algorithm() string     { return "sha256d" }
-func (b *BitcoinII) SupportsSegWit() bool  { return true }
+func (b *BitcoinII) Symbol() string       { return "BC2" }
+func (b *BitcoinII) Algorithm() string    { return "sha256d" }
+func (b *BitcoinII) SupportsSegWit() bool { return true }
 
 func (b *BitcoinII) Params() CoinParams {
 	return CoinParams{

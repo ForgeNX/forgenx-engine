@@ -122,11 +122,21 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 
 	// Apply coin-level donation overrides before resolving scripts
 	if cfg.Donation != nil {
-		if !cfg.Donation.Enabled { donation.Enabled = false }
-		if cfg.Donation.Percent > 0 { donation.Percent = cfg.Donation.Percent }
-		if cfg.Donation.Enabled2 { donation.Enabled2 = true }
-		if cfg.Donation.Address2 != "" { donation.Address2 = cfg.Donation.Address2 }
-		if cfg.Donation.Percent2 > 0 { donation.Percent2 = cfg.Donation.Percent2 }
+		if !cfg.Donation.Enabled {
+			donation.Enabled = false
+		}
+		if cfg.Donation.Percent > 0 {
+			donation.Percent = cfg.Donation.Percent
+		}
+		if cfg.Donation.Enabled2 {
+			donation.Enabled2 = true
+		}
+		if cfg.Donation.Address2 != "" {
+			donation.Address2 = cfg.Donation.Address2
+		}
+		if cfg.Donation.Percent2 > 0 {
+			donation.Percent2 = cfg.Donation.Percent2
+		}
 	}
 	// Resolve donation output script from AUTHORS file
 	var donationScript []byte
@@ -178,16 +188,21 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 
 	// Create job manager
 	jobMgr := NewJobManager(JobManagerConfig{
-		Coin:            c,
-		RPCClient:       rpcClient,
-		Address:         cfg.Mining.Address,
-		Network:         cfg.Mining.Network,
-		CoinbaseText:    cfg.Mining.CoinbaseText,
-		ExtraNonceSize:  cfg.Mining.ExtraNonceSize,
-		PollInterval:    func() time.Duration { if cfg.TemplateRefreshInterval <= 0 { return 5 * time.Second }; return time.Duration(cfg.TemplateRefreshInterval) * time.Second }(),
-		SoloMode:        soloMode,
-		DonationScript:  donationScript,
-		DonationPercent: donationPercent,
+		Coin:           c,
+		RPCClient:      rpcClient,
+		Address:        cfg.Mining.Address,
+		Network:        cfg.Mining.Network,
+		CoinbaseText:   cfg.Mining.CoinbaseText,
+		ExtraNonceSize: cfg.Mining.ExtraNonceSize,
+		PollInterval: func() time.Duration {
+			if cfg.TemplateRefreshInterval <= 0 {
+				return 5 * time.Second
+			}
+			return time.Duration(cfg.TemplateRefreshInterval) * time.Second
+		}(),
+		SoloMode:         soloMode,
+		DonationScript:   donationScript,
+		DonationPercent:  donationPercent,
 		Donation2Script:  donation2Script,
 		Donation2Percent: donation2Percent,
 	})
@@ -249,8 +264,12 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					if lastDiff := runner.store.GetWorkerLastDifficulty(runner.symbol, wn); lastDiff > 0 {
 						minD := cfg.VarDiff.MinDiff
 						maxD := cfg.VarDiff.MaxDiff
-						if lastDiff < minD { lastDiff = minD }
-						if maxD > 0 && lastDiff > maxD { lastDiff = maxD }
+						if lastDiff < minD {
+							lastDiff = minD
+						}
+						if maxD > 0 && lastDiff > maxD {
+							lastDiff = maxD
+						}
 						session.SetInitialDifficulty(lastDiff)
 					}
 				}
@@ -356,9 +375,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				OnRejected: func(workerName string) {
 					runner.stats.RecordShare(symbol, metrics.ShareInvalid, workerName, 0)
 				},
-				LowDiffGrace:  time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second,
-				StaleGrace:    time.Duration(cfg.Stratum.StaleShareGrace) * time.Second,
-				TipChangedAt:  jobMgr.TipChangedAt,
+				LowDiffGrace: time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second,
+				StaleGrace:   time.Duration(cfg.Stratum.StaleShareGrace) * time.Second,
+				TipChangedAt: jobMgr.TipChangedAt,
 			}
 
 			// Solo mode: each channel gets its own coinbase, built fresh
@@ -423,13 +442,21 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				}
 			}
 			sv2Cfg.StartDiffFunc = func(workerName string) float64 {
-				if runner.store == nil { return cfg.Stratum.Difficulty }
+				if runner.store == nil {
+					return cfg.Stratum.Difficulty
+				}
 				lastDiff := runner.store.GetWorkerLastDifficulty(runner.symbol, workerName)
-				if lastDiff <= 0 { return cfg.Stratum.Difficulty }
+				if lastDiff <= 0 {
+					return cfg.Stratum.Difficulty
+				}
 				minD := cfg.VarDiff.MinDiff
 				maxD := cfg.VarDiff.MaxDiff
-				if lastDiff < minD { lastDiff = minD }
-				if maxD > 0 && lastDiff > maxD { lastDiff = maxD }
+				if lastDiff < minD {
+					lastDiff = minD
+				}
+				if maxD > 0 && lastDiff > maxD {
+					lastDiff = maxD
+				}
 				return lastDiff
 			}
 			sv2Cfg.OnDisconnect = func(workerName, remoteAddr string, connectedAt time.Time) {

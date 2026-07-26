@@ -305,8 +305,8 @@ func (s *Server) pingLoop() {
 			s.sessionsMu.RLock()
 			for _, session := range s.sessions {
 				if session.state >= StateAuthorized {
-						id := s.pingIDSeq.Add(1) + 9 // Start at 10
-				session.SendPing(id)
+					id := s.pingIDSeq.Add(1) + 9 // Start at 10
+					session.SendPing(id)
 				}
 			}
 			s.sessionsMu.RUnlock()

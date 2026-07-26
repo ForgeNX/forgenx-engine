@@ -37,21 +37,21 @@ const VersionRollingMask = "1fffe000"
 
 // Session represents a single miner connection.
 type Session struct {
-	ID           string
-	conn         net.Conn
-	server       *Server
-	state        SessionState
-	workerName   string
-	extraNonce1  string
+	ID            string
+	conn          net.Conn
+	server        *Server
+	state         SessionState
+	workerName    string
+	extraNonce1   string
 	difficulty    float64
 	prevDiff      float64   // previous difficulty before last change
 	diffChangedAt time.Time // when difficulty last changed
 	vardiff       *VarDiff
-	logger       *logging.Logger
-	mu           sync.Mutex
-	closed       bool
-	connectedAt  time.Time
-	lastActivity time.Time
+	logger        *logging.Logger
+	mu            sync.Mutex
+	closed        bool
+	connectedAt   time.Time
+	lastActivity  time.Time
 
 	// Version rolling
 	versionRollingEnabled bool
@@ -544,7 +544,6 @@ func (s *Session) ConnectedAt() time.Time {
 	return s.connectedAt
 }
 
-
 func (s *Session) Info() SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -567,11 +566,11 @@ type SessionInfo struct {
 	Difficulty     float64   `json:"difficulty"`
 	ConnectedAt    time.Time `json:"connected_at"`
 	State          string    `json:"state"`
-	SharesAccepted      uint64    `json:"shares_accepted"`
-	SharesRejected      uint64    `json:"shares_rejected"`
-	Protocol            string    `json:"protocol"`
-	BestDifficulty      float64   `json:"best_difficulty_session"`
-	Vendor              string    `json:"vendor,omitempty"`
-	Firmware            string    `json:"firmware,omitempty"`
-	DeviceID            string    `json:"device_id,omitempty"`
+	SharesAccepted uint64    `json:"shares_accepted"`
+	SharesRejected uint64    `json:"shares_rejected"`
+	Protocol       string    `json:"protocol"`
+	BestDifficulty float64   `json:"best_difficulty_session"`
+	Vendor         string    `json:"vendor,omitempty"`
+	Firmware       string    `json:"firmware,omitempty"`
+	DeviceID       string    `json:"device_id,omitempty"`
 }

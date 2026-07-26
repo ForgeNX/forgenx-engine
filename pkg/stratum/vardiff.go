@@ -43,11 +43,11 @@ func (r VarDiffResult) DiagString() string {
 
 // VarDiff manages variable difficulty for a single miner session.
 type VarDiff struct {
-	minDiff        float64
-	maxDiff        float64
-	targetTime     float64 // desired seconds between shares
-	retargetTime   float64 // seconds between retarget checks
-	variancePct    float64 // acceptable variance as fraction (e.g., 0.30)
+	minDiff           float64
+	maxDiff           float64
+	targetTime        float64 // desired seconds between shares
+	retargetTime      float64 // seconds between retarget checks
+	variancePct       float64 // acceptable variance as fraction (e.g., 0.30)
 	floatDiff         bool    // allow float difficulty values
 	floatDiffBelowOne bool    // only use float for sub-1, integer for >= 1
 	floatPrecision    int     // decimal places for float diff
@@ -55,7 +55,7 @@ type VarDiff struct {
 	currentDiff  float64
 	shareTimes   []time.Time // timestamps of last N shares
 	lastRetarget time.Time
-	maxShares    int // max share timestamps to track
+	maxShares    int        // max share timestamps to track
 	mu           sync.Mutex // protects currentDiff, shareTimes, lastRetarget
 }
 
@@ -74,18 +74,18 @@ type VarDiffConfig struct {
 // NewVarDiff creates a new VarDiff tracker with the given configuration.
 func NewVarDiff(cfg VarDiffConfig, initialDiff float64) *VarDiff {
 	return &VarDiff{
-		minDiff:        cfg.MinDiff,
-		maxDiff:        cfg.MaxDiff,
-		targetTime:     cfg.TargetTime,
-		retargetTime:   cfg.RetargetTime,
-		variancePct:    cfg.VariancePct / 100.0, // convert from percentage
+		minDiff:           cfg.MinDiff,
+		maxDiff:           cfg.MaxDiff,
+		targetTime:        cfg.TargetTime,
+		retargetTime:      cfg.RetargetTime,
+		variancePct:       cfg.VariancePct / 100.0, // convert from percentage
 		floatDiff:         cfg.FloatDiff,
 		floatDiffBelowOne: cfg.FloatDiffBelowOne,
 		floatPrecision:    cfg.FloatPrecision,
-		currentDiff:    initialDiff,
-		shareTimes:     make([]time.Time, 0, 10),
-		lastRetarget:   time.Now(),
-		maxShares:      10,
+		currentDiff:       initialDiff,
+		shareTimes:        make([]time.Time, 0, 10),
+		lastRetarget:      time.Now(),
+		maxShares:         10,
 	}
 }
 

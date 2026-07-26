@@ -148,19 +148,19 @@ func PingRequest(id interface{}) map[string]interface{} {
 // ConfigureResult builds the result for mining.configure response.
 // Currently supports version-rolling extension.
 type ConfigureResult struct {
-	VersionRolling         bool   `json:"version-rolling,omitempty"`
-	VersionRollingMask     string `json:"version-rolling.mask,omitempty"`
-	VersionRollingMinBit   int    `json:"version-rolling.min-bit-count,omitempty"`
+	VersionRolling       bool   `json:"version-rolling,omitempty"`
+	VersionRollingMask   string `json:"version-rolling.mask,omitempty"`
+	VersionRollingMinBit int    `json:"version-rolling.min-bit-count,omitempty"`
 }
 
 // Stratum error codes.
 var (
-	ErrOther           = stratumError{20, "Other/Unknown"}
-	ErrJobNotFound     = stratumError{21, "Job not found"}
-	ErrDuplicateShare  = stratumError{22, "Duplicate share"}
-	ErrLowDifficulty   = stratumError{23, "Low difficulty share"}
-	ErrUnauthorized    = stratumError{24, "Unauthorized worker"}
-	ErrNotSubscribed   = stratumError{25, "Not subscribed"}
+	ErrOther            = stratumError{20, "Other/Unknown"}
+	ErrJobNotFound      = stratumError{21, "Job not found"}
+	ErrDuplicateShare   = stratumError{22, "Duplicate share"}
+	ErrLowDifficulty    = stratumError{23, "Low difficulty share"}
+	ErrUnauthorized     = stratumError{24, "Unauthorized worker"}
+	ErrNotSubscribed    = stratumError{25, "Not subscribed"}
 	ErrMalformedRequest = stratumError{26, "Malformed request"}
 )
 

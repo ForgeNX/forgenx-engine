@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/config"
-	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
+	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
 )
 
@@ -31,17 +31,17 @@ const CoinsDir = "/pool/coins"
 
 // Engine is the top-level orchestrator that manages all coin runners.
 type Engine struct {
-	runners    map[string]*CoinRunner
-	runnersMu  sync.RWMutex
-	stats      *metrics.Stats
-	store      workerDiffStore
-	logger     *logging.Logger
-	startTime  time.Time
-	poolName   string
-	configSigs map[string][32]byte  // hash of meaningful config fields per coin
+	runners      map[string]*CoinRunner
+	runnersMu    sync.RWMutex
+	stats        *metrics.Stats
+	store        workerDiffStore
+	logger       *logging.Logger
+	startTime    time.Time
+	poolName     string
+	configSigs   map[string][32]byte // hash of meaningful config fields per coin
 	configSigsMu sync.RWMutex
-	prevCfgs map[string]*config.CoinConfig // previous config per coin for change logging
-	cfgsMu   sync.RWMutex
+	prevCfgs     map[string]*config.CoinConfig // previous config per coin for change logging
+	cfgsMu       sync.RWMutex
 }
 
 // SetStore injects the worker difficulty store into the engine.
@@ -64,7 +64,7 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 		stats:      stats,
 		logger:     logging.New(logging.ModuleEngine),
 		startTime:  time.Now(),
-		poolName:  cfg.PoolName,
+		poolName:   cfg.PoolName,
 	}
 
 	for symbol, coinCfg := range cfg.Coins {
@@ -77,7 +77,9 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 		if err != nil {
 			return nil, fmt.Errorf("initializing %s: %w", symbol, err)
 		}
-		if e.store != nil { runner.SetStore(e.store) }
+		if e.store != nil {
+			runner.SetStore(e.store)
+		}
 		e.runners[symbol] = runner
 	}
 
@@ -140,17 +142,25 @@ func (e *Engine) StartNodeRetryLoop(dir string, donation config.DonationConfig) 
 		for range ticker.C {
 			// Find coin configs that exist but have no running pool
 			files, err := os.ReadDir(dir)
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
 			for _, file := range files {
-				if file.IsDir() || filepath.Ext(file.Name()) != ".json" { continue }
+				if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+					continue
+				}
 				symbol := strings.ToUpper(strings.TrimSuffix(file.Name(), ".json"))
 				e.runnersMu.RLock()
 				_, running := e.runners[symbol]
 				e.runnersMu.RUnlock()
-				if running { continue }
+				if running {
+					continue
+				}
 				// Pool not running — try loading config and starting
 				cfg, err := loadCoinConfig(filepath.Join(dir, file.Name()))
-				if err != nil { continue }
+				if err != nil {
+					continue
+				}
 				e.handleCoinConfig(symbol, cfg, donation)
 			}
 		}
@@ -203,7 +213,9 @@ func (e *Engine) StartCoin(symbol string, coinCfg *config.CoinConfig, donation c
 		return err
 	}
 
-	if e.store != nil { runner.SetStore(e.store) }
+	if e.store != nil {
+		runner.SetStore(e.store)
+	}
 	if err := runner.Start(); err != nil {
 		return err
 	}
@@ -285,16 +297,20 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			"connected":              false,
 		}
 		if ibdNet != nil {
-			ibdInfo["peers"]     = ibdNet.Connections
-			ibdInfo["peers_in"]  = ibdNet.ConnectionsIn
+			ibdInfo["peers"] = ibdNet.Connections
+			ibdInfo["peers_in"] = ibdNet.ConnectionsIn
 			ibdInfo["peers_out"] = ibdNet.ConnectionsOut
 		}
 		if peers, err := tmpRPC.GetPeerInfo(); err == nil {
 			var maxTip int64
 			for _, p := range peers {
-				if p.StartingHeight > maxTip { maxTip = p.StartingHeight }
+				if p.StartingHeight > maxTip {
+					maxTip = p.StartingHeight
+				}
 			}
-			if maxTip > 0 { ibdInfo["chain_tip"] = maxTip }
+			if maxTip > 0 {
+				ibdInfo["chain_tip"] = maxTip
+			}
 		}
 		return ibdInfo, false
 	}
@@ -334,8 +350,8 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 
 	info := map[string]interface{}{
 		"status":                 "online",
-		"rpcOnline":             true,
-		"chain":                 chain.Chain,
+		"rpcOnline":              true,
+		"chain":                  chain.Chain,
 		"blocks":                 chain.Blocks,
 		"headers":                chain.Headers,
 		"sync_pct":               round2(chain.VerificationProgress * 100),
@@ -348,17 +364,21 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 		"initial_block_download": chain.InitialBlockDownload,
 		"chain_tip": func() int64 {
 			peers, err := rpc.GetPeerInfo()
-			if err != nil { return 0 }
+			if err != nil {
+				return 0
+			}
 			var max int64
 			for _, p := range peers {
-				if p.StartingHeight > max { max = p.StartingHeight }
+				if p.StartingHeight > max {
+					max = p.StartingHeight
+				}
 			}
 			return max
 		}(),
-		"difficulty":             0.0,
-		"network_hashrate":       netHashrate,
-		"network_hashrate_raw":   nhps,
-		"last_block_time":        lastBlockTime,
+		"difficulty":           0.0,
+		"network_hashrate":     netHashrate,
+		"network_hashrate_raw": nhps,
+		"last_block_time":      lastBlockTime,
 	}
 	if mining != nil {
 		info["difficulty"] = mining.Difficulty

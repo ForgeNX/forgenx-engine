@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"net"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -17,11 +17,11 @@ import (
 
 // CoinAPI handles HTTP requests for coin app endpoints.
 type CoinAPI struct {
-	store          *Store
-	engineAPIURL   string // e.g. "http://localhost:8080"
+	store           *Store
+	engineAPIURL    string // e.g. "http://localhost:8080"
 	engineVersion   string
 	engineBuildDate string
-	nodeRPCFunc    NodeRPCFunc
+	nodeRPCFunc     NodeRPCFunc
 	coinConfigFunc  CoinConfigFunc
 	logsFunc        LogsFunc
 	donationFunc    DonationFunc
@@ -250,27 +250,27 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 		}
 
 		workers = append(workers, map[string]interface{}{
-			"name":                workerName,
-			"online":              true,
-			"hashrate":            getFloat(m, "hashrate_5m"),
-			"hashrate_15m":        getFloat(m, "hashrate_15m"),
-			"hashrate_5m":         getFloat(m, "hashrate_5m"),
-			"difficulty":          getFloat(m, "difficulty"),
-			"connected_at":        getString(m, "connected_at"),
-			"best_session":        sessionBest,
-			"best_all_time":       allTimeBest,
-			"last_share":          lastShare,
-			"valid_shares":        sessionSharesAccepted,
-			"invalid_shares":      sessionSharesRejected,
-			"stale_shares":        int64(getFloat(m, "shares_stale")),
-			"protocol":            getString(m, "protocol"),
-			"shares_48h_valid":    w48.Valid,
-			"shares_48h_invalid":  w48.Invalid,
+			"name":                   workerName,
+			"online":                 true,
+			"hashrate":               getFloat(m, "hashrate_5m"),
+			"hashrate_15m":           getFloat(m, "hashrate_15m"),
+			"hashrate_5m":            getFloat(m, "hashrate_5m"),
+			"difficulty":             getFloat(m, "difficulty"),
+			"connected_at":           getString(m, "connected_at"),
+			"best_session":           sessionBest,
+			"best_all_time":          allTimeBest,
+			"last_share":             lastShare,
+			"valid_shares":           sessionSharesAccepted,
+			"invalid_shares":         sessionSharesRejected,
+			"stale_shares":           int64(getFloat(m, "shares_stale")),
+			"protocol":               getString(m, "protocol"),
+			"shares_48h_valid":       w48.Valid,
+			"shares_48h_invalid":     w48.Invalid,
 			"shares_alltime_valid":   alltime.Valid,
 			"shares_alltime_invalid": alltime.Invalid,
-			"payout_address": payoutAddress,
-			"ip":             ip,
-			"device":         vendor,
+			"payout_address":         payoutAddress,
+			"ip":                     ip,
+			"device":                 vendor,
 		})
 		go c.store.RecordWorkerLastSeen(symbol, workerName, lastShare, getString(m, "connected_at"))
 	}
@@ -318,26 +318,26 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 		}
 
 		workers = append(workers, map[string]interface{}{
-			"name":                    workerName,
-			"online":                  false,
-			"hashrate":                0,
-			"hashrate_15m":            0,
-			"hashrate_5m":             0,
-			"difficulty":              0,
-			"connected_at":            nil,
-			"best_session":            0,
-			"best_all_time":           info.BestAllTime,
-			"last_share":              nil,
-			"last_seen":               info.LastSeen,
-			"last_session_duration":   lastSessionDuration,
-			"valid_shares":            0,
-			"invalid_shares":          0,
-			"stale_shares":            0,
-			"shares_48h_valid":        w48.Valid,
-			"shares_48h_invalid":      w48.Invalid,
-			"shares_alltime_valid":    alltimeShares.Valid,
-			"shares_alltime_invalid":  alltimeShares.Invalid,
-			"protocol":                "v1",
+			"name":                   workerName,
+			"online":                 false,
+			"hashrate":               0,
+			"hashrate_15m":           0,
+			"hashrate_5m":            0,
+			"difficulty":             0,
+			"connected_at":           nil,
+			"best_session":           0,
+			"best_all_time":          info.BestAllTime,
+			"last_share":             nil,
+			"last_seen":              info.LastSeen,
+			"last_session_duration":  lastSessionDuration,
+			"valid_shares":           0,
+			"invalid_shares":         0,
+			"stale_shares":           0,
+			"shares_48h_valid":       w48.Valid,
+			"shares_48h_invalid":     w48.Invalid,
+			"shares_alltime_valid":   alltimeShares.Valid,
+			"shares_alltime_invalid": alltimeShares.Invalid,
+			"protocol":               "v1",
 		})
 	}
 
@@ -437,28 +437,46 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 		}
 	}
 	writeJSON(w, map[string]interface{}{
-		"engine_connected":  engineConnected,
-		"zmq_connected":     engineConnected,
-		"stratum_v1_open":   func() bool { if c.portStatusFunc != nil { v1, _ := c.portStatusFunc(symbol); return v1 }; return engineConnected }(),
-			"stratum_port":      func() int { cfg := readJSONFile("/pool/coins/" + strings.ToLower(symbol) + ".json"); if cfg == nil { return 0 }; return getNestedInt(getNestedMap(cfg, "stratum"), "port", 0) }(),
-		"stratum_v2_open":   func() bool { if c.portStatusFunc != nil { _, v2 := c.portStatusFunc(symbol); return v2 }; return false }(),
+		"engine_connected": engineConnected,
+		"zmq_connected":    engineConnected,
+		"stratum_v1_open": func() bool {
+			if c.portStatusFunc != nil {
+				v1, _ := c.portStatusFunc(symbol)
+				return v1
+			}
+			return engineConnected
+		}(),
+		"stratum_port": func() int {
+			cfg := readJSONFile("/pool/coins/" + strings.ToLower(symbol) + ".json")
+			if cfg == nil {
+				return 0
+			}
+			return getNestedInt(getNestedMap(cfg, "stratum"), "port", 0)
+		}(),
+		"stratum_v2_open": func() bool {
+			if c.portStatusFunc != nil {
+				_, v2 := c.portStatusFunc(symbol)
+				return v2
+			}
+			return false
+		}(),
 		"pool": map[string]interface{}{
-			"shares_accepted":   sharesAccepted,
-			"shares_rejected":   sharesRejected,
-			"shares_stale":      sharesStale,
-			"blocks_found":      persisted.BlocksFound,
-			"last_block_time":   getString(coinStats, "last_block_time"),
-			"uptime_seconds":    uptime,
-			"best_session_diff": bestSessionDiff,
+			"shares_accepted":    sharesAccepted,
+			"shares_rejected":    sharesRejected,
+			"shares_stale":       sharesStale,
+			"blocks_found":       persisted.BlocksFound,
+			"last_block_time":    getString(coinStats, "last_block_time"),
+			"uptime_seconds":     uptime,
+			"best_session_diff":  bestSessionDiff,
 			"best_all_time_diff": bestAllTimeDiff,
-			"last_share_time":   lastShareTime,
-			"hashrate":          totalHashrate,
-			"max_hashrate":      c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
-			"worker_count":      workerCount,
+			"last_share_time":    lastShareTime,
+			"hashrate":           totalHashrate,
+			"max_hashrate":       c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
+			"worker_count":       workerCount,
 		},
 		"engine_version": c.engineVersion,
 		"engine_updated": c.engineBuildDate,
-		"node": nodeInfo,
+		"node":           nodeInfo,
 	})
 }
 
@@ -609,8 +627,8 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandleRPCCredentialsPost(w, r, coinID)
 		case (endpoint == "start" || endpoint == "stop" || endpoint == "restart") && r.Method == http.MethodPost:
 			c.HandleAction(w, r, coinID, endpoint)
-			case endpoint == "reset-stats" && r.Method == http.MethodPost:
-				c.HandleResetStats(w, r, symbol)
+		case endpoint == "reset-stats" && r.Method == http.MethodPost:
+			c.HandleResetStats(w, r, symbol)
 		default:
 			http.NotFound(w, r)
 		}
@@ -911,18 +929,18 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 			if strings.HasPrefix(line, "version:") {
 				appVersion = strings.Trim(strings.TrimPrefix(line, "version:"), " \"")
 			}
-	// Parse node image tag from docker-compose.yml
-	composePath := "/opt/forgenx/apps/" + coinID + "/docker-compose.yml"
-	if composeData, err := os.ReadFile(composePath); err == nil {
-		for _, line := range strings.Split(string(composeData), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:") {
-				uiImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:")
-			} else if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+":") {
-				nodeImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+":")
+			// Parse node image tag from docker-compose.yml
+			composePath := "/opt/forgenx/apps/" + coinID + "/docker-compose.yml"
+			if composeData, err := os.ReadFile(composePath); err == nil {
+				for _, line := range strings.Split(string(composeData), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:") {
+						uiImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+"-ui:")
+					} else if strings.HasPrefix(line, "image: ghcr.io/forgenx/"+coinID+":") {
+						nodeImageTag = strings.TrimPrefix(line, "image: ghcr.io/forgenx/"+coinID+":")
+					}
+				}
 			}
-			}
-		}
 			if strings.HasPrefix(line, "releaseDate:") {
 				releaseDate = strings.Trim(strings.TrimPrefix(line, "releaseDate:"), " \"")
 			}
@@ -931,7 +949,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 
 	vardiff := getNestedMap(coinCfg, "vardiff")
 	stratum := getNestedMap(coinCfg, "stratum")
-	node    := getNestedMap(coinCfg, "node")
+	node := getNestedMap(coinCfg, "node")
 
 	// Extract ZMQ port from tcp://host:port
 	zmqHashblock := 28333
@@ -946,44 +964,48 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	pruneSizeMb := envInt(env, prefix+"PRUNE", 550)
 
 	writeJSON(w, map[string]interface{}{
-		"appVersion":         appVersion,
-			"nodeImageTag":       nodeImageTag,
-			"uiImageTag":         uiImageTag,
-		"releaseDate":        releaseDate,
-		"network":            envStr(env, prefix+"NETWORK", "mainnet"),
-		"prune":              envStr(env, prefix+"PRUNE", "550") != "0",
-		"prune_size_mb":      pruneSizeMb,
-		"pruneSize":          pruneSizeMb,
-		"rpc_user":           envStr(env, prefix+"RPC_USER", "forgenx"),
-		"stratum_port":       getNestedInt(stratum, "port", 3334),
-		"payoutAddress":      envStr(env, prefix+"PAYOUT_ADDRESS", ""),
-		"workerName":         envStr(env, prefix+"WORKER_NAME", ""),
-			"vardiffEnabled":     getNestedBool(vardiff, "enabled", true),
-		"targetTime":         getNestedFloat(vardiff, "target_time", 45),
-		"retargetTime":       getNestedFloat(vardiff, "retarget_time", 300),
-		"variancePercent":    getNestedFloat(vardiff, "variance_percent", 30),
-		"onNewBlock":         getNestedBool(vardiff, "on_new_block", true),
-		"pingEnabled":        getNestedBool(stratum, "ping_enabled", true),
-		"pingInterval":       getNestedInt(stratum, "ping_interval", 30),
-		"staleShareGrace":    getNestedInt(stratum, "stale_share_grace", 5),
-		"lowDiffShareGrace":  getNestedInt(stratum, "low_diff_share_grace", 5),
-		"zmqEnabled":         getNestedBool(node, "zmq_enabled", true),
-		"acceptSuggestDiff":  getNestedBool(stratum, "accept_suggest_diff", false),
-		"zmqHashblock":       zmqHashblock,
-		"templateRefresh":    getNestedInt(coinCfg, "template_refresh_interval", 100),
-		"diffPreset":         envStr(env, prefix+"DIFF_PRESET", "home"),
-		"startDiff":          envInt(env, prefix+"START_DIFF", 128),
-		"minDiff":            envInt(env, prefix+"MIN_DIFF", 32),
-		"maxDiff":            envInt(env, prefix+"MAX_DIFF", 4096),
-		"autoStart":          envStr(env, prefix+"AUTO_START", "true") == "true",
-			"donation1Enabled":   func() bool {
-				if v := envStr(env, prefix+"DONATION1_ENABLED", ""); v != "" { return v == "true" }
-				return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled", true)
-			}(),
-			"donation2Enabled":   func() bool {
-				if v := envStr(env, prefix+"DONATION2_ENABLED", ""); v != "" { return v == "true" }
-				return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled2", false)
-			}(),
+		"appVersion":        appVersion,
+		"nodeImageTag":      nodeImageTag,
+		"uiImageTag":        uiImageTag,
+		"releaseDate":       releaseDate,
+		"network":           envStr(env, prefix+"NETWORK", "mainnet"),
+		"prune":             envStr(env, prefix+"PRUNE", "550") != "0",
+		"prune_size_mb":     pruneSizeMb,
+		"pruneSize":         pruneSizeMb,
+		"rpc_user":          envStr(env, prefix+"RPC_USER", "forgenx"),
+		"stratum_port":      getNestedInt(stratum, "port", 3334),
+		"payoutAddress":     envStr(env, prefix+"PAYOUT_ADDRESS", ""),
+		"workerName":        envStr(env, prefix+"WORKER_NAME", ""),
+		"vardiffEnabled":    getNestedBool(vardiff, "enabled", true),
+		"targetTime":        getNestedFloat(vardiff, "target_time", 45),
+		"retargetTime":      getNestedFloat(vardiff, "retarget_time", 300),
+		"variancePercent":   getNestedFloat(vardiff, "variance_percent", 30),
+		"onNewBlock":        getNestedBool(vardiff, "on_new_block", true),
+		"pingEnabled":       getNestedBool(stratum, "ping_enabled", true),
+		"pingInterval":      getNestedInt(stratum, "ping_interval", 30),
+		"staleShareGrace":   getNestedInt(stratum, "stale_share_grace", 5),
+		"lowDiffShareGrace": getNestedInt(stratum, "low_diff_share_grace", 5),
+		"zmqEnabled":        getNestedBool(node, "zmq_enabled", true),
+		"acceptSuggestDiff": getNestedBool(stratum, "accept_suggest_diff", false),
+		"zmqHashblock":      zmqHashblock,
+		"templateRefresh":   getNestedInt(coinCfg, "template_refresh_interval", 100),
+		"diffPreset":        envStr(env, prefix+"DIFF_PRESET", "home"),
+		"startDiff":         envInt(env, prefix+"START_DIFF", 128),
+		"minDiff":           envInt(env, prefix+"MIN_DIFF", 32),
+		"maxDiff":           envInt(env, prefix+"MAX_DIFF", 4096),
+		"autoStart":         envStr(env, prefix+"AUTO_START", "true") == "true",
+		"donation1Enabled": func() bool {
+			if v := envStr(env, prefix+"DONATION1_ENABLED", ""); v != "" {
+				return v == "true"
+			}
+			return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled", true)
+		}(),
+		"donation2Enabled": func() bool {
+			if v := envStr(env, prefix+"DONATION2_ENABLED", ""); v != "" {
+				return v == "true"
+			}
+			return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled2", false)
+		}(),
 		"donation1Addr":      envStr(env, prefix+"DONATION1_ADDR", ""),
 		"donation1Pct":       envFloat(env, prefix+"DONATION1_PCT", 1.0),
 		"donation2Addr":      envStr(env, prefix+"DONATION2_ADDR", ""),
@@ -1172,10 +1194,18 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 		env[prefix+"MAX_DIFF"] = strconv.Itoa(int(v))
 	}
 	if v, ok := body["donation1Enabled"].(bool); ok {
-		if v { env[prefix+"DONATION1_ENABLED"] = "true" } else { env[prefix+"DONATION1_ENABLED"] = "false" }
+		if v {
+			env[prefix+"DONATION1_ENABLED"] = "true"
+		} else {
+			env[prefix+"DONATION1_ENABLED"] = "false"
+		}
 	}
 	if v, ok := body["donation2Enabled"].(bool); ok {
-		if v { env[prefix+"DONATION2_ENABLED"] = "true" } else { env[prefix+"DONATION2_ENABLED"] = "false" }
+		if v {
+			env[prefix+"DONATION2_ENABLED"] = "true"
+		} else {
+			env[prefix+"DONATION2_ENABLED"] = "false"
+		}
 	}
 	if v, ok := body["donation1Addr"].(string); ok {
 		env[prefix+"DONATION1_ADDR"] = v
@@ -1200,12 +1230,24 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	// Build donation section — preserve existing values, update only what was sent
 	{
 		don, _ := coinCfg["donation"].(map[string]interface{})
-		if don == nil { don = map[string]interface{}{} }
-		if v, ok := body["donation1Enabled"].(bool); ok { don["enabled"] = v }
-		if v, ok := body["donation1Pct"].(float64); ok { don["percent"] = v }
-		if v, ok := body["donation2Enabled"].(bool); ok { don["enabled2"] = v }
-		if v, ok := body["donation2Addr"].(string); ok { don["address2"] = v }
-		if v, ok := body["donation2Pct"].(float64); ok { don["percent2"] = v }
+		if don == nil {
+			don = map[string]interface{}{}
+		}
+		if v, ok := body["donation1Enabled"].(bool); ok {
+			don["enabled"] = v
+		}
+		if v, ok := body["donation1Pct"].(float64); ok {
+			don["percent"] = v
+		}
+		if v, ok := body["donation2Enabled"].(bool); ok {
+			don["enabled2"] = v
+		}
+		if v, ok := body["donation2Addr"].(string); ok {
+			don["address2"] = v
+		}
+		if v, ok := body["donation2Pct"].(float64); ok {
+			don["percent2"] = v
+		}
 		coinCfg["donation"] = don
 	}
 
@@ -1240,7 +1282,7 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	}
 	if v, ok := body["onNewBlock"].(bool); ok {
 		vardiff["on_new_block"] = v
-	vardiff["enabled"] = true
+		vardiff["enabled"] = true
 	}
 	if v, ok := body["vardiffEnabled"].(bool); ok {
 		vardiff["enabled"] = v
@@ -1298,13 +1340,13 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 
 	// Check if node settings changed (prune, network) — restart node container if so
 	// Only restart node if prune/network values actually changed
-	newPrune, pruneInBody     := body["prune"]
+	newPrune, pruneInBody := body["prune"]
 	newPruneSz, pruneSzInBody := body["pruneSize"]
 	newNetwork, networkInBody := body["network"]
-	pruneEnabled   := envStr(env, prefix+"PRUNE", "0") != "0"
-	pruneChanged   := pruneInBody   && newPrune.(bool) != pruneEnabled
+	pruneEnabled := envStr(env, prefix+"PRUNE", "0") != "0"
+	pruneChanged := pruneInBody && newPrune.(bool) != pruneEnabled
 	pruneSzChanged := pruneSzInBody && int(newPruneSz.(float64)) != envInt(env, prefix+"PRUNE", 0)
-	networkChanged := networkInBody && fmt.Sprintf("%v", newNetwork)  != envStr(env, prefix+"NETWORK", "mainnet")
+	networkChanged := networkInBody && fmt.Sprintf("%v", newNetwork) != envStr(env, prefix+"NETWORK", "mainnet")
 	needsNodeRestart := pruneChanged || pruneSzChanged || networkChanged
 	if needsNodeRestart {
 		go func() { restartContainer(coinID + "-node") }()

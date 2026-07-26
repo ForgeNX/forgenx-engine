@@ -24,9 +24,9 @@ func init() {
 	Register("ecash", &ECash{})
 }
 
-func (e *ECash) Name() string      { return "eCash" }
-func (e *ECash) Symbol() string    { return "XEC" }
-func (e *ECash) Algorithm() string { return "sha256d" }
+func (e *ECash) Name() string         { return "eCash" }
+func (e *ECash) Symbol() string       { return "XEC" }
+func (e *ECash) Algorithm() string    { return "sha256d" }
 func (e *ECash) SupportsSegWit() bool { return false }
 
 func (e *ECash) Params() CoinParams {

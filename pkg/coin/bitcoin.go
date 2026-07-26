@@ -24,9 +24,9 @@ func init() {
 	Register("bitcoin", &Bitcoin{})
 }
 
-func (b *Bitcoin) Name() string      { return "Bitcoin" }
-func (b *Bitcoin) Symbol() string    { return "BTC" }
-func (b *Bitcoin) Algorithm() string { return "sha256d" }
+func (b *Bitcoin) Name() string         { return "Bitcoin" }
+func (b *Bitcoin) Symbol() string       { return "BTC" }
+func (b *Bitcoin) Algorithm() string    { return "sha256d" }
 func (b *Bitcoin) SupportsSegWit() bool { return true }
 
 func (b *Bitcoin) Params() CoinParams {
