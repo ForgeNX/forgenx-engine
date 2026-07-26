@@ -617,9 +617,10 @@ processShare:
 	s.logf("[sv2] session %s ch=%d: %s Share accepted (diff %.2f) hash=%s block=%v",
 		s.id, share.ChannelID, ch.UserIdentity(), result.Difficulty, result.HashHex[:16], result.MeetsBlock)
 
-	// Notify the engine (e.g., to submit block to node RPC).
+	// Notify the engine (records stats synchronously; block submission,
+	// if any, is dispatched to its own goroutine inside the callback).
 	if s.onShare != nil {
-		go s.onShare(tmpl, ch, share, result)
+		s.onShare(tmpl, ch, share, result)
 	}
 
 	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
@@ -746,7 +747,7 @@ processExtendedShare:
 			NTime:       share.NTime,
 			Version:     share.Version,
 		}
-		go s.onShare(tmpl, ch, adapted, result)
+		s.onShare(tmpl, ch, adapted, result)
 	}
 
 	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
@@ -760,7 +761,7 @@ processExtendedShare:
 // maxTemplateHistory is the number of past job templates retained per session.
 // Mirrors V1's JobManager maxJobHistory. Keeping more templates means miners
 // can submit shares for recent jobs without stale rejections on job rotation.
-const maxTemplateHistory = 10
+const maxTemplateHistory = 20 // keep in sync with engine.JobManager maxJobHistory
 
 // UpdateTemplate stores the latest block template and broadcasts new work to
 // all open channels on this session.

@@ -345,7 +345,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
-						submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, symbol)
+						// Block submission can retry with backoff (~seconds); run it
+						// off the share-response path so the miner isn't blocked.
+						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, symbol)
 					}
 				},
 				OnStale: func(workerName string) {

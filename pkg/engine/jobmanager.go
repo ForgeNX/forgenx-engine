@@ -126,7 +126,7 @@ func NewJobManager(cfg JobManagerConfig) *JobManager {
 		extraNonce2Size: en2Size,
 		pollInterval:    cfg.PollInterval,
 		jobs:            make(map[string]*JobData),
-		maxJobHistory:   10,
+		maxJobHistory:   20, // keep in sync with stratumv2.maxTemplateHistory
 		soloMode:        cfg.SoloMode,
 		donationScript:   cfg.DonationScript,
 		donationPercent:  cfg.DonationPercent,
