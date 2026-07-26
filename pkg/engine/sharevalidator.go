@@ -41,7 +41,7 @@ type ShareValidator struct {
 	lowDiffShareGrace time.Duration // grace period to accept shares at previous diff after a change
 	logger            *logging.Logger
 	lastBlockSubmit   time.Time // eCash: time of last block submission
-        runner            *CoinRunner
+	runner            *CoinRunner
 }
 
 // NewShareValidator creates a new share validator.
@@ -52,7 +52,7 @@ func NewShareValidator(c coin.Coin, jobMgr *JobManager, rpcClient *noderpc.Clien
 		rpcClient:         rpcClient,
 		stats:             stats,
 		symbol:            c.Symbol(),
-	        runner:            runner,
+		runner:            runner,
 		soloMode:          soloMode,
 		staleShareGrace:   staleShareGrace,
 		lowDiffShareGrace: lowDiffShareGrace,
@@ -229,17 +229,17 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 	// increment accepted share counter for metrics
 	if sv.runner != nil {
 
-	        sv.runner.acceptedShares++
+		sv.runner.sharesMu.Lock()
+		sv.runner.acceptedShares++
 
-	        sessionDiff := session.GetDifficulty()
-
-	        sv.runner.recentShares = append(sv.runner.recentShares, shareWork{
-        	        t:    time.Now(),
-                	diff: sessionDiff,
-	        })
+		sv.runner.recentShares = append(sv.runner.recentShares, shareWork{
+			t:    time.Now(),
+			diff: sessionDiff,
+		})
+		sv.runner.sharesMu.Unlock()
 	}
 
-sv.logger.Info("share accepted: worker=%s diff=%g", share.WorkerName, actualDiff)
+	sv.logger.Info("share accepted: worker=%s diff=%g", share.WorkerName, actualDiff)
 
 	// Check if it meets the network target (potential block!)
 	nbits, _ := coin.BitsToHex(jobData.Job.NBits)

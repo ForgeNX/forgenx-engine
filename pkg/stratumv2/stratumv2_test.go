@@ -442,7 +442,7 @@ func TestChannelShareAccounting(t *testing.T) {
 		poolDifficulty:  512,
 	}
 
-	lastSeq, accepted, sumDiff := ch.RecordShare(1, 512.0)
+	lastSeq, accepted, sumDiff, _ := ch.RecordShare(1, 512.0)
 	if lastSeq != 1 {
 		t.Errorf("lastSeq: want 1, got %d", lastSeq)
 	}

@@ -96,6 +96,21 @@ type CoinStats struct {
 	mu              sync.Mutex
 }
 
+// CoinStatsSnapshot is a lock-free copy of CoinStats' data fields, safe to
+// pass around and range over without copying the mutex. Returned by
+// GetCoinsSnapshot.
+type CoinStatsSnapshot struct {
+	SharesAccepted  uint64    `json:"shares_accepted"`
+	SharesRejected  uint64    `json:"shares_rejected"`
+	SharesStale     uint64    `json:"shares_stale"`
+	BlocksFound     uint64    `json:"blocks_found"`
+	LastBlockHash   string    `json:"last_block_hash,omitempty"`
+	LastBlockHeight int64     `json:"last_block_height,omitempty"`
+	LastBlockTime   time.Time `json:"last_block_time,omitempty"`
+	SyncProgress    float64   `json:"sync_progress"`
+	MaxPoolHashrate float64   `json:"max_pool_hashrate"`
+}
+
 // DisconnectInfo holds timing information for a worker disconnect event.
 type DisconnectInfo struct {
 	DisconnectTime time.Time
@@ -142,15 +157,25 @@ func (s *Stats) SetSyncProgress(symbol string, progress float64) {
 	coin.mu.Unlock()
 }
 
-func (s *Stats) GetCoinsSnapshot() map[string]CoinStats {
+func (s *Stats) GetCoinsSnapshot() map[string]CoinStatsSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	snapshot := make(map[string]CoinStats)
+	snapshot := make(map[string]CoinStatsSnapshot)
 
 	for symbol, coin := range s.coins {
 		coin.mu.Lock()
-		snapshot[symbol] = *coin
+		snapshot[symbol] = CoinStatsSnapshot{
+			SharesAccepted:  coin.SharesAccepted,
+			SharesRejected:  coin.SharesRejected,
+			SharesStale:     coin.SharesStale,
+			BlocksFound:     coin.BlocksFound,
+			LastBlockHash:   coin.LastBlockHash,
+			LastBlockHeight: coin.LastBlockHeight,
+			LastBlockTime:   coin.LastBlockTime,
+			SyncProgress:    coin.SyncProgress,
+			MaxPoolHashrate: coin.MaxPoolHashrate,
+		}
 		coin.mu.Unlock()
 	}
 

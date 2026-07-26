@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/coin"
@@ -59,6 +60,7 @@ type CoinRunner struct {
 	totalDifficulty float64
 	startTime       time.Time
 	recentShares    []shareWork
+	sharesMu        sync.Mutex // protects acceptedShares + recentShares
 }
 
 // NewCoinRunner creates and wires up all components for a single coin.
@@ -337,7 +339,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					// Record in unified stats so SV2 workers appear in /miners and UI Workers tab.
 					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), poolDiff, result.Difficulty)
 					// Append to recentShares so CoinRunner.Hashrate() includes SV2 contribution.
+					runner.sharesMu.Lock()
 					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: poolDiff})
+					runner.sharesMu.Unlock()
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
@@ -753,6 +757,7 @@ func (r *CoinRunner) Hashrate() float64 {
 	var diffSum float64
 	var filtered []shareWork
 
+	r.sharesMu.Lock()
 	for _, s := range r.recentShares {
 		if s.t.After(cutoff) {
 			diffSum += s.diff
@@ -762,6 +767,7 @@ func (r *CoinRunner) Hashrate() float64 {
 
 	// keep only recent shares
 	r.recentShares = filtered
+	r.sharesMu.Unlock()
 
 	if diffSum == 0 {
 		return 0
