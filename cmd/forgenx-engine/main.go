@@ -87,6 +87,7 @@ func main() {
 	api.SetSessionProvider(eng.Sessions)
 	api.SetMetricsHandler(eng.MetricsHandler)
 	api.SetFleetHandler(eng.HandleFleet)
+	api.SetPoolRatioHandler(eng.HandlePoolRatio)
 	if err := api.Start(); err != nil {
 		logger.Fatal("metrics API start: %v", err)
 	}

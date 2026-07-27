@@ -543,6 +543,32 @@ func (e *Engine) HandleFleet(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetCoinPortStatus returns whether the V1 and V2 stratum ports are live for a coin.
+// HandlePoolRatio serves the pool-wide (engine-session) best shareDiff/networkDiff
+// ratio for a coin — the closest any worker has come to a block since the runner
+// started. Query param: ?coin=SYMBOL.
+func (e *Engine) HandlePoolRatio(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.ToUpper(r.URL.Query().Get("coin"))
+	e.runnersMu.RLock()
+	runner, ok := e.runners[symbol]
+	e.runnersMu.RUnlock()
+	resp := map[string]interface{}{}
+	if ok && runner != nil {
+		ratio, shareDiff, netDiff, height, when, worker := runner.BestRatioContext()
+		resp = map[string]interface{}{
+			"best_ratio":            ratio,
+			"best_ratio_share_diff": shareDiff,
+			"best_ratio_net_diff":   netDiff,
+			"best_ratio_height":     height,
+			"best_ratio_worker":     worker,
+		}
+		if !when.IsZero() {
+			resp["best_ratio_time"] = when.Format(time.RFC3339)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (e *Engine) GetCoinPortStatus(symbol string) (v1Running, v2Running bool) {
 	e.runnersMu.RLock()
 	runner, exists := e.runners[symbol]

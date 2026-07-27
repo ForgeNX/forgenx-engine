@@ -115,6 +115,14 @@ type Channel struct {
 	bestNetworkDiff float64   // network difficulty of the job the best share was for
 	bestHeight      uint32    // block height of that job
 	bestTime        time.Time // when the best share was recorded
+	// Best RATIO share (shareDiff / networkDiff) for this connection — the
+	// share that came closest to a block, which is NOT necessarily the
+	// highest-difficulty share. Resets on reconnect (new channel).
+	bestRatio          float64   // shareDiff/networkDiff, >=1.0 would be a block
+	bestRatioShareDiff float64   // the share difficulty behind bestRatio
+	bestRatioNetDiff   float64   // network difficulty at that moment
+	bestRatioHeight    uint32    // block height of that job
+	bestRatioTime      time.Time // when it was recorded
 	sharesRejected uint64
 	totalDiff      float64
 
@@ -343,6 +351,19 @@ func (c *Channel) RecordShare(seqNum uint32, diff float64, networkDiff float64, 
 		c.bestHeight = height
 		c.bestTime = time.Now().UTC()
 	}
+	// Best-ratio: the share closest to beating the network target. Distinct
+	// from best-difficulty because network difficulty varies per block — a
+	// smaller share during a low-difficulty block can out-rank a larger one.
+	if networkDiff > 0 {
+		ratio := diff / networkDiff
+		if ratio > c.bestRatio {
+			c.bestRatio = ratio
+			c.bestRatioShareDiff = diff
+			c.bestRatioNetDiff = networkDiff
+			c.bestRatioHeight = height
+			c.bestRatioTime = time.Now().UTC()
+		}
+	}
 	c.totalDiff += diff
 
 	// Cumulative ack: acknowledge everything up to seqNum.
@@ -439,6 +460,14 @@ func (c *Channel) BestContext() (networkDiff float64, height uint32, when time.T
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.bestNetworkDiff, c.bestHeight, c.bestTime
+}
+
+// BestRatioContext returns the best shareDiff/networkDiff ratio for this
+// connection and the share behind it. ratio >= 1.0 would have been a block.
+func (c *Channel) BestRatioContext() (ratio, shareDiff, netDiff float64, height uint32, when time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.bestRatio, c.bestRatioShareDiff, c.bestRatioNetDiff, c.bestRatioHeight, c.bestRatioTime
 }
 
 func (c *Channel) Stats() (accepted, rejected uint64, totalDiff float64) {

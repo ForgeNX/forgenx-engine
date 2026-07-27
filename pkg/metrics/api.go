@@ -74,10 +74,16 @@ type APIServer struct {
 	startTime       time.Time
 	metricsHandler  http.HandlerFunc
 	fleetHandler    http.HandlerFunc
+	poolRatioHandler http.HandlerFunc
 }
 
 func (a *APIServer) SetFleetHandler(h http.HandlerFunc) {
 	a.fleetHandler = h
+}
+
+// SetPoolRatioHandler sets the callback for the pool-wide best-ratio endpoint.
+func (a *APIServer) SetPoolRatioHandler(h http.HandlerFunc) {
+	a.poolRatioHandler = h
 }
 
 // NewAPIServer creates a new metrics API server.
@@ -118,6 +124,13 @@ func (a *APIServer) Start() error {
 			return
 		}
 		http.Error(w, "fleet handler not set", http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/pool-ratio", func(w http.ResponseWriter, r *http.Request) {
+		if a.poolRatioHandler != nil {
+			a.poolRatioHandler(w, r)
+			return
+		}
+		http.Error(w, "pool-ratio handler not set", http.StatusInternalServerError)
 	})
 
 	// 🔥 NEW: Serve UI

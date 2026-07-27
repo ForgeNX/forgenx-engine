@@ -60,11 +60,29 @@ type CoinRunner struct {
 	totalDifficulty float64
 	startTime       time.Time
 	recentShares    []shareWork
-	sharesMu        sync.Mutex // protects acceptedShares + recentShares
+	sharesMu        sync.Mutex // protects acceptedShares + recentShares + bestRatio*
+
+	// Pool-wide best-ratio (engine-session): the closest ANY worker has come
+	// to a block since this runner started. Resets only on engine restart.
+	bestRatio          float64
+	bestRatioShareDiff float64
+	bestRatioNetDiff   float64
+	bestRatioHeight    uint32
+	bestRatioTime      time.Time
+	bestRatioWorker    string
 }
 
 // NewCoinRunner creates and wires up all components for a single coin.
 func (r *CoinRunner) SetStore(s workerDiffStore) { r.store = s }
+
+// BestRatioContext returns the pool-wide (engine-session) best shareDiff/
+// networkDiff ratio for this coin — the closest any worker has come to a block
+// since the runner started — plus the share behind it and the worker name.
+func (r *CoinRunner) BestRatioContext() (ratio, shareDiff, netDiff float64, height uint32, when time.Time, worker string) {
+	r.sharesMu.Lock()
+	defer r.sharesMu.Unlock()
+	return r.bestRatio, r.bestRatioShareDiff, r.bestRatioNetDiff, r.bestRatioHeight, r.bestRatioTime, r.bestRatioWorker
+}
 
 func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.DonationConfig, stats *metrics.Stats) (*CoinRunner, error) {
 	soloMode := cfg.Mining.Mode == "solo"
@@ -357,9 +375,24 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					poolDiff := ch.Difficulty()
 					// Record in unified stats so SV2 workers appear in /miners and UI Workers tab.
 					runner.stats.RecordShare(symbol, metrics.ShareValid, ch.UserIdentity(), poolDiff, result.Difficulty)
-					// Append to recentShares so CoinRunner.Hashrate() includes SV2 contribution.
+					// Network difficulty of this share's job, derived the same way as
+					// the block check, for the pool-wide best-ratio tracking below.
+					netDiff := stratumv2.TargetToDifficulty(stratumv2.NBitsToTarget(job.NBits))
+					// Append to recentShares (hashrate) and update pool-wide best-ratio
+					// under one lock. Best-ratio = closest any worker has come to a
+					// block this engine-session (distinct from best difficulty).
 					runner.sharesMu.Lock()
 					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: poolDiff})
+					if netDiff > 0 {
+						if ratio := result.Difficulty / netDiff; ratio > runner.bestRatio {
+							runner.bestRatio = ratio
+							runner.bestRatioShareDiff = result.Difficulty
+							runner.bestRatioNetDiff = netDiff
+							runner.bestRatioHeight = job.Height
+							runner.bestRatioTime = time.Now().UTC()
+							runner.bestRatioWorker = ch.UserIdentity()
+						}
+					}
 					runner.sharesMu.Unlock()
 					if result.MeetsBlock {
 						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
