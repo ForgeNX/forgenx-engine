@@ -49,6 +49,14 @@ type MinerInfo struct {
 	BlocksFound           uint64    `json:"blocks_found"`
 	LastShareTime         time.Time `json:"last_share_time,omitempty"`
 	BestDifficulty        float64   `json:"best_difficulty"`
+	BestNetworkDiff       float64   `json:"best_network_diff,omitempty"`
+	BestHeight            uint32    `json:"best_height,omitempty"`
+	BestTime              time.Time `json:"best_time,omitempty"`
+	BestRatio             float64   `json:"best_ratio,omitempty"`
+	BestRatioShareDiff    float64   `json:"best_ratio_share_diff,omitempty"`
+	BestRatioNetDiff      float64   `json:"best_ratio_net_diff,omitempty"`
+	BestRatioHeight       uint32    `json:"best_ratio_height,omitempty"`
+	BestRatioTime         time.Time `json:"best_ratio_time,omitempty"`
 	Hashrate1m            float64   `json:"hashrate_1m"`
 	Hashrate5m            float64   `json:"hashrate_5m"`
 	Hashrate15m           float64   `json:"hashrate_15m"`
@@ -64,16 +72,16 @@ type MinersResponse struct {
 
 // APIServer serves metrics over HTTP.
 type APIServer struct {
-	port            int
-	poolName        string
-	stats           *Stats
-	sessionProvider SessionProvider
-	server          *http.Server
-	mux             *http.ServeMux
-	logger          *logging.Logger
-	startTime       time.Time
-	metricsHandler  http.HandlerFunc
-	fleetHandler    http.HandlerFunc
+	port             int
+	poolName         string
+	stats            *Stats
+	sessionProvider  SessionProvider
+	server           *http.Server
+	mux              *http.ServeMux
+	logger           *logging.Logger
+	startTime        time.Time
+	metricsHandler   http.HandlerFunc
+	fleetHandler     http.HandlerFunc
 	poolRatioHandler http.HandlerFunc
 }
 
@@ -265,6 +273,15 @@ func (a *APIServer) handleMiners(w http.ResponseWriter, r *http.Request) {
 				Firmware:    sess.Firmware,
 				DeviceID:    sess.DeviceID,
 			}
+			// Best-share context and best-ratio come from the session (channel).
+			mi.BestNetworkDiff = sess.BestNetworkDiff
+			mi.BestHeight = sess.BestHeight
+			mi.BestTime = sess.BestTime
+			mi.BestRatio = sess.BestRatio
+			mi.BestRatioShareDiff = sess.BestRatioShareDiff
+			mi.BestRatioNetDiff = sess.BestRatioNetDiff
+			mi.BestRatioHeight = sess.BestRatioHeight
+			mi.BestRatioTime = sess.BestRatioTime
 			if ws, ok := workerStats[sess.WorkerName]; ok {
 				ws.mu.Lock()
 				mi.SharesAccepted = ws.SharesAccepted
