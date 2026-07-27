@@ -570,6 +570,9 @@ type SessionInfo struct {
 	SharesRejected uint64    `json:"shares_rejected"`
 	Protocol       string    `json:"protocol"`
 	BestDifficulty float64   `json:"best_difficulty_session"`
+	BestNetworkDiff float64  `json:"best_network_diff,omitempty"`
+	BestHeight      uint32   `json:"best_height,omitempty"`
+	BestTime        time.Time `json:"best_time,omitempty"`
 	Vendor         string    `json:"vendor,omitempty"`
 	Firmware       string    `json:"firmware,omitempty"`
 	DeviceID       string    `json:"device_id,omitempty"`

@@ -189,7 +189,12 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 		if sessionBest == 0 {
 			sessionBest = getFloat(m, "best_difficulty")
 		}
-		allTimeBest := c.store.UpdateWorkerBestDiff(symbol, workerName, sessionBest)
+		// Context of this session's best share (network difficulty, height, and
+		// time), captured by the engine when the best was set.
+		bestNetDiff := getFloat(m, "best_network_diff")
+		bestHeight := uint32(getFloat(m, "best_height"))
+		bestTime := getString(m, "best_time")
+		allTimeBest := c.store.UpdateWorkerBestDiff(symbol, workerName, sessionBest, bestNetDiff, bestHeight, bestTime)
 
 		// Shares
 		sharesAccepted := int64(getFloat(m, "shares_accepted"))
@@ -259,6 +264,9 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 			"connected_at":           getString(m, "connected_at"),
 			"best_session":           sessionBest,
 			"best_all_time":          allTimeBest,
+			"network_diff_at_best":   bestNetDiff,
+			"height_at_best":         bestHeight,
+			"time_at_best":           bestTime,
 			"last_share":             lastShare,
 			"valid_shares":           sessionSharesAccepted,
 			"invalid_shares":         sessionSharesRejected,
@@ -327,6 +335,9 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 			"connected_at":           nil,
 			"best_session":           0,
 			"best_all_time":          info.BestAllTime,
+			"network_diff_at_best":   info.NetworkDiffAtBest,
+			"height_at_best":         info.HeightAtBest,
+			"time_at_best":           info.TimeAtBest,
 			"last_share":             nil,
 			"last_seen":              info.LastSeen,
 			"last_session_duration":  lastSessionDuration,

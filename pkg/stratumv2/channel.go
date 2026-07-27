@@ -110,6 +110,11 @@ type Channel struct {
 	// Statistics
 	sharesAccepted uint64
 	bestDifficulty float64
+	// Context captured at the moment bestDifficulty was last set, so a best
+	// share can be judged against the network difficulty of its own block.
+	bestNetworkDiff float64   // network difficulty of the job the best share was for
+	bestHeight      uint32    // block height of that job
+	bestTime        time.Time // when the best share was recorded
 	sharesRejected uint64
 	totalDiff      float64
 
@@ -329,11 +334,14 @@ func (c *Channel) IsJobValid(jobID uint32) bool {
 //
 // Returns (lastAckedSeq, acceptedCount, sumDiff) for building
 // SubmitSharesSuccess — unchanged from before vardiff was added.
-func (c *Channel) RecordShare(seqNum uint32, diff float64) (uint32, uint32, uint64, stratum.VarDiffResult) {
+func (c *Channel) RecordShare(seqNum uint32, diff float64, networkDiff float64, height uint32) (uint32, uint32, uint64, stratum.VarDiffResult) {
 	c.mu.Lock()
 	c.sharesAccepted++
 	if diff > c.bestDifficulty {
 		c.bestDifficulty = diff
+		c.bestNetworkDiff = networkDiff
+		c.bestHeight = height
+		c.bestTime = time.Now().UTC()
 	}
 	c.totalDiff += diff
 
@@ -422,6 +430,15 @@ func (c *Channel) BestDifficulty() float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.bestDifficulty
+}
+
+// BestContext returns the network difficulty, block height, and time captured
+// at the moment the channel's best share was set. Lets a best share be judged
+// against the difficulty of its own block rather than the current tip.
+func (c *Channel) BestContext() (networkDiff float64, height uint32, when time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.bestNetworkDiff, c.bestHeight, c.bestTime
 }
 
 func (c *Channel) Stats() (accepted, rejected uint64, totalDiff float64) {

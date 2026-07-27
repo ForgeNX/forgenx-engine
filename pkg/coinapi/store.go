@@ -70,6 +70,10 @@ func (s *Store) init() error {
 	}
 	// Migrate: add last_difficulty column if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
+	// Migrate: add best-share context columns if missing (safe to run multiple times)
+	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN network_diff_at_best REAL DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN height_at_best INTEGER DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN time_at_best TEXT`)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, stmt := range stmts {
@@ -142,6 +146,9 @@ type WorkerInfo struct {
 	ConnectedAt         string
 	SharesOffset        int64
 	InvalidSharesOffset int64
+	NetworkDiffAtBest   float64
+	HeightAtBest        int64
+	TimeAtBest          string
 }
 
 func (s *Store) GetWorkerBestDiffs(symbol string) map[string]WorkerInfo {
@@ -149,7 +156,9 @@ func (s *Store) GetWorkerBestDiffs(symbol string) map[string]WorkerInfo {
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT worker_name, best_all_time,
 		COALESCE(last_seen,''), COALESCE(connected_at,''),
-		COALESCE(shares_offset,0), COALESCE(invalid_shares_offset,0)
+		COALESCE(shares_offset,0), COALESCE(invalid_shares_offset,0),
+		COALESCE(network_diff_at_best,0), COALESCE(height_at_best,0),
+		COALESCE(time_at_best,'')
 		FROM worker_best_diff WHERE coin_symbol=?`, symbol)
 	if err != nil {
 		return nil
@@ -160,7 +169,8 @@ func (s *Store) GetWorkerBestDiffs(symbol string) map[string]WorkerInfo {
 		var name string
 		var info WorkerInfo
 		if err := rows.Scan(&name, &info.BestAllTime, &info.LastSeen,
-			&info.ConnectedAt, &info.SharesOffset, &info.InvalidSharesOffset); err == nil {
+			&info.ConnectedAt, &info.SharesOffset, &info.InvalidSharesOffset,
+			&info.NetworkDiffAtBest, &info.HeightAtBest, &info.TimeAtBest); err == nil {
 			result[name] = info
 		}
 	}
@@ -174,16 +184,27 @@ func (s *Store) GetPoolBestAllTime(symbol string) float64 {
 	return best
 }
 
-func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest float64) float64 {
+func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, networkDiff float64, height uint32, bestTime string) float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.db.Exec(`INSERT INTO worker_best_diff (coin_symbol, worker_name, best_all_time, updated_at)
-		VALUES (?,?,?,?)
+	// The context columns (network_diff_at_best, height_at_best, time_at_best)
+	// are only overwritten when the incoming share is a NEW all-time best, so
+	// the stored context always matches the stored best_all_time value.
+	s.db.Exec(`INSERT INTO worker_best_diff
+		(coin_symbol, worker_name, best_all_time, updated_at,
+		 network_diff_at_best, height_at_best, time_at_best)
+		VALUES (?,?,?,?,?,?,?)
 		ON CONFLICT(coin_symbol, worker_name) DO UPDATE SET
-		best_all_time=MAX(excluded.best_all_time, best_all_time),
+		network_diff_at_best=CASE WHEN excluded.best_all_time > worker_best_diff.best_all_time
+			THEN excluded.network_diff_at_best ELSE worker_best_diff.network_diff_at_best END,
+		height_at_best=CASE WHEN excluded.best_all_time > worker_best_diff.best_all_time
+			THEN excluded.height_at_best ELSE worker_best_diff.height_at_best END,
+		time_at_best=CASE WHEN excluded.best_all_time > worker_best_diff.best_all_time
+			THEN excluded.time_at_best ELSE worker_best_diff.time_at_best END,
+		best_all_time=MAX(excluded.best_all_time, worker_best_diff.best_all_time),
 		updated_at=excluded.updated_at`,
-		symbol, workerName, sessionBest, now)
+		symbol, workerName, sessionBest, now, networkDiff, height, bestTime)
 	var best float64
 	s.db.QueryRow(`SELECT best_all_time FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
 		symbol, workerName).Scan(&best)

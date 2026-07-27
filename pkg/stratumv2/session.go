@@ -628,7 +628,11 @@ processShare:
 	}
 
 	// Valid share.
-	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)
+	// Network difficulty of THIS share's job, derived the same way as the
+	// block check, so a recorded best share carries the difficulty of its
+	// own block for later comparison.
+	netDiff := TargetToDifficulty(NBitsToTarget(tmpl.NBits))
+	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty, netDiff, tmpl.Height)
 
 	s.logShareResult(ch, share.ChannelID, result, vdResult)
 
@@ -739,7 +743,11 @@ processExtendedShare:
 		}
 	}
 
-	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty)
+	// Network difficulty of THIS share's job, derived the same way as the
+	// block check, so a recorded best share carries the difficulty of its
+	// own block for later comparison.
+	netDiff := TargetToDifficulty(NBitsToTarget(tmpl.NBits))
+	lastSeq, accepted, sumDiff, vdResult := ch.RecordShare(share.SequenceNum, result.Difficulty, netDiff, tmpl.Height)
 
 	s.logShareResult(ch, share.ChannelID, result, vdResult)
 

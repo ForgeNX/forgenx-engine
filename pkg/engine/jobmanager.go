@@ -381,7 +381,7 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 	}
 
 	if cleanJobs {
-		jm.logger.Info("new block detected at height %d", template.Height)
+		jm.logger.Info("[%s] new block detected at height %d", jm.coin.Symbol(), template.Height)
 	}
 
 	// Notify while holding the lock — prevents concurrent calls from double-broadcasting

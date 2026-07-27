@@ -499,6 +499,7 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 	for _, sess := range srv.sessions {
 		for _, ch := range sess.Channels() {
 			accepted, rejected, _ := ch.Stats()
+			bestNetDiff, bestHeight, bestTime := ch.BestContext()
 			out = append(out, stratum.SessionInfo{
 				ID:             fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
 				WorkerName:     ch.UserIdentity(),
@@ -510,6 +511,9 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 				SharesAccepted: accepted,
 				SharesRejected: rejected,
 				BestDifficulty: ch.BestDifficulty(),
+				BestNetworkDiff: bestNetDiff,
+				BestHeight:      bestHeight,
+				BestTime:        bestTime,
 				Vendor:         sess.Vendor(),
 				Firmware:       sess.Firmware(),
 				DeviceID:       sess.DeviceID(),
