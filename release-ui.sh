@@ -57,5 +57,10 @@ register_app('forgenx-engine')
 " 2>/dev/null || true
 sudo docker exec forgenx-proxy nginx -s reload 2>/dev/null || true
 
+# Force the store backend to reload manifests so the App Store immediately
+# sees the new version (prevents the phantom "newer -> older" update prompt).
+echo "--- Refreshing store cache ---"
+curl -s -X POST "http://localhost:8001/api/forgenx/refresh?force=true" >/dev/null 2>&1 && echo "store cache refreshed" || echo "store refresh failed (non-fatal)"
+
 echo ""
 echo "=== Done! Sync App Store and update engine ==="
