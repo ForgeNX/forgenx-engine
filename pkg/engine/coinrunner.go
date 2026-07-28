@@ -888,6 +888,17 @@ func submitSV2Block(
 	if symbol == "XEC" {
 		runner.MarkBlockSubmit(time.Now())
 	}
+	// Verify the block landed on-chain and record it in pool stats (blocks
+	// found / Luck), mirroring the V1 path (sharevalidator.go). Without this an
+	// SV2-solved block is submitted and accepted but never shows in the UI.
+	if actualHash, err := rpcClient.GetBlockHash(int64(job.Height)); err != nil {
+		runner.logger.Warn("[%s] could not verify SV2 block submission: %v", symbol, err)
+	} else if actualHash == result.HashHex {
+		runner.logger.Info("[%s] block %s confirmed at height %d!", symbol, result.HashHex, job.Height)
+		runner.stats.RecordBlock(symbol, result.HashHex, int64(job.Height), ch.UserIdentity())
+	} else {
+		runner.logger.Warn("[%s] SV2 block not confirmed: expected %s, got %s", symbol, result.HashHex, actualHash)
+	}
 }
 
 // persistLostBlockSV2 writes a solved-but-unsubmitted SV2 block's full hex to
