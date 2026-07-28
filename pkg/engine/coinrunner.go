@@ -368,7 +368,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				StartDiff:                cfg.Stratum.Difficulty,
 				Logger:                   runner.logger,
 				ConnectionTimeoutSeconds: cfg.Stratum.ConnectionTimeout,
-				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, result *stratumv2.ShareResult) {
+				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, extranonce []byte, result *stratumv2.ShareResult) {
 					// Use pool difficulty (not actual hash difficulty) for hashrate estimation.
 					// Actual hash diff can be astronomically high (lucky shares) and would
 					// massively skew rolling hashrate averages — same approach as V1.
@@ -399,7 +399,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
 						// Block submission can retry with backoff (~seconds); run it
 						// off the share-response path so the miner isn't blocked.
-						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, symbol)
+						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, extranonce, symbol)
 					}
 				},
 				OnStale: func(workerName string) {
@@ -546,6 +546,9 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			runner.logger.Error("[%s] SV2 template build failed: %v", symbol, err)
 			return
 		}
+		// Attach the exact source template so a solved block is assembled from
+		// the transaction set this job was mined against, not the latest.
+		tmpl.SourceTemplate = evt.Template
 		runner.sv2Server.BroadcastTemplate(tmpl)
 	}
 
@@ -615,6 +618,7 @@ func (cr *CoinRunner) Start() error {
 					CleanJobs:         true,
 				}
 				if sv2Tmpl, err := stratumv2.BuildTemplateFromV1Job(src); err == nil {
+					sv2Tmpl.SourceTemplate = evt.Template
 					cr.sv2Server.BroadcastTemplate(sv2Tmpl)
 				}
 			}
@@ -766,32 +770,44 @@ func submitSV2Block(
 	job *stratumv2.JobTemplate,
 	ch *stratumv2.Channel,
 	share *stratumv2.MsgSubmitSharesStandardFields,
+	extranonce []byte,
 	symbol string,
 ) {
-	// Resolve this channel's own coinbase (solo mode) or fall back to the
-	// template's shared coinbase (pool mode) — same precedence rule
-	// session.go's channelMerkleRoot() uses, kept consistent here so the
-	// block we submit pays out to the same address the channel mined for.
+	// Use job.Coinbase1/2 directly — these ARE the channel-specific coinbase
+	// set in sendExtendedJobToChannel, and are EXACTLY what validation hashed
+	// via extendedChannelMerkleRoot(). Applying an OwnCoinbase() override here
+	// (as an earlier version did) risks diverging from the validated merkle
+	// root, producing a block whose body doesn't match its header.
 	coinb1, coinb2 := job.Coinbase1, job.Coinbase2
-	if oc1, oc2, ok := ch.OwnCoinbase(); ok {
-		coinb1, coinb2 = oc1, oc2
-	}
 
-	coinbaseTx := make([]byte, 0, len(coinb1)+4+len(coinb2))
+	// Reconstruct the EXACT coinbase the miner hashed:
+	//   Coinbase1 + Extranonce1 + minerExtranonce2 + Coinbase2
+	// Extended-channel miners roll their own extranonce2 (passed in as
+	// `extranonce`); omitting it yields a coinbase — and thus a whole block —
+	// the node rejects with "Block decode failed". Must match the coinbase
+	// used by extendedChannelMerkleRoot()/HashCoinbaseTx() during validation.
+	en1 := ch.Extranonce1Bytes()
+	coinbaseTx := make([]byte, 0, len(coinb1)+len(en1)+len(extranonce)+len(coinb2))
 	coinbaseTx = append(coinbaseTx, coinb1...)
-	coinbaseTx = append(coinbaseTx, ch.Extranonce1Bytes()...)
+	coinbaseTx = append(coinbaseTx, en1...)
+	coinbaseTx = append(coinbaseTx, extranonce...)
 	coinbaseTx = append(coinbaseTx, coinb2...)
 
-	coinbaseHash := stratumv2.CoinbaseHashForTemplate(coinb1, ch.Extranonce1Bytes(), nil, coinb2)
+	coinbaseHash := stratumv2.CoinbaseHashForTemplate(coinb1, en1, extranonce, coinb2)
 	merkleRoot := stratumv2.ComputeMerkleRoot(coinbaseHash, job.MerkleBranch)
 
 	header := stratumv2.BuildHeader(share.Version, job.PrevHash, merkleRoot, share.NTime, job.NBits, share.Nonce)
 
-	// The coin's BuildBlock needs the ORIGINAL *noderpc.BlockTemplate
-	// (for its full Transactions list) — not stratumv2.JobTemplate,
-	// which intentionally doesn't carry that. Fetch it fresh from the
-	// JobManager rather than threading it through every SV2 call site.
-	template := jobMgr.LatestTemplate()
+	// Use the EXACT template this job was mined against (attached as
+	// SourceTemplate when the job was built) — NOT jobMgr.LatestTemplate(),
+	// which with DGB's 15s blocks may have already advanced to a different
+	// height with a different transaction set, yielding an invalid block.
+	template, ok := job.SourceTemplate.(*noderpc.BlockTemplate)
+	if !ok || template == nil {
+		// Fallback: latest template (better than nothing), but log loudly.
+		template = jobMgr.LatestTemplate()
+		runner.logger.Error("[%s] SV2 block submission: SourceTemplate missing, falling back to latest (tx set may mismatch)", symbol)
+	}
 	if template == nil {
 		runner.logger.Error("[%s] SV2 block submission: no template available", symbol)
 		return
@@ -804,12 +820,50 @@ func submitSV2Block(
 	}
 
 	if err := rpcClient.SubmitBlock(blockHex); err != nil {
-		runner.logger.Error("[%s] SV2 submitting block: %v", symbol, err)
+		// SubmitBlock already retried transient failures. Persist the full hex
+		// so a solved-but-unsubmitted block is never lost — it can be inspected
+		// or resubmitted manually. This was previously ONLY done on the V1 path;
+		// the SV2 path silently lost blocks (e.g. "Block decode failed").
+		runner.logger.Error("[%s] *** SV2 POSSIBLE LOST BLOCK *** height=%d worker=%q: %v",
+			symbol, job.Height, ch.UserIdentity(), err)
+		persistLostBlockSV2(runner, symbol, int64(job.Height), ch.UserIdentity(), "sv2-submit-failed", blockHex)
 		return
 	}
 
 	runner.logger.Info("[%s] *** SV2 BLOCK SUBMITTED *** height=%d worker=%q",
 		symbol, job.Height, ch.UserIdentity())
+}
+
+// persistLostBlockSV2 writes a solved-but-unsubmitted SV2 block's full hex to
+// disk so it is never lost. Mirrors ShareValidator.persistLostBlock for the V1
+// path. The hex can be resubmitted manually via the node's submitblock RPC.
+func persistLostBlockSV2(runner *CoinRunner, symbol string, height int64, worker, reason, blockHex string) {
+	dir := "/pool/lost-blocks"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		runner.logger.Error("[%s] could not create lost-blocks dir: %v", symbol, err)
+		return
+	}
+	ts := time.Now().UTC()
+	fname := fmt.Sprintf("%s/%s-h%d-%d.json", dir, symbol, height, ts.Unix())
+	rec := map[string]interface{}{
+		"symbol":    symbol,
+		"height":    height,
+		"worker":    worker,
+		"reason":    reason,
+		"block_hex": blockHex,
+		"found_at":  ts.Format(time.RFC3339),
+		"protocol":  "sv2",
+	}
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		runner.logger.Error("[%s] could not marshal lost-block record: %v", symbol, err)
+		return
+	}
+	if err := os.WriteFile(fname, data, 0o644); err != nil {
+		runner.logger.Error("[%s] could not write lost-block record %s: %v", symbol, fname, err)
+		return
+	}
+	runner.logger.Error("[%s] *** LOST-BLOCK RECORD WRITTEN: %s — resubmit manually if needed ***", symbol, fname)
 }
 
 func (r *CoinRunner) Hashrate() float64 {

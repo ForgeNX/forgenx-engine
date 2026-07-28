@@ -80,11 +80,21 @@ type JobTemplate struct {
 	NTime        uint32 // current time at template creation; miners may use ≥ this
 	Height       uint32
 	IsFutureJob  bool // true when we send before SetNewPrevHash (pre-staging)
+	// SourceTemplate carries the ORIGINAL *noderpc.BlockTemplate this job was
+	// built from (stored as any to avoid a stratumv2→noderpc import). Block
+	// submission needs the exact template's transaction list — using the
+	// LATEST template instead races DGB's 15s blocks and can build a block
+	// with the wrong tx set. The engine sets and type-asserts this.
+	SourceTemplate any
 }
 
 // shareSubmitCallback is called by the session when a valid share arrives.
 // The server registers this to forward block solutions to the node RPC.
-type shareSubmitCallback func(job *JobTemplate, ch *Channel, share *MsgSubmitSharesStandardFields, result *ShareResult)
+// extranonce carries the miner-rolled extranonce2 for EXTENDED-channel shares
+// (nil for standard channels). It is REQUIRED to reconstruct the exact coinbase
+// the miner hashed when submitting a solved block — omitting it produces a
+// malformed block the node rejects with "Block decode failed".
+type shareSubmitCallback func(job *JobTemplate, ch *Channel, share *MsgSubmitSharesStandardFields, extranonce []byte, result *ShareResult)
 
 // Session represents one connected miner.
 type Session struct {
@@ -639,7 +649,7 @@ processShare:
 	// Notify the engine (records stats synchronously; block submission,
 	// if any, is dispatched to its own goroutine inside the callback).
 	if s.onShare != nil {
-		s.onShare(tmpl, ch, share, result)
+		s.onShare(tmpl, ch, share, nil, result)
 	}
 
 	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
@@ -760,7 +770,7 @@ processExtendedShare:
 			NTime:       share.NTime,
 			Version:     share.Version,
 		}
-		s.onShare(tmpl, ch, adapted, result)
+		s.onShare(tmpl, ch, adapted, share.Extranonce, result)
 	}
 
 	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
