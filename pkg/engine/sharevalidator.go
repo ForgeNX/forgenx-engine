@@ -228,19 +228,6 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 	// Share is valid at pool difficulty
 	sv.stats.RecordShare(sv.symbol, metrics.ShareValid, share.WorkerName, actualDiff)
 
-	// increment accepted share counter for metrics
-	if sv.runner != nil {
-
-		sv.runner.sharesMu.Lock()
-		sv.runner.acceptedShares++
-
-		sv.runner.recentShares = append(sv.runner.recentShares, shareWork{
-			t:    time.Now(),
-			diff: sessionDiff,
-		})
-		sv.runner.sharesMu.Unlock()
-	}
-
 	sv.logger.Info("share accepted: worker=%s diff=%g", share.WorkerName, actualDiff)
 
 	// Check if it meets the network target (potential block!)
@@ -330,6 +317,23 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 		}
 	}
 
+	// Hashrate sample bookkeeping — moved AFTER the block-detection/submit
+	// section so its coin-wide sharesMu lock (also held by hashrate calc and
+	// the /miners endpoint) never sits on the block-submission critical path.
+	// Purely metrics: acceptedShares is unused, recentShares feeds only the
+	// rolling hashrate average. Share COUNTING (RecordShare) runs earlier,
+	// unconditionally, so counts are unaffected.
+	if sv.runner != nil {
+
+		sv.runner.sharesMu.Lock()
+		sv.runner.acceptedShares++
+
+		sv.runner.recentShares = append(sv.runner.recentShares, shareWork{
+			t:    time.Now(),
+			diff: sessionDiff,
+		})
+		sv.runner.sharesMu.Unlock()
+	}
 	return nil
 }
 

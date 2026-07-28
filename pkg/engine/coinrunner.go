@@ -369,6 +369,19 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				Logger:                   runner.logger,
 				ConnectionTimeoutSeconds: cfg.Stratum.ConnectionTimeout,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, extranonce []byte, result *stratumv2.ShareResult) {
+					// BLOCK SUBMISSION FIRST — before any stats/lock bookkeeping.
+					// Solo mining is a latency race against the whole network, so the
+					// instant we believe we have a block we dispatch it; everything
+					// else (hashrate stats, best-ratio) is local bookkeeping that can
+					// wait a few microseconds and must NOT sit ahead of the submit
+					// (notably the sharesMu lock, which other goroutines can hold).
+					if result.MeetsBlock {
+						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
+							symbol, ch.UserIdentity(), job.Height, result.HashHex)
+						// Block submission can retry with backoff (~seconds); run it
+						// off the share-response path so the miner isn't blocked.
+						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, extranonce, symbol)
+					}
 					// Use pool difficulty (not actual hash difficulty) for hashrate estimation.
 					// Actual hash diff can be astronomically high (lucky shares) and would
 					// massively skew rolling hashrate averages — same approach as V1.
@@ -394,13 +407,6 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 						}
 					}
 					runner.sharesMu.Unlock()
-					if result.MeetsBlock {
-						runner.logger.Info("[%s] *** SV2 BLOCK CANDIDATE FOUND *** worker=%q height=%d hash=%s",
-							symbol, ch.UserIdentity(), job.Height, result.HashHex)
-						// Block submission can retry with backoff (~seconds); run it
-						// off the share-response path so the miner isn't blocked.
-						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, extranonce, symbol)
-					}
 				},
 				OnStale: func(workerName string) {
 					runner.stats.RecordShare(symbol, metrics.ShareStale, workerName, 0)
