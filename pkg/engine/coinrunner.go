@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/coin"
+	"github.com/ForgeNX/forgenx-engine/pkg/coinbase"
 	"github.com/ForgeNX/forgenx-engine/pkg/config"
 	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
@@ -61,6 +62,10 @@ type CoinRunner struct {
 	startTime       time.Time
 	recentShares    []shareWork
 	sharesMu        sync.Mutex // protects acceptedShares + recentShares + bestRatio*
+	// lastBlockSubmit is the time of the most recent block submission, shared
+	// across V1 and V2 so the eCash cooldown coordinates between both protocols.
+	lastBlockSubmit   time.Time
+	lastBlockSubmitMu sync.Mutex
 
 	// Pool-wide best-ratio (engine-session): the closest ANY worker has come
 	// to a block since this runner started. Resets only on engine restart.
@@ -380,7 +385,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 							symbol, ch.UserIdentity(), job.Height, result.HashHex)
 						// Block submission can retry with backoff (~seconds); run it
 						// off the share-response path so the miner isn't blocked.
-						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, extranonce, symbol)
+						go submitSV2Block(runner, c, rpcClient, jobMgr, job, ch, share, extranonce, result, symbol)
 					}
 					// Use pool difficulty (not actual hash difficulty) for hashrate estimation.
 					// Actual hash diff can be astronomically high (lucky shares) and would
@@ -777,6 +782,7 @@ func submitSV2Block(
 	ch *stratumv2.Channel,
 	share *stratumv2.MsgSubmitSharesStandardFields,
 	extranonce []byte,
+	result *stratumv2.ShareResult,
 	symbol string,
 ) {
 	// Use job.Coinbase1/2 directly — these ARE the channel-specific coinbase
@@ -819,6 +825,46 @@ func submitSV2Block(
 		return
 	}
 
+	// ── eCash (XEC) safety gates ──────────────────────────────────────────────
+	// Mirror the V1 path (sharevalidator.go): eCash/Avalanche needs a post-block
+	// cooldown, a chain-reorg check, and RTT validation before submitting, or we
+	// risk submitting on a parked/reorged chain. blockHashBE is the double-SHA256
+	// header hash reversed to big-endian — identical to V1's coinbase.ReverseBytes
+	// (result.Hash is the raw DoubleSHA256, matching V1's blockHash pre-reverse).
+	if symbol == "XEC" {
+		blockHashBE := coinbase.ReverseBytes(result.Hash[:])
+		// Cooldown: suppress submissions shortly after a block (shared V1/V2 state).
+		lastSubmit := runner.LastBlockSubmit()
+		if !lastSubmit.IsZero() {
+			if elapsed := time.Since(lastSubmit); elapsed < ecashBlockCooldown {
+				runner.logger.Warn("[%s] eCash block cooldown active (%.0fs remaining) - skipping SV2 submission",
+					symbol, (ecashBlockCooldown - elapsed).Seconds())
+				return
+			}
+		}
+		// Chain reorg check: verify the tip hasn't moved since the template was fetched.
+		if bestHash, err := rpcClient.GetBestBlockHash(); err != nil {
+			runner.logger.Warn("[%s] could not verify chain tip before SV2 submission: %v", symbol, err)
+		} else if bestHash != template.PreviousBlockHash {
+			runner.logger.Warn("[%s] eCash chain reorg detected: template prevhash=%s, current tip=%s - skipping SV2 submission",
+				symbol, template.PreviousBlockHash, bestHash)
+			return
+		}
+		// RTT (Real Time Target) validation.
+		if template.RTT != nil {
+			now := time.Now().Unix()
+			if !coin.IsRTTDataValid(template) {
+				runner.logger.Warn("[%s] RTT data malformed (all timestamps identical) - letting node decide on block validity", symbol)
+			} else if rttValid, rttErr := coin.CheckRTTTarget(blockHashBE, template, now); rttErr != nil {
+				runner.logger.Error("[%s] RTT computation error: %v - attempting SV2 submission anyway", symbol, rttErr)
+			} else if !rttValid {
+				runner.logger.Warn("[%s] block rejected by RTT - hash does not meet Real Time Target, not submitting", symbol)
+				return
+			} else {
+				runner.logger.Info("[%s] RTT check passed - block meets Real Time Target", symbol)
+			}
+		}
+	}
 	blockHex, err := c.BuildBlock(header[:], coinbaseTx, template)
 	if err != nil {
 		runner.logger.Error("[%s] SV2 building block: %v", symbol, err)
@@ -838,6 +884,10 @@ func submitSV2Block(
 
 	runner.logger.Info("[%s] *** SV2 BLOCK SUBMITTED *** height=%d worker=%q",
 		symbol, job.Height, ch.UserIdentity())
+	// Record submission time for the eCash cooldown (shared V1/V2 state).
+	if symbol == "XEC" {
+		runner.MarkBlockSubmit(time.Now())
+	}
 }
 
 // persistLostBlockSV2 writes a solved-but-unsubmitted SV2 block's full hex to
@@ -870,6 +920,21 @@ func persistLostBlockSV2(runner *CoinRunner, symbol string, height int64, worker
 		return
 	}
 	runner.logger.Error("[%s] *** LOST-BLOCK RECORD WRITTEN: %s — resubmit manually if needed ***", symbol, fname)
+}
+
+// LastBlockSubmit returns the time of the most recent block submission (any
+// protocol). Zero if none yet. Used for the eCash post-block cooldown.
+func (r *CoinRunner) LastBlockSubmit() time.Time {
+	r.lastBlockSubmitMu.Lock()
+	defer r.lastBlockSubmitMu.Unlock()
+	return r.lastBlockSubmit
+}
+
+// MarkBlockSubmit records the time of a block submission (any protocol).
+func (r *CoinRunner) MarkBlockSubmit(t time.Time) {
+	r.lastBlockSubmitMu.Lock()
+	r.lastBlockSubmit = t
+	r.lastBlockSubmitMu.Unlock()
 }
 
 func (r *CoinRunner) Hashrate() float64 {

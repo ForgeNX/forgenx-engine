@@ -42,7 +42,6 @@ type ShareValidator struct {
 	staleShareGrace   time.Duration // grace period to accept shares after a new block
 	lowDiffShareGrace time.Duration // grace period to accept shares at previous diff after a change
 	logger            *logging.Logger
-	lastBlockSubmit   time.Time // eCash: time of last block submission
 	runner            *CoinRunner
 }
 
@@ -238,8 +237,9 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 
 		// eCash block cooldown: suppress submissions shortly after a block
 		// to avoid submitting on Avalanche-parked chains
-		if sv.symbol == "XEC" && !sv.lastBlockSubmit.IsZero() {
-			elapsed := time.Since(sv.lastBlockSubmit)
+		lastSubmit := sv.runner.LastBlockSubmit()
+		if sv.symbol == "XEC" && !lastSubmit.IsZero() {
+			elapsed := time.Since(lastSubmit)
 			if elapsed < ecashBlockCooldown {
 				sv.logger.Warn("eCash block cooldown active (%.0fs remaining) - skipping submission",
 					(ecashBlockCooldown - elapsed).Seconds())
@@ -300,7 +300,7 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 
 		// Record submission time for eCash cooldown
 		if sv.symbol == "XEC" {
-			sv.lastBlockSubmit = time.Now()
+			sv.runner.MarkBlockSubmit(time.Now())
 		}
 
 		// Verify submission
