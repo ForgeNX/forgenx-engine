@@ -370,6 +370,16 @@ func (s *Store) GetBlockCount(symbol string) int64 {
 	return count
 }
 
+// BlockExistsAtHeight reports whether a confirmed block is recorded at the given
+// height for a coin. Used to classify a best-ratio share as a confirmed block.
+func (s *Store) BlockExistsAtHeight(symbol string, height int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var count int64
+	s.db.QueryRow(`SELECT COUNT(*) FROM blocks WHERE coin_symbol=? AND height=?`, symbol, height).Scan(&count)
+	return count > 0
+}
+
 type LuckStats struct {
 	AvgLuck    float64
 	Luckiest   float64

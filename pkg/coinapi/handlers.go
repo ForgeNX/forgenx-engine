@@ -480,24 +480,25 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			return false
 		}(),
 		"pool": map[string]interface{}{
-			"shares_accepted":    sharesAccepted,
-			"shares_rejected":    sharesRejected,
-			"shares_stale":       sharesStale,
-			"blocks_found":       persisted.BlocksFound,
-			"last_block_time":    getString(coinStats, "last_block_time"),
-			"uptime_seconds":     uptime,
-			"best_session_diff":  bestSessionDiff,
-			"best_all_time_diff": bestAllTimeDiff,
+			"shares_accepted":       sharesAccepted,
+			"shares_rejected":       sharesRejected,
+			"shares_stale":          sharesStale,
+			"blocks_found":          persisted.BlocksFound,
+			"last_block_time":       getString(coinStats, "last_block_time"),
+			"uptime_seconds":        uptime,
+			"best_session_diff":     bestSessionDiff,
+			"best_all_time_diff":    bestAllTimeDiff,
 			"best_ratio":            getFloat(poolRatio, "best_ratio"),
 			"best_ratio_share_diff": getFloat(poolRatio, "best_ratio_share_diff"),
 			"best_ratio_net_diff":   getFloat(poolRatio, "best_ratio_net_diff"),
 			"best_ratio_height":     getFloat(poolRatio, "best_ratio_height"),
 			"best_ratio_worker":     getString(poolRatio, "best_ratio_worker"),
 			"best_ratio_time":       getString(poolRatio, "best_ratio_time"),
-			"last_share_time":    lastShareTime,
-			"hashrate":           totalHashrate,
-			"max_hashrate":       c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
-			"worker_count":       workerCount,
+			"best_ratio_outcome":    c.classifyBestRatioOutcome(symbol, getFloat(poolRatio, "best_ratio"), int64(getFloat(poolRatio, "best_ratio_height"))),
+			"last_share_time":       lastShareTime,
+			"hashrate":              totalHashrate,
+			"max_hashrate":          c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
+			"worker_count":          workerCount,
 		},
 		"engine_version": c.engineVersion,
 		"engine_updated": c.engineBuildDate,
@@ -506,6 +507,30 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 }
 
 // ── /api/apps/{coin}/worker DELETE ───────────────────────────────────────────
+
+// classifyBestRatioOutcome labels a pool best-ratio share. When the share met or
+// exceeded network difficulty (ratio >= 1.0) it solved a block; we then report
+// whether that block confirmed (in the blocks table), orphaned (a lost-block
+// record exists for the height), or is still pending resolution. Below 1.0 there
+// is no block, so the outcome is empty and the UI shows the plain percentage.
+func (c *CoinAPI) classifyBestRatioOutcome(symbol string, ratio float64, height int64) string {
+	if ratio < 1.0 || height <= 0 {
+		return ""
+	}
+	if c.store.BlockExistsAtHeight(symbol, height) {
+		return "confirmed"
+	}
+	// Look for a lost-block record for this height: /pool/lost-blocks/<SYMBOL>-h<height>-*.json
+	prefix := fmt.Sprintf("%s-h%d-", symbol, height)
+	if entries, err := os.ReadDir("/pool/lost-blocks"); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), prefix) {
+				return "orphaned"
+			}
+		}
+	}
+	return "pending"
+}
 
 func (c *CoinAPI) HandleDeleteWorker(w http.ResponseWriter, r *http.Request, symbol, workerName string) {
 	if r.Method != http.MethodDelete {
@@ -754,6 +779,7 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 			limit = n
 		}
 	}
+
 	blocks, err := c.store.GetBlocks(symbol, limit)
 	if err != nil {
 		writeError(w, 500, "failed to query blocks")
