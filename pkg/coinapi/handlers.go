@@ -271,6 +271,7 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 			"best_ratio_share_diff":  getFloat(m, "best_ratio_share_diff"),
 			"best_ratio_net_diff":    getFloat(m, "best_ratio_net_diff"),
 			"best_ratio_height":      getFloat(m, "best_ratio_height"),
+			"best_ratio_outcome":     c.classifyBestRatioOutcome(symbol, getFloat(m, "best_ratio"), int64(getFloat(m, "best_ratio_height"))),
 			"best_ratio_time":        getString(m, "best_ratio_time"),
 			"last_share":             lastShare,
 			"valid_shares":           sessionSharesAccepted,
