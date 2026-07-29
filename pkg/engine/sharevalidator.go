@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/coin"
@@ -311,6 +312,17 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 			if actualHash == blockHashHex {
 				sv.logger.Info("block %s confirmed at height %d!", blockHashHex, jobData.Template.Height)
 				sv.stats.RecordBlock(sv.symbol, blockHashHex, jobData.Template.Height, share.WorkerName)
+				// Durably persist to the blocks table (Blocks/Luck UI), mirroring
+				// the SV2 path. minerAddress = payout address (before the ".").
+				miner := share.WorkerName
+				if dot := strings.IndexByte(miner, '.'); dot >= 0 {
+					miner = miner[:dot]
+				}
+				if sv.runner != nil && sv.runner.store != nil {
+					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, 0, 100.0); err != nil {
+						sv.logger.Warn("could not persist block to blocks table: %v", err)
+					}
+				}
 			} else {
 				sv.logger.Warn("block not confirmed: expected %s, got %s", blockHashHex, actualHash)
 			}

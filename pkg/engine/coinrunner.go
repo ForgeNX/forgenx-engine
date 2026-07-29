@@ -39,10 +39,15 @@ type shareWork struct {
 }
 
 // CoinRunner manages the complete mining pipeline for a single coin.
-// workerDiffStore is a minimal interface for persisting worker difficulty.
+// workerDiffStore is a minimal interface for persisting worker difficulty and
+// solved blocks. Implemented by *coinapi.Store, injected via SetStore — the
+// engine only depends on this interface, never on coinapi (no import cycle).
 type workerDiffStore interface {
 	SaveWorkerDifficulty(symbol, workerName string, difficulty float64)
 	GetWorkerLastDifficulty(symbol, workerName string) float64
+	// RecordBlock persists a solved block to the durable blocks table so it
+	// appears in the Blocks/Luck UI. Idempotent (INSERT OR IGNORE on height).
+	RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress string, sharesSinceLast int64, luckPercent float64) error
 }
 
 type CoinRunner struct {
@@ -896,6 +901,18 @@ func submitSV2Block(
 	} else if actualHash == result.HashHex {
 		runner.logger.Info("[%s] block %s confirmed at height %d!", symbol, result.HashHex, job.Height)
 		runner.stats.RecordBlock(symbol, result.HashHex, int64(job.Height), ch.UserIdentity())
+		// Durably persist to the blocks table (Blocks/Luck UI). minerAddress is
+		// the payout address (worker identity before the "."). Luck/shares-since
+		// default for now; can be computed later. Idempotent on height.
+		miner := ch.UserIdentity()
+		if dot := strings.IndexByte(miner, '.'); dot >= 0 {
+			miner = miner[:dot]
+		}
+		if runner.store != nil {
+			if err := runner.store.RecordBlock(symbol, int64(job.Height), result.HashHex, time.Now().UTC().Format(time.RFC3339), miner, 0, 100.0); err != nil {
+				runner.logger.Warn("[%s] could not persist block to blocks table: %v", symbol, err)
+			}
+		}
 	} else {
 		runner.logger.Warn("[%s] SV2 block not confirmed: expected %s, got %s", symbol, result.HashHex, actualHash)
 	}
