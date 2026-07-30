@@ -183,13 +183,24 @@ func (s *Store) GetWorkerBestDiffs(symbol string) map[string]WorkerInfo {
 }
 
 // GetPoolBestAllTime returns the highest all-time best share difficulty across all workers for a coin.
-func (s *Store) GetPoolBestAllTime(symbol string) (float64, string, string) {
+func (s *Store) GetPoolBestAllTime(symbol string) (float64, string, string, bool) {
+	// Must hold the mutex: without it, this read races concurrent share-submission
+	// writes to worker_best_diff. Under contention (many miners) the unlocked read
+	// intermittently failed and — with the error ignored — returned empty strings,
+	// making best_all_time_worker/time blank for one poll and the all-time panel
+	// flicker. The returned bool is false on any read error so the caller can keep
+	// the previous value instead of publishing an empty one.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var best float64
 	var worker, bestTime string
-	s.db.QueryRow(`SELECT best_all_time, COALESCE(worker_name,''), COALESCE(time_at_best,'')
+	err := s.db.QueryRow(`SELECT best_all_time, COALESCE(worker_name,''), COALESCE(time_at_best,'')
 		FROM worker_best_diff WHERE coin_symbol=? ORDER BY best_all_time DESC LIMIT 1`,
 		symbol).Scan(&best, &worker, &bestTime)
-	return best, worker, bestTime
+	if err != nil {
+		return 0, "", "", false
+	}
+	return best, worker, bestTime, true
 }
 
 func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, networkDiff float64, height uint32, bestTime string) (float64, float64, int64, string) {
@@ -459,6 +470,8 @@ func (s *Store) UpdateAndGetMaxPoolHashrate(symbol string, current float64) floa
 }
 
 func (s *Store) SaveWorkerDifficulty(symbol, workerName string, difficulty float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s.db.Exec(`INSERT INTO worker_best_diff (coin_symbol, worker_name, best_all_time, updated_at, last_difficulty)
 		VALUES (?, ?, 0, ?, ?)
@@ -467,6 +480,8 @@ func (s *Store) SaveWorkerDifficulty(symbol, workerName string, difficulty float
 }
 
 func (s *Store) GetWorkerLastDifficulty(symbol, workerName string) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var diff float64
 	s.db.QueryRow(`SELECT COALESCE(last_difficulty,0) FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
 		symbol, workerName).Scan(&diff)

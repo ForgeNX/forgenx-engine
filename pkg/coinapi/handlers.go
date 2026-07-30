@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,17 @@ type CoinAPI struct {
 	donationFunc    DonationFunc
 	portStatusFunc  PortStatusFunc
 	stats           statsResetter
+
+	// Last-good all-time best-share values per coin, to bridge a rare transient
+	// store read miss so best_all_time_* never blanks for a single poll.
+	bestAllTimeMu    sync.Mutex
+	bestAllTimeCache map[string]bestAllTimeCtx
+}
+
+type bestAllTimeCtx struct {
+	diff   float64
+	worker string
+	time   string
 }
 
 // NodeRPCFunc fetches node info for a coin symbol.
@@ -50,8 +62,9 @@ type PortStatusFunc func(symbol string) (v1, v2 bool)
 
 func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 	return &CoinAPI{
-		store:        store,
-		engineAPIURL: engineAPIURL,
+		store:            store,
+		engineAPIURL:     engineAPIURL,
+		bestAllTimeCache: make(map[string]bestAllTimeCtx),
 	}
 }
 
@@ -414,7 +427,20 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 	bestSessionWorker := ""
 	bestSessionTime := ""
 	lastShareTime := ""
-	bestAllTimeDiff, bestAllTimeWorker, bestAllTimeTime := c.store.GetPoolBestAllTime(symbol)
+	bestAllTimeDiff, bestAllTimeWorker, bestAllTimeTime, bestAllTimeOK := c.store.GetPoolBestAllTime(symbol)
+	if !bestAllTimeOK {
+		// Transient read miss: reuse the last-good values so the field never blanks
+		// for a single poll (which would make the all-time UI panel flicker).
+		c.bestAllTimeMu.Lock()
+		if cached, ok := c.bestAllTimeCache[symbol]; ok {
+			bestAllTimeDiff, bestAllTimeWorker, bestAllTimeTime = cached.diff, cached.worker, cached.time
+		}
+		c.bestAllTimeMu.Unlock()
+	} else if bestAllTimeWorker != "" {
+		c.bestAllTimeMu.Lock()
+		c.bestAllTimeCache[symbol] = bestAllTimeCtx{diff: bestAllTimeDiff, worker: bestAllTimeWorker, time: bestAllTimeTime}
+		c.bestAllTimeMu.Unlock()
+	}
 	// Pool-wide engine-session best-ratio (closest any worker has come to a
 	// block since the engine started). Lives in-memory on the engine runner.
 	poolRatio, _ := c.fetchEngineJSON("/pool-ratio?coin=" + symbol)
