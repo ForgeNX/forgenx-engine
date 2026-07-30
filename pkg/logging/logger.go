@@ -33,6 +33,88 @@ var (
 	globalMu    sync.RWMutex
 )
 
+// File sink: when configured via SetLogFile, every log line is written to this
+// file (in addition to stdout) so logs survive container recreation. The file
+// is size-rotated to bound disk usage. Writes are mutex-guarded and buffered by
+// the OS (no per-line fsync), so the cost over stdout-only is negligible.
+var (
+	fileMu       sync.Mutex
+	logFile      *os.File
+	logFilePath  string
+	logFileSize  int64
+	maxFileBytes int64 = 50 * 1024 * 1024 // 50 MB per file
+	maxFileKeep  int   = 5                // engine.log + .1 .. .4  -> 250 MB max
+)
+
+// SetLogFile enables durable file logging at the given path (in addition to
+// stdout). Safe to call once at startup. If the file can't be opened, logging
+// continues to stdout only. Passing an empty path disables file logging.
+func SetLogFile(path string) {
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+	}
+	logFilePath = path
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "[%s] [main] [WARN] could not open log file %q: %v (stdout only)\n",
+			time.Now().Format("2006-01-02 15:04:05"), path, err)
+		return
+	}
+	logFile = f
+	if fi, err := f.Stat(); err == nil {
+		logFileSize = fi.Size()
+	}
+}
+
+// writeFile appends a line to the log file, rotating first if it would exceed
+// the size cap. No-op if file logging is disabled.
+func writeFile(line string) {
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	if logFile == nil {
+		return
+	}
+	if logFileSize+int64(len(line)) > maxFileBytes {
+		rotateLocked()
+	}
+	n, err := logFile.WriteString(line)
+	if err == nil {
+		logFileSize += int64(n)
+	}
+}
+
+// rotateLocked rolls engine.log -> engine.log.1 -> ... dropping the oldest,
+// then reopens a fresh engine.log. Caller must hold fileMu.
+func rotateLocked() {
+	if logFile == nil || logFilePath == "" {
+		return
+	}
+	logFile.Close()
+	logFile = nil
+	for i := maxFileKeep - 1; i >= 1; i-- {
+		older := fmt.Sprintf("%s.%d", logFilePath, i)
+		newer := logFilePath
+		if i > 1 {
+			newer = fmt.Sprintf("%s.%d", logFilePath, i-1)
+		}
+		os.Rename(newer, older)
+	}
+	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "[%s] [main] [WARN] log rotation reopen failed: %v\n",
+			time.Now().Format("2006-01-02 15:04:05"), err)
+		return
+	}
+	logFile = f
+	logFileSize = 0
+}
+
 // Module constants for consistent tagging.
 const (
 	ModuleMain    = "main"
@@ -110,7 +192,9 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	}
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(os.Stdout, "[%s] [%s] [%s] %s\n", timestamp, l.module, level, msg)
+	line := fmt.Sprintf("[%s] [%s] [%s] %s\n", timestamp, l.module, level, msg)
+	fmt.Fprint(os.Stdout, line)
+	writeFile(line)
 
 	if level == LevelFatal {
 		os.Exit(1)

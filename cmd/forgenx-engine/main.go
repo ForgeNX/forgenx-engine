@@ -60,7 +60,15 @@ func main() {
 
 	// Set log level
 	logging.SetGlobalLevel(cfg.LogLevel)
-	logger.Info("pool: %s | log level: %s", cfg.PoolName, cfg.LogLevel)
+	// Durable file logging: write logs to a file on the persisted /pool/logs
+	// volume (in addition to stdout) so they survive container recreation on
+	// redeploys. Path is overridable via FORGENX_LOG_FILE; empty disables it.
+	logFilePath := os.Getenv("FORGENX_LOG_FILE")
+	if logFilePath == "" {
+		logFilePath = "/pool/logs/engine.log"
+	}
+	logging.SetLogFile(logFilePath)
+	logger.Info("pool: %s | log level: %s | log file: %s", cfg.PoolName, cfg.LogLevel, logFilePath)
 
 	// Create stats
 	stats := metrics.NewStats()

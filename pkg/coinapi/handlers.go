@@ -899,7 +899,18 @@ func (c *CoinAPI) HandleEngineLogs(w http.ResponseWriter, r *http.Request) {
 			tail = n
 		}
 	}
-	// Try common engine container names
+	// Durable file logs first (survive container recreation). Path matches
+	// SetLogFile in main.go. Fall back to Docker logs if the file is empty or
+	// missing (e.g. file logging disabled via FORGENX_LOG_FILE="").
+	logFilePath := os.Getenv("FORGENX_LOG_FILE")
+	if logFilePath == "" {
+		logFilePath = "/pool/logs/engine.log"
+	}
+	if output, err := fileTail(logFilePath, tail); err == nil && strings.TrimSpace(output) != "" {
+		writeJSON(w, map[string]interface{}{"success": true, "logs": output})
+		return
+	}
+	// Fallback: Docker logs
 	containerNames := []string{"forgenx-engine-engine-1", "forgenx-engine_engine_1", "forgenx-engine"}
 	var output string
 	var err error
@@ -949,6 +960,57 @@ func (c *CoinAPI) HandleLogs(w http.ResponseWriter, r *http.Request, coinID stri
 		"success": true,
 		"logs":    output,
 	})
+}
+
+// fileTail returns the last `tail` lines of a log file, reading from the end so
+// it stays fast regardless of file size (no full-file load). Returns the raw
+// text (newline-joined). If the file doesn't exist yet, returns empty (not an
+// error) so a freshly-deployed engine shows an empty log rather than failing.
+func fileTail(path string, tail int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	size := fi.Size()
+	if size == 0 {
+		return "", nil
+	}
+	// Read backwards in chunks until we have `tail`+1 newlines or hit the start.
+	const chunk = 64 * 1024
+	var buf []byte
+	newlines := 0
+	pos := size
+	for pos > 0 && newlines <= tail {
+		readSize := int64(chunk)
+		if pos < readSize {
+			readSize = pos
+		}
+		pos -= readSize
+		tmp := make([]byte, readSize)
+		if _, err := f.ReadAt(tmp, pos); err != nil {
+			return "", err
+		}
+		buf = append(tmp, buf...)
+		newlines = 0
+		for _, b := range buf {
+			if b == '\n' {
+				newlines++
+			}
+		}
+	}
+	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
+	if len(lines) > tail {
+		lines = lines[len(lines)-tail:]
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // dockerLogs fetches the last `tail` lines of logs for a container by calling
