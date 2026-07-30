@@ -411,8 +411,10 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 
 	// Pool stats from miners
 	bestSessionDiff := 0.0
+	bestSessionWorker := ""
+	bestSessionTime := ""
 	lastShareTime := ""
-	bestAllTimeDiff := c.store.GetPoolBestAllTime(symbol)
+	bestAllTimeDiff, bestAllTimeWorker, bestAllTimeTime := c.store.GetPoolBestAllTime(symbol)
 	// Pool-wide engine-session best-ratio (closest any worker has come to a
 	// block since the engine started). Lives in-memory on the engine runner.
 	poolRatio, _ := c.fetchEngineJSON("/pool-ratio?coin=" + symbol)
@@ -430,6 +432,8 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 					}
 					if bd := getFloat(m, "best_difficulty"); bd > bestSessionDiff {
 						bestSessionDiff = bd
+						bestSessionWorker = getString(m, "worker_name")
+						bestSessionTime = getString(m, "best_time")
 					}
 					hr := getFloat(m, "hashrate_5m")
 					if hr == 0 {
@@ -493,7 +497,11 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"last_block_time":       getString(coinStats, "last_block_time"),
 			"uptime_seconds":        uptime,
 			"best_session_diff":     bestSessionDiff,
+			"best_session_worker":   bestSessionWorker,
+			"best_session_time":     bestSessionTime,
 			"best_all_time_diff":    bestAllTimeDiff,
+			"best_all_time_worker":  bestAllTimeWorker,
+			"best_all_time_time":    bestAllTimeTime,
 			"best_ratio":            getFloat(poolRatio, "best_ratio"),
 			"best_ratio_share_diff": getFloat(poolRatio, "best_ratio_share_diff"),
 			"best_ratio_net_diff":   getFloat(poolRatio, "best_ratio_net_diff"),
