@@ -73,6 +73,7 @@ func (s *Store) init() error {
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN worker_name TEXT`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN share_difficulty REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN reward REAL DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE blocks ADD COLUMN last_confirmations INTEGER DEFAULT -2`)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
 	// Migrate: add best-share context columns if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN network_diff_at_best REAL DEFAULT 0`)
@@ -350,6 +351,34 @@ func (s *Store) RecordBlock(symbol string, height int64, blockHash, blockTime, m
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		symbol, height, blockHash, blockTime, minerAddress, workerName, shareDifficulty, reward, sharesSinceLast, luckPercent, now)
 	return err
+}
+
+// UpdateBlockConfirmations stores the confirmation count for a block ONLY when
+// it is a real answer (>= 0) that exceeds the stored high-water mark. Node-down
+// sentinels (-2) and genuine-orphan (-1) never lower a previously-seen positive
+// count, so a block that once matured stays matured across node restarts. A
+// genuine orphan is recorded separately by the caller (it sets -1 explicitly via
+// the status, not by lowering last_confirmations).
+func (s *Store) UpdateBlockConfirmations(symbol string, height, conf int64) {
+	if conf < 0 {
+		return // -1 (orphan) / -2 (unavailable): don't overwrite the high-water mark
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`UPDATE blocks SET last_confirmations=?
+		WHERE coin_symbol=? AND height=? AND ? > COALESCE(last_confirmations,-2)`,
+		conf, symbol, height, conf)
+}
+
+// GetLastConfirmations returns the stored high-water-mark confirmation count for
+// a block, or -2 if none recorded yet.
+func (s *Store) GetLastConfirmations(symbol string, height int64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var c int64 = -2
+	s.db.QueryRow(`SELECT COALESCE(last_confirmations,-2) FROM blocks WHERE coin_symbol=? AND height=?`,
+		symbol, height).Scan(&c)
+	return c
 }
 
 func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {

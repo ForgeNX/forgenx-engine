@@ -539,8 +539,10 @@ const (
 // -1 (not on the active chain) → "Orphaned"; 0 → "Pending".
 func blockStatus(conf int64) string {
 	switch {
+	case conf == -2:
+		return "Checking" // node unavailable and no stored history yet
 	case conf < 0:
-		return "Orphaned"
+		return "Orphaned" // -1: node confirmed the block is off the active chain
 	case conf == 0:
 		return "Pending"
 	case conf < blockConfirmedAt:
@@ -829,9 +831,23 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 
 	var out []map[string]interface{}
 	for _, b := range blocks {
-		conf := int64(-1)
+		// Live confirmations from the node. -2 means the node couldn't answer
+		// (down, loading its block index, RPC error) — distinct from -1 (a genuine
+		// orphan the node confirmed is off-chain). When the node gives a real
+		// answer (>=0) we persist it as a high-water mark; when it's unavailable
+		// (-2) we fall back to the stored value so a matured block doesn't flip to
+		// "Orphaned" during a node restart.
+		conf := int64(-2)
 		if c.blockConfFunc != nil {
 			conf = c.blockConfFunc(symbol, b.BlockHash)
+		}
+		if conf >= 0 && c.store != nil {
+			c.store.UpdateBlockConfirmations(symbol, b.Height, conf)
+		} else if conf == -2 && c.store != nil {
+			// Node unavailable: use the last known confirmation count instead.
+			if stored := c.store.GetLastConfirmations(symbol, b.Height); stored >= 0 {
+				conf = stored
+			}
 		}
 		out = append(out, map[string]interface{}{
 			"id":                b.ID,

@@ -265,12 +265,17 @@ func (e *Engine) GetBlockConfirmations(symbol, hash string) int64 {
 	e.runnersMu.RLock()
 	runner, exists := e.runners[symbol]
 	e.runnersMu.RUnlock()
+	// -2 = "node unavailable / cannot determine" (runner missing, RPC client not
+	// ready, node still loading its block index, or the RPC call failed). This is
+	// deliberately distinct from -1, which the node returns for a block that IS on
+	// disk but NOT on the active chain (a genuine orphan). Conflating the two makes
+	// confirmed blocks flip to "Orphaned" during a node restart, which is wrong.
 	if !exists || runner.rpcClient == nil || hash == "" {
-		return -1
+		return -2
 	}
 	header, err := runner.rpcClient.GetBlockHeader(hash)
 	if err != nil || header == nil {
-		return -1
+		return -2
 	}
 	return header.Confirmations
 }
