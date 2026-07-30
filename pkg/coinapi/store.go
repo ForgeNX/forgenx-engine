@@ -188,7 +188,7 @@ func (s *Store) GetPoolBestAllTime(symbol string) float64 {
 	return best
 }
 
-func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, networkDiff float64, height uint32, bestTime string) float64 {
+func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, networkDiff float64, height uint32, bestTime string) (float64, float64, int64, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -209,10 +209,13 @@ func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, net
 		best_all_time=MAX(excluded.best_all_time, worker_best_diff.best_all_time),
 		updated_at=excluded.updated_at`,
 		symbol, workerName, sessionBest, now, networkDiff, height, bestTime)
-	var best float64
-	s.db.QueryRow(`SELECT best_all_time FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
-		symbol, workerName).Scan(&best)
-	return best
+	var best, storedNetDiff float64
+	var storedHeight int64
+	var storedTime string
+	s.db.QueryRow(`SELECT best_all_time, COALESCE(network_diff_at_best,0), COALESCE(height_at_best,0), COALESCE(time_at_best,'')
+		FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
+		symbol, workerName).Scan(&best, &storedNetDiff, &storedHeight, &storedTime)
+	return best, storedNetDiff, storedHeight, storedTime
 }
 
 func (s *Store) SetWorkerSharesOffset(symbol, workerName string, offset, invalidOffset int64) error {

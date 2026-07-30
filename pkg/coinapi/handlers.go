@@ -199,7 +199,7 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 		bestNetDiff := getFloat(m, "best_network_diff")
 		bestHeight := uint32(getFloat(m, "best_height"))
 		bestTime := getString(m, "best_time")
-		allTimeBest := c.store.UpdateWorkerBestDiff(symbol, workerName, sessionBest, bestNetDiff, bestHeight, bestTime)
+		allTimeBest, storedNetDiff, storedHeight, storedTime := c.store.UpdateWorkerBestDiff(symbol, workerName, sessionBest, bestNetDiff, bestHeight, bestTime)
 
 		// Shares
 		sharesAccepted := int64(getFloat(m, "shares_accepted"))
@@ -269,9 +269,9 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 			"connected_at":           getString(m, "connected_at"),
 			"best_session":           sessionBest,
 			"best_all_time":          allTimeBest,
-			"network_diff_at_best":   bestNetDiff,
-			"height_at_best":         bestHeight,
-			"time_at_best":           bestTime,
+			"network_diff_at_best":   storedNetDiff,
+			"height_at_best":         storedHeight,
+			"time_at_best":           storedTime,
 			"best_ratio":             getFloat(m, "best_ratio"),
 			"best_ratio_share_diff":  getFloat(m, "best_ratio_share_diff"),
 			"best_ratio_net_diff":    getFloat(m, "best_ratio_net_diff"),
