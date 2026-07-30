@@ -423,6 +423,17 @@ func (s *Store) GetBlockCount(symbol string) int64 {
 	return count
 }
 
+// GetLatestBlockTime returns the block_time of the most recent block for a coin
+// (by height), or "" if none. Sourced from the durable blocks table so it stays
+// correct across engine restarts (unlike the in-memory metrics counter).
+func (s *Store) GetLatestBlockTime(symbol string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var t string
+	s.db.QueryRow(`SELECT COALESCE(block_time,'') FROM blocks WHERE coin_symbol=? ORDER BY height DESC LIMIT 1`, symbol).Scan(&t)
+	return t
+}
+
 // BlockExistsAtHeight reports whether a confirmed block is recorded at the given
 // height for a coin. Used to classify a best-ratio share as a confirmed block.
 func (s *Store) BlockExistsAtHeight(symbol string, height int64) bool {

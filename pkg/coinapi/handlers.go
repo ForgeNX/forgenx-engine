@@ -519,8 +519,8 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"shares_accepted":       sharesAccepted,
 			"shares_rejected":       sharesRejected,
 			"shares_stale":          sharesStale,
-			"blocks_found":          persisted.BlocksFound,
-			"last_block_time":       getString(coinStats, "last_block_time"),
+			"blocks_found":          c.store.GetBlockCount(symbol),
+			"last_block_time":       c.store.GetLatestBlockTime(symbol),
 			"uptime_seconds":        uptime,
 			"best_session_diff":     bestSessionDiff,
 			"best_session_worker":   bestSessionWorker,
@@ -830,8 +830,8 @@ func (c *CoinAPI) HandlePool(w http.ResponseWriter, r *http.Request, symbol stri
 		"shares_accepted":   max64(int64(persistentAccepted), int64(getFloat(coinStats, "shares_accepted"))),
 		"shares_rejected":   int64(getFloat(coinStats, "shares_rejected")),
 		"shares_stale":      int64(getFloat(coinStats, "shares_stale")),
-		"blocks_found":      int64(getFloat(coinStats, "blocks_found")),
-		"last_block_time":   getString(coinStats, "last_block_time"),
+		"blocks_found":      c.store.GetBlockCount(symbol),
+		"last_block_time":   c.store.GetLatestBlockTime(symbol),
 		"uptime_seconds":    uptime,
 	})
 }
