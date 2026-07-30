@@ -943,6 +943,15 @@ func (c *CoinAPI) HandleLogs(w http.ResponseWriter, r *http.Request, coinID stri
 		tail = 5000
 	}
 
+	// Durable node log first: the coin node writes -debuglogfile to its persisted
+	// /data/logs volume, which the engine can read via the /opt/forgenx/apps mount.
+	// This survives container recreation, unlike Docker stdout logs. Falls back to
+	// Docker logs if the file is missing/empty (older coin image without the flag).
+	logFilePath := fmt.Sprintf("/opt/forgenx/apps/%s/data/logs/node.log", coinID)
+	if output, err := fileTail(logFilePath, tail); err == nil && strings.TrimSpace(output) != "" {
+		writeJSON(w, map[string]interface{}{"success": true, "logs": output})
+		return
+	}
 	// Derive container name: forgebch -> forgebch-node
 	container := coinID + "-node"
 
