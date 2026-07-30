@@ -314,12 +314,15 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 				sv.stats.RecordBlock(sv.symbol, blockHashHex, jobData.Template.Height, share.WorkerName)
 				// Durably persist to the blocks table (Blocks/Luck UI), mirroring
 				// the SV2 path. minerAddress = payout address (before the ".").
-				miner := share.WorkerName
-				if dot := strings.IndexByte(miner, '.'); dot >= 0 {
-					miner = miner[:dot]
+				identity := share.WorkerName
+				miner := identity
+				workerName := ""
+				if dot := strings.IndexByte(identity, '.'); dot >= 0 {
+					miner = identity[:dot]
+					workerName = identity[dot+1:]
 				}
 				if sv.runner != nil && sv.runner.store != nil {
-					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, 0, 100.0); err != nil {
+					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, 0, 100.0); err != nil {
 						sv.logger.Warn("could not persist block to blocks table: %v", err)
 					}
 				}

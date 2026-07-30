@@ -47,7 +47,7 @@ type workerDiffStore interface {
 	GetWorkerLastDifficulty(symbol, workerName string) float64
 	// RecordBlock persists a solved block to the durable blocks table so it
 	// appears in the Blocks/Luck UI. Idempotent (INSERT OR IGNORE on height).
-	RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress string, sharesSinceLast int64, luckPercent float64) error
+	RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, sharesSinceLast int64, luckPercent float64) error
 }
 
 type CoinRunner struct {
@@ -904,12 +904,15 @@ func submitSV2Block(
 		// Durably persist to the blocks table (Blocks/Luck UI). minerAddress is
 		// the payout address (worker identity before the "."). Luck/shares-since
 		// default for now; can be computed later. Idempotent on height.
-		miner := ch.UserIdentity()
-		if dot := strings.IndexByte(miner, '.'); dot >= 0 {
-			miner = miner[:dot]
+		identity := ch.UserIdentity()
+		miner := identity
+		workerName := ""
+		if dot := strings.IndexByte(identity, '.'); dot >= 0 {
+			miner = identity[:dot]
+			workerName = identity[dot+1:]
 		}
 		if runner.store != nil {
-			if err := runner.store.RecordBlock(symbol, int64(job.Height), result.HashHex, time.Now().UTC().Format(time.RFC3339), miner, 0, 100.0); err != nil {
+			if err := runner.store.RecordBlock(symbol, int64(job.Height), result.HashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, 0, 100.0); err != nil {
 				runner.logger.Warn("[%s] could not persist block to blocks table: %v", symbol, err)
 			}
 		}

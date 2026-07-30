@@ -798,6 +798,7 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 			"block_hash":        b.BlockHash,
 			"block_time":        b.BlockTime,
 			"miner_address":     b.MinerAddress,
+			"worker_name":       b.WorkerName,
 			"shares_since_last": b.SharesSinceLast,
 			"luck_percent":      b.LuckPercent,
 			"created_at":        b.CreatedAt,
