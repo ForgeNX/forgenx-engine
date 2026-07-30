@@ -321,8 +321,9 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 					miner = identity[:dot]
 					workerName = identity[dot+1:]
 				}
+				reward := float64(jobData.Template.CoinbaseValue) / 1e8
 				if sv.runner != nil && sv.runner.store != nil {
-					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, 0, 100.0); err != nil {
+					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, actualDiff, reward, 0, 100.0); err != nil {
 						sv.logger.Warn("could not persist block to blocks table: %v", err)
 					}
 				}

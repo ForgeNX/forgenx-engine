@@ -22,6 +22,7 @@ type CoinAPI struct {
 	engineVersion   string
 	engineBuildDate string
 	nodeRPCFunc     NodeRPCFunc
+	blockConfFunc   BlockConfFunc
 	coinConfigFunc  CoinConfigFunc
 	logsFunc        LogsFunc
 	donationFunc    DonationFunc
@@ -31,6 +32,9 @@ type CoinAPI struct {
 
 // NodeRPCFunc fetches node info for a coin symbol.
 type NodeRPCFunc func(symbol string) map[string]interface{}
+
+// BlockConfFunc returns the node's confirmation count for a block hash (-1 = orphaned/unavailable).
+type BlockConfFunc func(symbol, hash string) int64
 
 // CoinConfigFunc fetches coin settings for a coin symbol.
 type CoinConfigFunc func(symbol string) map[string]interface{}
@@ -67,6 +71,7 @@ func (c *CoinAPI) SetEngineVersion(version, buildDate string) {
 }
 
 func (c *CoinAPI) SetNodeRPCFunc(f NodeRPCFunc)       { c.nodeRPCFunc = f }
+func (c *CoinAPI) SetBlockConfFunc(f BlockConfFunc)   { c.blockConfFunc = f }
 func (c *CoinAPI) SetCoinConfigFunc(f CoinConfigFunc) { c.coinConfigFunc = f }
 func (c *CoinAPI) SetLogsFunc(f LogsFunc)             { c.logsFunc = f }
 func (c *CoinAPI) SetDonationFunc(f DonationFunc)     { c.donationFunc = f }
@@ -514,6 +519,31 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 // whether that block confirmed (in the blocks table), orphaned (a lost-block
 // record exists for the height), or is still pending resolution. Below 1.0 there
 // is no block, so the outcome is empty and the UI shows the plain percentage.
+// Block confirmation thresholds. Per-coin tunable if ever needed; defaults suit
+// most Bitcoin-family chains (DGB, BCH). A block is "Confirming" until it has
+// blockConfirmedAt confirmations, "Confirmed" until blockMatureAt, then "Mature".
+const (
+	blockConfirmedAt = 20  // >= this many confirmations → "Confirmed"
+	blockMatureAt    = 100 // >= this many confirmations → "Mature" (coinbase spendable)
+)
+
+// blockStatus derives a human status from a node confirmation count.
+// -1 (not on the active chain) → "Orphaned"; 0 → "Pending".
+func blockStatus(conf int64) string {
+	switch {
+	case conf < 0:
+		return "Orphaned"
+	case conf == 0:
+		return "Pending"
+	case conf < blockConfirmedAt:
+		return "Confirming"
+	case conf < blockMatureAt:
+		return "Confirmed"
+	default:
+		return "Mature"
+	}
+}
+
 func (c *CoinAPI) classifyBestRatioOutcome(symbol string, ratio float64, height int64) string {
 	if ratio < 1.0 || height <= 0 {
 		return ""
@@ -791,6 +821,10 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 
 	var out []map[string]interface{}
 	for _, b := range blocks {
+		conf := int64(-1)
+		if c.blockConfFunc != nil {
+			conf = c.blockConfFunc(symbol, b.BlockHash)
+		}
 		out = append(out, map[string]interface{}{
 			"id":                b.ID,
 			"coin_symbol":       b.CoinSymbol,
@@ -799,9 +833,13 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 			"block_time":        b.BlockTime,
 			"miner_address":     b.MinerAddress,
 			"worker_name":       b.WorkerName,
+			"share_difficulty":  b.ShareDifficulty,
+			"reward":            b.Reward,
 			"shares_since_last": b.SharesSinceLast,
 			"luck_percent":      b.LuckPercent,
 			"created_at":        b.CreatedAt,
+			"confirmations":     conf,
+			"status":            blockStatus(conf),
 		})
 	}
 	if out == nil {

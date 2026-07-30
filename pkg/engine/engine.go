@@ -257,6 +257,24 @@ func (e *Engine) ReloadCoin(symbol string, coinCfg *config.CoinConfig, donation 
 // GetNodeStatus returns live node RPC data for a coin symbol by reusing the
 // running coin's existing RPC client. The second return value indicates
 // whether a runner (and therefore a live RPC client) exists for this symbol.
+// GetBlockConfirmations returns the node's confirmation count for a block hash
+// (via getblockheader). Returns -1 if the block is not on the active chain
+// (orphaned) or if the node/hash can't be queried. Used by the coinapi blocks
+// endpoint to show live confirmation progress.
+func (e *Engine) GetBlockConfirmations(symbol, hash string) int64 {
+	e.runnersMu.RLock()
+	runner, exists := e.runners[symbol]
+	e.runnersMu.RUnlock()
+	if !exists || runner.rpcClient == nil || hash == "" {
+		return -1
+	}
+	header, err := runner.rpcClient.GetBlockHeader(hash)
+	if err != nil || header == nil {
+		return -1
+	}
+	return header.Confirmations
+}
+
 func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 	e.runnersMu.RLock()
 	runner, exists := e.runners[symbol]

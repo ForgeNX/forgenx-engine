@@ -141,7 +141,8 @@ type MiningInfo struct {
 
 // BlockHeader is the response from getblockheader.
 type BlockHeader struct {
-	Hash   string `json:"hash"`
-	Time   int64  `json:"time"`
-	Height int64  `json:"height"`
+	Hash          string `json:"hash"`
+	Time          int64  `json:"time"`
+	Height        int64  `json:"height"`
+	Confirmations int64  `json:"confirmations"`
 }

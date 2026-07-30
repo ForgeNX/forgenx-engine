@@ -111,6 +111,7 @@ func main() {
 			return info
 
 		})
+		coinAPI.SetBlockConfFunc(eng.GetBlockConfirmations)
 		coinAPI.SetDonationFunc(eng.GetDonationAddress)
 		coinAPI.SetPortStatusFunc(eng.GetCoinPortStatus)
 

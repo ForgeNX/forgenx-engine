@@ -36,6 +36,7 @@ func (s *Store) init() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			coin_symbol TEXT NOT NULL, height INTEGER NOT NULL,
 			block_hash TEXT, block_time TEXT, miner_address TEXT, worker_name TEXT,
+			share_difficulty REAL DEFAULT 0, reward REAL DEFAULT 0,
 			shares_since_last INTEGER DEFAULT 0, luck_percent REAL DEFAULT 100.0,
 			created_at TEXT NOT NULL, UNIQUE(coin_symbol, height))`,
 		`CREATE INDEX IF NOT EXISTS idx_blocks_symbol ON blocks(coin_symbol)`,
@@ -70,6 +71,8 @@ func (s *Store) init() error {
 	}
 	// Migrate: add last_difficulty column if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN worker_name TEXT`)
+	s.db.Exec(`ALTER TABLE blocks ADD COLUMN share_difficulty REAL DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE blocks ADD COLUMN reward REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
 	// Migrate: add best-share context columns if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN network_diff_at_best REAL DEFAULT 0`)
@@ -325,19 +328,21 @@ type Block struct {
 	BlockTime       string
 	MinerAddress    string
 	WorkerName      string
+	ShareDifficulty float64
+	Reward          float64
 	SharesSinceLast int64
 	LuckPercent     float64
 	CreatedAt       string
 }
 
-func (s *Store) RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, sharesSinceLast int64, luckPercent float64) error {
+func (s *Store) RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, shareDifficulty, reward float64, sharesSinceLast int64, luckPercent float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO blocks
-		(coin_symbol, height, block_hash, block_time, miner_address, worker_name, shares_since_last, luck_percent, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?)`,
-		symbol, height, blockHash, blockTime, minerAddress, workerName, sharesSinceLast, luckPercent, now)
+		(coin_symbol, height, block_hash, block_time, miner_address, worker_name, share_difficulty, reward, shares_since_last, luck_percent, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		symbol, height, blockHash, blockTime, minerAddress, workerName, shareDifficulty, reward, sharesSinceLast, luckPercent, now)
 	return err
 }
 
@@ -346,7 +351,7 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, coin_symbol, height,
 		COALESCE(block_hash,''), COALESCE(block_time,''),
-		COALESCE(miner_address,''), COALESCE(worker_name,''), shares_since_last, luck_percent, created_at
+		COALESCE(miner_address,''), COALESCE(worker_name,''), COALESCE(share_difficulty,0), COALESCE(reward,0), shares_since_last, luck_percent, created_at
 		FROM blocks WHERE coin_symbol=? ORDER BY height DESC LIMIT ?`, symbol, limit)
 	if err != nil {
 		return nil, err
@@ -356,7 +361,7 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 	for rows.Next() {
 		var b Block
 		if err := rows.Scan(&b.ID, &b.CoinSymbol, &b.Height, &b.BlockHash,
-			&b.BlockTime, &b.MinerAddress, &b.WorkerName, &b.SharesSinceLast,
+			&b.BlockTime, &b.MinerAddress, &b.WorkerName, &b.ShareDifficulty, &b.Reward, &b.SharesSinceLast,
 			&b.LuckPercent, &b.CreatedAt); err == nil {
 			blocks = append(blocks, b)
 		}
