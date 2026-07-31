@@ -235,6 +235,16 @@ func (srv *Server) Start() error {
 				continue
 			}
 		}
+		// Configure TCP connection — matches the V1 stratum server. TCP keepalive
+		// keeps a healthy-but-quiet miner's connection warm (SV2 miners can go
+		// silent for minutes between shares/jobs); without it the per-frame read
+		// deadline fires an i/o timeout and drops a live miner. SetNoDelay reduces
+		// latency for the small SV2 frames.
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetKeepAlive(true)
+			tcpConn.SetKeepAlivePeriod(30 * time.Second)
+			tcpConn.SetNoDelay(true)
+		}
 		go srv.handleConn(conn)
 	}
 }
@@ -502,27 +512,27 @@ func (srv *Server) Sessions() []stratum.SessionInfo {
 			bestNetDiff, bestHeight, bestTime := ch.BestContext()
 			bRatio, bRatioShare, bRatioNet, bRatioHeight, bRatioTime := ch.BestRatioContext()
 			out = append(out, stratum.SessionInfo{
-				ID:             fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
-				WorkerName:     ch.UserIdentity(),
-				RemoteAddr:     sess.RemoteAddr(),
-				Difficulty:     ch.Difficulty(),
-				ConnectedAt:    sess.ConnectedAt(),
-				State:          "active",
-				Protocol:       "v2",
-				SharesAccepted: accepted,
-				SharesRejected: rejected,
-				BestDifficulty: ch.BestDifficulty(),
-				BestNetworkDiff: bestNetDiff,
-				BestHeight:      bestHeight,
-				BestTime:        bestTime,
+				ID:                 fmt.Sprintf("%s/ch%d", sess.RemoteAddr(), ch.ID()),
+				WorkerName:         ch.UserIdentity(),
+				RemoteAddr:         sess.RemoteAddr(),
+				Difficulty:         ch.Difficulty(),
+				ConnectedAt:        sess.ConnectedAt(),
+				State:              "active",
+				Protocol:           "v2",
+				SharesAccepted:     accepted,
+				SharesRejected:     rejected,
+				BestDifficulty:     ch.BestDifficulty(),
+				BestNetworkDiff:    bestNetDiff,
+				BestHeight:         bestHeight,
+				BestTime:           bestTime,
 				BestRatio:          bRatio,
 				BestRatioShareDiff: bRatioShare,
 				BestRatioNetDiff:   bRatioNet,
 				BestRatioHeight:    bRatioHeight,
 				BestRatioTime:      bRatioTime,
-				Vendor:         sess.Vendor(),
-				Firmware:       sess.Firmware(),
-				DeviceID:       sess.DeviceID(),
+				Vendor:             sess.Vendor(),
+				Firmware:           sess.Firmware(),
+				DeviceID:           sess.DeviceID(),
 			})
 		}
 	}
