@@ -1227,6 +1227,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"sv2Port":            getNestedInt(stratum, "sv2_port", 4334),
 		"sv2AuthorityPubkey": getNestedStr(stratum, "sv2_authority_pubkey"),
 		"connectionTimeout":  getNestedInt(stratum, "connection_timeout", 600),
+		"keepaliveInterval":  getNestedInt(stratum, "keepalive_interval", 60),
 	})
 }
 
@@ -1531,6 +1532,9 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	}
 	if v, ok := body["connectionTimeout"].(float64); ok {
 		stratum["connection_timeout"] = int(v)
+	}
+	if v, ok := body["keepaliveInterval"].(float64); ok {
+		stratum["keepalive_interval"] = int(v)
 	}
 	if v, ok := body["donation1Pct"].(float64); ok {
 		coinCfg["donation"] = map[string]interface{}{
