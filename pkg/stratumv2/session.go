@@ -139,6 +139,12 @@ type Session struct {
 	// sends nothing for this long, the connection is dropped. Equivalent to
 	// GSS's "Connection Timeout". Defaults to 600s if zero.
 	connectionTimeoutSeconds int
+	// keepaliveIntervalSeconds: if >0, a goroutine re-sends the current job to a
+	// quiet miner every N seconds so a healthy-but-quiet (e.g. high-difficulty)
+	// miner never trips the read deadline. 0 disables. Each successful outbound
+	// send also extends the read deadline, since a successful encrypted write
+	// proves the peer is alive.
+	keepaliveIntervalSeconds int
 	srv                      *Server
 
 	// Structured logger (optional). When set, log output matches the engine's
@@ -205,6 +211,7 @@ func newSession(
 	startDiffFunc func(workerName string) float64,
 	logger sv2Logger,
 	connectionTimeoutSeconds int,
+	keepaliveIntervalSeconds int,
 	lowDiffGrace time.Duration,
 	staleGrace time.Duration,
 	tipChangedAt func() time.Time,
@@ -232,6 +239,7 @@ func newSession(
 		startDiff:                startDiff,
 		startDiffFunc:            startDiffFunc,
 		connectionTimeoutSeconds: connectionTimeoutSeconds,
+		keepaliveIntervalSeconds: keepaliveIntervalSeconds,
 		srv:                      srv,
 		logger:                   logger,
 		closeCh:                  make(chan struct{}),
@@ -243,6 +251,65 @@ func newSession(
 
 // Run is the main message-dispatch loop. Blocks until the session ends.
 // Call in a goroutine: go session.Run()
+// extendReadDeadline pushes the read deadline forward by one full timeout window.
+// Called after a successful outbound send: a successful encrypted write proves the
+// peer is alive, so we should not reap it for another window even if it sends no
+// shares (which is legitimate at high difficulty). Safe to call from any goroutine —
+// SetReadDeadline just updates the conn's timer, which the blocked ReadFrame honors.
+func (s *Session) extendReadDeadline() {
+	timeout := s.connectionTimeoutSeconds
+	if timeout <= 0 {
+		timeout = defaultReadDeadlineSeconds
+	}
+	_ = s.conn.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+}
+
+// keepaliveLoop periodically re-sends the current job to the miner so a quiet-but-
+// healthy connection stays warm and its read deadline keeps advancing (via the
+// deadline extension on each successful send). Runs until the session closes.
+func (s *Session) keepaliveLoop() {
+	interval := s.keepaliveIntervalSeconds
+	if interval <= 0 {
+		return // disabled
+	}
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.closeCh:
+			return
+		case <-ticker.C:
+			s.templateMu.RLock()
+			tmpl := s.templates[s.lastJobID]
+			s.templateMu.RUnlock()
+			if tmpl == nil {
+				continue // no job yet; nothing to refresh
+			}
+			s.mu.RLock()
+			channels := make([]*Channel, 0, len(s.channels))
+			for _, ch := range s.channels {
+				channels = append(channels, ch)
+			}
+			s.mu.RUnlock()
+			sent := false
+			for _, ch := range channels {
+				if ch.IsClosed() {
+					continue
+				}
+				if err := s.sendJobForKeepalive(ch, tmpl); err != nil {
+					// Send failed → peer is genuinely unreachable. Let the read
+					// loop's deadline reap it; don't spin here.
+					return
+				}
+				sent = true
+			}
+			if sent {
+				s.extendReadDeadline()
+			}
+		}
+	}
+}
+
 func (s *Session) Run() {
 	defer s.Close()
 	s.logf("[sv2] session %s: connected", s.id)
@@ -253,6 +320,8 @@ func (s *Session) Run() {
 		return
 	}
 
+	// Start the keepalive goroutine (no-op if keepaliveIntervalSeconds <= 0).
+	go s.keepaliveLoop()
 	// Step 2: Main message loop.
 	for {
 		select {
@@ -856,6 +925,25 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 			s.logf("[sv2] session %s ch=%d: sendJob error: %v", s.id, ch.ID(), err)
 		}
 	}
+	// A successful job broadcast proves the peer is alive; extend the read
+	// deadline so a high-difficulty miner that finds no share this window is
+	// not falsely reaped.
+	if len(channels) > 0 {
+		s.extendReadDeadline()
+	}
+}
+
+// sendJobForKeepalive re-sends the current prevhash + job to one channel, used by
+// keepaliveLoop to keep a quiet connection warm. Mirrors UpdateTemplate's per-channel
+// dispatch but without rebuilding the coinbase (the template is unchanged).
+func (s *Session) sendJobForKeepalive(ch *Channel, tmpl *JobTemplate) error {
+	if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
+		return err
+	}
+	if ch.IsExtended() {
+		return s.sendExtendedJobToChannel(ch, tmpl)
+	}
+	return s.sendJobToChannel(ch, tmpl)
 }
 
 // channelMerkleRoot computes the final 32-byte merkle root for a channel's

@@ -378,6 +378,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				StartDiff:                cfg.Stratum.Difficulty,
 				Logger:                   runner.logger,
 				ConnectionTimeoutSeconds: cfg.Stratum.ConnectionTimeout,
+				KeepaliveIntervalSeconds: cfg.Stratum.KeepaliveInterval,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, extranonce []byte, result *stratumv2.ShareResult) {
 					// BLOCK SUBMISSION FIRST — before any stats/lock bookkeeping.
 					// Solo mining is a latency race against the whole network, so the

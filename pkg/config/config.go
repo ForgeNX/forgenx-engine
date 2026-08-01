@@ -76,6 +76,7 @@ type StratumConfig struct {
 	SV2Enabled        bool    `json:"sv2_enabled"`                  // enable the Stratum V2 listener for this coin (default false)
 	SV2Port           int     `json:"sv2_port,omitempty"`           // TCP port for the SV2 listener. Must be unique across V1 and all V2 listeners — NOT derived from Port.
 	ConnectionTimeout int     `json:"connection_timeout,omitempty"` // seconds before dropping an idle SV2 miner (0 = default 600). Equivalent to GSS Connection Timeout.
+	KeepaliveInterval int     `json:"keepalive_interval,omitempty"` // seconds between keepalive job re-sends to a quiet SV2 miner (0 = disabled). Prevents healthy high-difficulty miners tripping the connection timeout.
 }
 
 // MiningConfig holds mining-related settings.

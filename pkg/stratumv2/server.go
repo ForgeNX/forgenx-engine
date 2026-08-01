@@ -120,6 +120,10 @@ type Config struct {
 	// before dropping the connection. Equivalent to GSS's "Connection Timeout".
 	// Defaults to 600s if zero or unset.
 	ConnectionTimeoutSeconds int
+	// KeepaliveIntervalSeconds: if >0, each session re-sends the current job to a
+	// quiet miner every N seconds so a healthy-but-quiet (high-difficulty) miner
+	// never trips the read deadline. 0 disables.
+	KeepaliveIntervalSeconds int
 
 	// Logger is the engine's structured logger. When set, all SV2 log output
 	// uses the same format as the rest of the engine ("[2006-01-02 15:04:05]"
@@ -293,7 +297,7 @@ func (srv *Server) handleConn(conn net.Conn) {
 
 	sess := newSession(conn, sendCipher, recvCipher, srv.cfg.OnShare, srv.cfg.OnStale, srv.cfg.OnRejected, srv.cfg.CoinbaseBuilder,
 		srv.cfg.VarDiff, srv.cfg.VarDiffOnNewBlock, srv.cfg.StartDiff, srv.cfg.StartDiffFunc, srv.cfg.Logger,
-		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.LowDiffGrace, srv.cfg.StaleGrace, srv.cfg.TipChangedAt, srv, srv.cfg.OnDisconnect, srv.cfg.OnDisconnectWithDiff, srv.cfg.OnConnect)
+		srv.cfg.ConnectionTimeoutSeconds, srv.cfg.KeepaliveIntervalSeconds, srv.cfg.LowDiffGrace, srv.cfg.StaleGrace, srv.cfg.TipChangedAt, srv, srv.cfg.OnDisconnect, srv.cfg.OnDisconnectWithDiff, srv.cfg.OnConnect)
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID()] = sess

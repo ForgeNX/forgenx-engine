@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -89,6 +90,12 @@ type Codec struct {
 	conn net.Conn
 	send *sv2TransportCipher // encrypts frames we write (nil = read-only/no transport keys)
 	recv *sv2TransportCipher // decrypts frames we read (nil = write-only/no transport keys)
+	// writeMu serializes WriteFrame. Each frame is written as multiple sequential
+	// conn.Write calls (encrypted header, then payload chunks), and the send cipher's
+	// seal() advances a stateful nonce counter. Without this lock, concurrent writers
+	// (job broadcasts, share responses, keepalives) would interleave ciphertext and
+	// corrupt the nonce sequence, breaking the miner's decrypt stream.
+	writeMu sync.Mutex
 }
 
 // NewCodec wraps conn in a SV2 frame codec with the given transport-phase
@@ -168,6 +175,8 @@ func (c *Codec) ReadFrame() (*Frame, error) {
 // WriteFrame encodes, encrypts, and sends a SV2 frame.
 // extType should be ExtensionTypeMining (0) for all standard mining messages.
 func (c *Codec) WriteFrame(extType uint16, msgType uint8, payload []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	if c.send == nil {
 		return fmt.Errorf("sv2 codec: no send cipher configured")
 	}

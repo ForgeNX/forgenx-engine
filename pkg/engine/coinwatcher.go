@@ -249,6 +249,9 @@ func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donatio
 			if oldCfg.Mining.Network != cfg.Mining.Network {
 				e.logger.Info("[%s] config: network %s → %s", symbol, oldCfg.Mining.Network, cfg.Mining.Network)
 			}
+			if oldCfg.Stratum.KeepaliveInterval != cfg.Stratum.KeepaliveInterval {
+				e.logger.Info("[%s] config: keepalive_interval %ds → %ds", symbol, oldCfg.Stratum.KeepaliveInterval, cfg.Stratum.KeepaliveInterval)
+			}
 			if oldCfg.Stratum.ConnectionTimeout != cfg.Stratum.ConnectionTimeout {
 				e.logger.Info("[%s] config: connection_timeout %ds → %ds", symbol, oldCfg.Stratum.ConnectionTimeout, cfg.Stratum.ConnectionTimeout)
 			}
