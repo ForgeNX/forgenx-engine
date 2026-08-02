@@ -70,6 +70,7 @@ func (s *Store) init() error {
 			PRIMARY KEY (coin_symbol, worker_name))`,
 	}
 	// Migrate: add last_difficulty column if missing (safe to run multiple times)
+	s.db.Exec(`ALTER TABLE pool_counters ADD COLUMN session_start INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN worker_name TEXT`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN share_difficulty REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN reward REAL DEFAULT 0`)
@@ -100,6 +101,7 @@ type PoolCounters struct {
 	SharesRejected       int64
 	SharesStale          int64
 	Uptime               int64
+	SessionStart         int64
 }
 
 func (s *Store) GetLastCounters(symbol string) PoolCounters {
@@ -108,26 +110,27 @@ func (s *Store) GetLastCounters(symbol string) PoolCounters {
 	row := s.db.QueryRow(`SELECT last_blocks_found, last_shares_accepted,
 		COALESCE(shares_offset,0), COALESCE(shares_rejected_offset,0),
 		COALESCE(shares_stale_offset,0), COALESCE(last_shares_rejected,0),
-		COALESCE(last_shares_stale,0), COALESCE(uptime,999999)
+		COALESCE(last_shares_stale,0), COALESCE(uptime,999999),
+		COALESCE(session_start,0)
 		FROM pool_counters WHERE coin_symbol=?`, symbol)
 	var c PoolCounters
 	c.Uptime = 999999
 	row.Scan(&c.BlocksFound, &c.SharesAccepted, &c.SharesOffset,
 		&c.SharesRejectedOffset, &c.SharesStaleOffset,
-		&c.SharesRejected, &c.SharesStale, &c.Uptime)
+		&c.SharesRejected, &c.SharesStale, &c.Uptime, &c.SessionStart)
 	return c
 }
 
 func (s *Store) UpdateCounters(symbol string, blocksFound, sharesAccepted,
 	sharesOffset, sharesRejected, sharesRejectedOffset,
-	sharesStale, sharesStaleOffset, uptime int64) error {
+	sharesStale, sharesStaleOffset, uptime, sessionStart int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO pool_counters
 		(coin_symbol, last_blocks_found, last_shares_accepted, shares_offset,
 		last_shares_rejected, shares_rejected_offset,
-		last_shares_stale, shares_stale_offset, uptime)
-		VALUES (?,?,?,?,?,?,?,?,?)
+		last_shares_stale, shares_stale_offset, uptime, session_start)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(coin_symbol) DO UPDATE SET
 		last_blocks_found=excluded.last_blocks_found,
 		last_shares_accepted=excluded.last_shares_accepted,
@@ -136,10 +139,11 @@ func (s *Store) UpdateCounters(symbol string, blocksFound, sharesAccepted,
 		shares_rejected_offset=excluded.shares_rejected_offset,
 		last_shares_stale=excluded.last_shares_stale,
 		shares_stale_offset=excluded.shares_stale_offset,
-		uptime=excluded.uptime`,
+		uptime=excluded.uptime,
+		session_start=excluded.session_start`,
 		symbol, blocksFound, sharesAccepted, sharesOffset,
 		sharesRejected, sharesRejectedOffset,
-		sharesStale, sharesStaleOffset, uptime)
+		sharesStale, sharesStaleOffset, uptime, sessionStart)
 	return err
 }
 

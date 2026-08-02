@@ -150,17 +150,24 @@ func (c *CoinAPI) HandleEngineStats(w http.ResponseWriter, r *http.Request) {
 		offset := last.SharesOffset
 		offsetRej := last.SharesRejectedOffset
 		offsetStale := last.SharesStaleOffset
-		prevUptime := last.Uptime
-
-		restarted := uptime < prevUptime && last.SharesAccepted > 0
+		// Idempotent restart detection via a session marker. sessionStart
+		// (now - uptime) uniquely identifies the current engine process. The
+		// fold that carries a prior session's live counts into the offset runs
+		// exactly ONCE per new session: once we record sessionStart, every later
+		// /stats call in the same session computes the same value and skips the
+		// fold — so it can never double-count, even under concurrent calls.
+		const sessionJitterTolerance = 30 // seconds; absorbs uptime-read jitter
+		sessionStart := time.Now().Unix() - uptime
+		restarted := last.SessionStart > 0 &&
+			sessionStart > last.SessionStart+sessionJitterTolerance &&
+			(last.SharesAccepted > 0 || last.SharesRejected > 0 || last.SharesStale > 0)
 		if restarted {
 			offset += last.SharesAccepted
 			offsetRej += last.SharesRejected
 			offsetStale += last.SharesStale
 		}
-
 		c.store.UpdateCounters(symbol, last.BlocksFound, current,
-			offset, currentRej, offsetRej, currentStale, offsetStale, uptime)
+			offset, currentRej, offsetRej, currentStale, offsetStale, uptime, sessionStart)
 
 		coinData["shares_accepted"] = current + offset
 		coinData["shares_rejected"] = currentRej + offsetRej
