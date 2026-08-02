@@ -94,6 +94,21 @@ func (c *Client) Ping() error {
 	return err
 }
 
+// Uptime returns the node daemon's uptime in seconds (bitcoin-family "uptime"
+// RPC). This is the actual coin node's uptime, distinct from the mining engine
+// or app-container uptime.
+func (c *Client) Uptime() (int64, error) {
+	result, err := c.call("uptime", nil)
+	if err != nil {
+		return 0, err
+	}
+	var secs int64
+	if err := json.Unmarshal(result, &secs); err != nil {
+		return 0, fmt.Errorf("parsing uptime: %w", err)
+	}
+	return secs, nil
+}
+
 // GetBlockchainInfo returns basic blockchain information.
 func (c *Client) GetBlockchainInfo() (*BlockchainInfo, error) {
 	result, err := c.call("getblockchaininfo", nil)

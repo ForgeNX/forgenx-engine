@@ -402,6 +402,13 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 		"network_hashrate":     netHashrate,
 		"network_hashrate_raw": nhps,
 		"last_block_time":      lastBlockTime,
+		"node_uptime_seconds": func() int64 {
+			secs, err := rpc.Uptime()
+			if err != nil {
+				return 0
+			}
+			return secs
+		}(),
 	}
 	if mining != nil {
 		info["difficulty"] = mining.Difficulty
