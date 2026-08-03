@@ -527,6 +527,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"shares_rejected":       sharesRejected,
 			"shares_stale":          sharesStale,
 			"blocks_found":          c.store.GetBlockCount(symbol),
+			"blocks_orphaned":       c.store.GetOrphanCount(symbol),
 			"last_block_time":       c.store.GetLatestBlockTime(symbol),
 			"uptime_seconds":        uptime,
 			"best_session_diff":     bestSessionDiff,
@@ -627,6 +628,7 @@ func (c *CoinAPI) StartSnapshotThread() {
 		for range ticker.C {
 			c.runSnapshot()
 			c.runHistorySnapshot()
+			c.runConfirmationSync()
 		}
 	}()
 }
@@ -668,6 +670,42 @@ func (c *CoinAPI) runSnapshot() {
 
 			c.store.RecordWorkerSnapshot(symbol, name,
 				rawValid+snapOffset, rawInvalid+snapInvalidOffset, stale)
+		}
+	}
+}
+
+// runConfirmationSync refreshes confirmation state for recent blocks from the
+// node so the orphan tally and count exclusions stay live without the blocks tab
+// being open. Positive counts advance the high-water mark; a genuine node -1 is
+// persisted as an orphan. -2 (node unavailable) is ignored so a transient hiccup
+// never brands a valid block as orphaned. Blocks already matured are skipped.
+func (c *CoinAPI) runConfirmationSync() {
+	if c.blockConfFunc == nil || c.store == nil {
+		return
+	}
+	minersData, err := c.fetchEngineJSON("/miners")
+	if err != nil {
+		return
+	}
+	miners, _ := minersData["miners"].(map[string]interface{})
+	for symbol := range miners {
+		blocks, err := c.store.GetBlocks(symbol, 50)
+		if err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.BlockHash == "" {
+				continue
+			}
+			if stored := c.store.GetLastConfirmations(symbol, b.Height); stored >= blockMatureAt {
+				continue
+			}
+			conf := c.blockConfFunc(symbol, b.BlockHash)
+			if conf >= 0 {
+				c.store.UpdateBlockConfirmations(symbol, b.Height, conf)
+			} else if conf == -1 {
+				c.store.MarkBlockOrphaned(symbol, b.Height)
+			}
 		}
 	}
 }
@@ -838,6 +876,7 @@ func (c *CoinAPI) HandlePool(w http.ResponseWriter, r *http.Request, symbol stri
 		"shares_rejected":   int64(getFloat(coinStats, "shares_rejected")),
 		"shares_stale":      int64(getFloat(coinStats, "shares_stale")),
 		"blocks_found":      c.store.GetBlockCount(symbol),
+		"blocks_orphaned":   c.store.GetOrphanCount(symbol),
 		"last_block_time":   c.store.GetLatestBlockTime(symbol),
 		"uptime_seconds":    uptime,
 	})
@@ -876,9 +915,13 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 		}
 		if conf >= 0 && c.store != nil {
 			c.store.UpdateBlockConfirmations(symbol, b.Height, conf)
+		} else if conf == -1 && c.store != nil {
+			// Genuine, node-confirmed orphan: persist it so the orphan tally and
+			// count exclusions stay correct even when the blocks tab isn't open.
+			c.store.MarkBlockOrphaned(symbol, b.Height)
 		} else if conf == -2 && c.store != nil {
 			// Node unavailable: use the last known confirmation count instead.
-			if stored := c.store.GetLastConfirmations(symbol, b.Height); stored >= 0 {
+			if stored := c.store.GetLastConfirmations(symbol, b.Height); stored >= -1 {
 				conf = stored
 			}
 		}

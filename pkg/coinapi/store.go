@@ -396,6 +396,31 @@ func (s *Store) GetLastConfirmations(symbol string, height int64) int64 {
 	return c
 }
 
+// MarkBlockOrphaned records a genuine, node-confirmed orphan by setting
+// last_confirmations = -1. This is the ONE place allowed to lower the stored
+// confirmation value, because an orphan is terminal: the node has reported the
+// block is on disk but not on the active chain. Callers MUST only invoke this
+// when the node explicitly returned -1 (never on -2 / unavailable), otherwise a
+// transient node hiccup could wrongly brand a valid block as orphaned.
+func (s *Store) MarkBlockOrphaned(symbol string, height int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`UPDATE blocks SET last_confirmations=-1
+		WHERE coin_symbol=? AND height=?`, symbol, height)
+}
+
+// GetOrphanCount returns how many recorded blocks for a coin the node has
+// confirmed as orphaned (last_confirmations = -1). Found blocks remain counted
+// by GetBlockCount; this is a separate tally so the UI can show
+// "Blocks Found: N, Orphaned: M".
+func (s *Store) GetOrphanCount(symbol string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var count int64
+	s.db.QueryRow(`SELECT COUNT(*) FROM blocks WHERE coin_symbol=? AND COALESCE(last_confirmations,-2) = -1`, symbol).Scan(&count)
+	return count
+}
+
 func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
