@@ -39,6 +39,12 @@ func NewClient(host string, port int, username, password string) *Client {
 		password: password,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+			// Warm keep-alive pool so submitblock reuses a hot connection.
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 32,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		logger: logging.New(logging.ModuleRPC),
 	}
