@@ -71,6 +71,7 @@ func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 // statsResetter is satisfied by *metrics.Stats.
 type statsResetter interface {
 	PeekRoundWork(symbol string) float64
+	PeekRoundShares(symbol string) uint64
 	ResetCoinStats(symbol string)
 }
 
@@ -168,7 +169,7 @@ func (c *CoinAPI) HandleEngineStats(w http.ResponseWriter, r *http.Request) {
 			offsetStale += last.SharesStale
 		}
 		c.store.UpdateCounters(symbol, last.BlocksFound, current,
-			offset, currentRej, offsetRej, currentStale, offsetStale, uptime, sessionStart, c.stats.PeekRoundWork(symbol))
+			offset, currentRej, offsetRej, currentStale, offsetStale, uptime, sessionStart, c.stats.PeekRoundWork(symbol), int64(c.stats.PeekRoundShares(symbol)))
 
 		coinData["shares_accepted"] = current + offset
 		coinData["shares_rejected"] = currentRej + offsetRej
@@ -530,6 +531,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"blocks_found":          c.store.GetBlockCount(symbol),
 			"blocks_orphaned":       c.store.GetOrphanCount(symbol),
 			"round_work":            c.stats.PeekRoundWork(symbol),
+			"round_shares":          c.stats.PeekRoundShares(symbol),
 			"last_block_time":       c.store.GetLatestBlockTime(symbol),
 			"uptime_seconds":        uptime,
 			"best_session_diff":     bestSessionDiff,
@@ -541,6 +543,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"best_ratio":            getFloat(poolRatio, "best_ratio"),
 			"best_ratio_share_diff": getFloat(poolRatio, "best_ratio_share_diff"),
 			"best_ratio_net_diff":   getFloat(poolRatio, "best_ratio_net_diff"),
+			"network_difficulty":    getFloat(poolRatio, "network_difficulty"),
 			"best_ratio_height":     getFloat(poolRatio, "best_ratio_height"),
 			"best_ratio_worker":     getString(poolRatio, "best_ratio_worker"),
 			"best_ratio_time":       getString(poolRatio, "best_ratio_time"),
@@ -882,6 +885,7 @@ func (c *CoinAPI) HandlePool(w http.ResponseWriter, r *http.Request, symbol stri
 		"blocks_found":      c.store.GetBlockCount(symbol),
 		"blocks_orphaned":   c.store.GetOrphanCount(symbol),
 		"round_work":        c.stats.PeekRoundWork(symbol),
+		"round_shares":      c.stats.PeekRoundShares(symbol),
 		"last_block_time":   c.store.GetLatestBlockTime(symbol),
 		"uptime_seconds":    uptime,
 	})
