@@ -75,6 +75,7 @@ func (s *Store) init() error {
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN share_difficulty REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN reward REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN last_confirmations INTEGER DEFAULT -2`)
+	s.db.Exec(`ALTER TABLE blocks ADD COLUMN acknowledged INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
 	// Migrate: add best-share context columns if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN network_diff_at_best REAL DEFAULT 0`)
@@ -355,6 +356,7 @@ type Block struct {
 	SharesSinceLast int64
 	LuckPercent     float64
 	CreatedAt       string
+	Acknowledged    bool
 }
 
 func (s *Store) RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, shareDifficulty, reward float64, sharesSinceLast int64, luckPercent float64) error {
@@ -409,6 +411,17 @@ func (s *Store) MarkBlockOrphaned(symbol string, height int64) {
 		WHERE coin_symbol=? AND height=?`, symbol, height)
 }
 
+// AcknowledgeBlock marks a found/orphaned block as acknowledged by the user so
+// the "Closest to block (session)" UI can exclude it and cascade to the next
+// highest share. Purely a UI-state flag; does not affect counts or luck. Idempotent.
+func (s *Store) AcknowledgeBlock(symbol string, height int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`UPDATE blocks SET acknowledged=1
+		WHERE coin_symbol=? AND height=?`, symbol, height)
+	return err
+}
+
 // GetOrphanCount returns how many recorded blocks for a coin the node has
 // confirmed as orphaned (last_confirmations = -1). Found blocks remain counted
 // by GetBlockCount; this is a separate tally so the UI can show
@@ -426,7 +439,7 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, coin_symbol, height,
 		COALESCE(block_hash,''), COALESCE(block_time,''),
-		COALESCE(miner_address,''), COALESCE(worker_name,''), COALESCE(share_difficulty,0), COALESCE(reward,0), shares_since_last, luck_percent, created_at
+		COALESCE(miner_address,''), COALESCE(worker_name,''), COALESCE(share_difficulty,0), COALESCE(reward,0), shares_since_last, luck_percent, created_at, COALESCE(acknowledged,0)
 		FROM blocks WHERE coin_symbol=? ORDER BY height DESC LIMIT ?`, symbol, limit)
 	if err != nil {
 		return nil, err
@@ -437,7 +450,7 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 		var b Block
 		if err := rows.Scan(&b.ID, &b.CoinSymbol, &b.Height, &b.BlockHash,
 			&b.BlockTime, &b.MinerAddress, &b.WorkerName, &b.ShareDifficulty, &b.Reward, &b.SharesSinceLast,
-			&b.LuckPercent, &b.CreatedAt); err == nil {
+			&b.LuckPercent, &b.CreatedAt, &b.Acknowledged); err == nil {
 			blocks = append(blocks, b)
 		}
 	}

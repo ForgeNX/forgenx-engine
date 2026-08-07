@@ -775,6 +775,8 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandlePool(w, r, symbol)
 		case endpoint == "blocks":
 			c.HandleBlocks(w, r, symbol)
+		case strings.HasPrefix(endpoint, "blocks/") && strings.HasSuffix(endpoint, "/acknowledge") && r.Method == http.MethodPost:
+			c.HandleAcknowledgeBlock(w, r, symbol, endpoint)
 		case endpoint == "history":
 			c.HandleHistory(w, r, symbol)
 		case endpoint == "logs":
@@ -882,6 +884,24 @@ func (c *CoinAPI) HandlePool(w http.ResponseWriter, r *http.Request, symbol stri
 	})
 }
 
+// HandleAcknowledgeBlock marks a found/orphaned block as acknowledged so the
+// "Closest to block (session)" UI can exclude it and cascade to the next-highest
+// share. Path: POST /api/apps/{coin}/blocks/{height}/acknowledge
+func (c *CoinAPI) HandleAcknowledgeBlock(w http.ResponseWriter, r *http.Request, symbol, endpoint string) {
+	// endpoint == "blocks/{height}/acknowledge"
+	mid := strings.TrimSuffix(strings.TrimPrefix(endpoint, "blocks/"), "/acknowledge")
+	height, err := strconv.ParseInt(mid, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid height", http.StatusBadRequest)
+		return
+	}
+	if err := c.store.AcknowledgeBlock(symbol, height); err != nil {
+		http.Error(w, "acknowledge failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"success": true, "height": height, "acknowledged": true})
+}
+
 // ── /api/apps/{coin}/blocks ───────────────────────────────────────────────────
 
 func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol string) {
@@ -940,6 +960,7 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 			"created_at":        b.CreatedAt,
 			"confirmations":     conf,
 			"status":            blockStatus(conf),
+			"acknowledged":      b.Acknowledged,
 		})
 	}
 	if out == nil {
