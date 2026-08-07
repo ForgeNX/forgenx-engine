@@ -70,6 +70,7 @@ func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 
 // statsResetter is satisfied by *metrics.Stats.
 type statsResetter interface {
+	PeekRoundWork(symbol string) float64
 	ResetCoinStats(symbol string)
 }
 
@@ -167,7 +168,7 @@ func (c *CoinAPI) HandleEngineStats(w http.ResponseWriter, r *http.Request) {
 			offsetStale += last.SharesStale
 		}
 		c.store.UpdateCounters(symbol, last.BlocksFound, current,
-			offset, currentRej, offsetRej, currentStale, offsetStale, uptime, sessionStart)
+			offset, currentRej, offsetRej, currentStale, offsetStale, uptime, sessionStart, c.stats.PeekRoundWork(symbol))
 
 		coinData["shares_accepted"] = current + offset
 		coinData["shares_rejected"] = currentRej + offsetRej
@@ -528,6 +529,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"shares_stale":          sharesStale,
 			"blocks_found":          c.store.GetBlockCount(symbol),
 			"blocks_orphaned":       c.store.GetOrphanCount(symbol),
+			"round_work":            c.stats.PeekRoundWork(symbol),
 			"last_block_time":       c.store.GetLatestBlockTime(symbol),
 			"uptime_seconds":        uptime,
 			"best_session_diff":     bestSessionDiff,
@@ -879,6 +881,7 @@ func (c *CoinAPI) HandlePool(w http.ResponseWriter, r *http.Request, symbol stri
 		"shares_stale":      int64(getFloat(coinStats, "shares_stale")),
 		"blocks_found":      c.store.GetBlockCount(symbol),
 		"blocks_orphaned":   c.store.GetOrphanCount(symbol),
+		"round_work":        c.stats.PeekRoundWork(symbol),
 		"last_block_time":   c.store.GetLatestBlockTime(symbol),
 		"uptime_seconds":    uptime,
 	})
