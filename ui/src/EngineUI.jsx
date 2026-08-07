@@ -21,6 +21,7 @@ function useEngineData(online, initialStats, initialMiners) {
   const cachedMiners = initialMiners ?? (() => { try { const s = sessionStorage.getItem("forgenx_engine_miners"); return s ? JSON.parse(s) : {} } catch { return {} } })()
   const [stats,   setStats]   = useState(cached)
   const [miners,  setMiners]  = useState(cachedMiners)
+  const [blockTotals, setBlockTotals] = useState({ found: 0, orphaned: 0 })
   const [loading, setLoading] = useState(!cached)
   const timerRef = useRef(null)
 
@@ -32,6 +33,21 @@ function useEngineData(online, initialStats, initialMiners) {
         fetch("/api/engine/miners").then(r => r.json()),
       ])
       if (s) { setStats(s); try { sessionStorage.setItem("forgenx_engine_stats", JSON.stringify(s)) } catch {} }
+      // Durable block counts: /api/engine/stats blocks_found is a volatile session
+      // counter that resets on restart. The persisted all-time count (and orphan
+      // count) live in each coin's /status pool, so sum those instead.
+      try {
+        const syms = Object.keys(s?.coins ?? {})
+        const statuses = await Promise.all(syms.map(sym =>
+          fetch(`/api/apps/forge${sym.toLowerCase()}/status`).then(r => r.json()).catch(() => null)
+        ))
+        let found = 0, orphaned = 0
+        for (const st of statuses) {
+          found    += st?.pool?.blocks_found    ?? 0
+          orphaned += st?.pool?.blocks_orphaned  ?? 0
+        }
+        setBlockTotals({ found, orphaned })
+      } catch {}
       const mm = m.miners ?? {}
       setMiners(mm)
       try { sessionStorage.setItem("forgenx_engine_miners", JSON.stringify(mm)) } catch {}
@@ -50,7 +66,7 @@ function useEngineData(online, initialStats, initialMiners) {
     return () => clearInterval(timerRef.current)
   }, [fetch_])
 
-  return { stats, miners, loading }
+  return { stats, miners, loading, blockTotals }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -270,7 +286,7 @@ function CoinCard({ symbol, engineData, nodeData, engineOnline, miners }) {
 }
 
 // ── Dashboard tab ────────────────────────────────────────────────────────────
-function EngineDashboard({ stats, miners, loading, engineOnline, nodes }) {
+function EngineDashboard({ stats, miners, loading, engineOnline, nodes, blockTotals }) {
   const minerList = Object.values(miners).flat()
   const totalMiners = minerList.length
   const totalHashrate = minerList.reduce((sum, m) => sum + ((m.hashrate_15m ?? m.hashrate_5m ?? m.hashrate_1m ?? m.hashrate ?? 0) * 1e12), 0)
@@ -281,7 +297,8 @@ function EngineDashboard({ stats, miners, loading, engineOnline, nodes }) {
   const totalStale    = Object.values(coins).reduce((s, c) => s + (c.shares_stale    ?? 0), 0)
   const totalShares   = totalAccepted + totalRejected + totalStale
   const validPct = totalShares > 0 ? ((totalAccepted / totalShares) * 100).toFixed(1) : "—"
-  const totalBlocks = Object.values(coins).reduce((s, c) => s + (c.blocks_found ?? 0), 0)
+  const totalBlocks   = blockTotals?.found    ?? 0
+  const totalOrphaned = blockTotals?.orphaned ?? 0
 
   if (!engineOnline && !stats) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", flexDirection: "column", gap: "8px" }}>
@@ -302,8 +319,8 @@ function EngineDashboard({ stats, miners, loading, engineOnline, nodes }) {
       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
         <StatCard icon={Zap}      label="Pool Hashrate" value={totalHashrate > 0 ? <>{formatHashrate(totalHashrate)} <span style={{fontSize:"11px",color:"#94a3b8",fontWeight:400}}>(15min)</span>{totalHashrate5m > 0 && <><span style={{color:"#475569",margin:"0 4px"}}>/</span><span style={{fontWeight:700,color:ENG.color}}>{formatHashrate(totalHashrate5m)}</span> <span style={{fontSize:"11px",color:"#94a3b8",fontWeight:400}}>(5min)</span></>}</> : "—"} accent />
         <StatCard icon={Users}    label="Worker Count" value={totalMiners} />
-        <StatCard icon={BarChart2} label="Blocks Found" value={<>{totalBlocks}<span style={{fontSize:"11px",color:"#94a3b8",fontWeight:400,marginLeft:"10px"}}>(session)</span></>} />
-        <StatCard icon={Hash}     label="Total Shares" value={<>{totalShares > 0 ? totalShares.toLocaleString() : "—"}<span style={{fontSize:"11px",color:"#94a3b8",fontWeight:400,marginLeft:"10px"}}>(session)</span></>} />
+        <StatCard icon={BarChart2} label="Blocks Found / Orphaned" value={<>{totalBlocks} <span style={{color:"#475569"}}>/</span> <span style={{color: totalOrphaned > 0 ? "#f87171" : "#94a3b8"}}>{totalOrphaned}</span><span style={{fontSize:"11px",color:"#94a3b8",fontWeight:400,marginLeft:"10px"}}>(all time)</span></>} />
+        <StatCard icon={Hash}     label="Total Shares" value={<>{totalShares > 0 ? totalShares.toLocaleString() : "—"}<span style={{fontSize:"11px",color:"#94a3b8",fontWeight:400,marginLeft:"10px"}}>(all time)</span></>} />
         <div style={{ ...CARD, flex: "1 1 140px", minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
             <Server size={11} color={ENG.color} strokeWidth={1.5} />
@@ -992,9 +1009,9 @@ function EngineInformationTab() {
 
 
 export default function EngineUI({ activeTab, engineOnline, nodes, initialStats, initialMiners }) {
-  const { stats, miners, loading } = useEngineData(engineOnline, initialStats, initialMiners)
+  const { stats, miners, loading, blockTotals } = useEngineData(engineOnline, initialStats, initialMiners)
 
-  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
+  if (activeTab === "Overview")    return <EngineDashboard stats={stats} miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} blockTotals={blockTotals} />
   if (activeTab === "Workers")     return <EngineWorkers   miners={miners} loading={loading} engineOnline={engineOnline} nodes={nodes} />
   if (activeTab === "Nodes")       return <EngineNodes     nodes={nodes} stats={stats} />
   if (activeTab === "Settings")    return <EngineSettingsTab />
