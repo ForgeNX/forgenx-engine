@@ -126,6 +126,30 @@ func (c *CoinAPI) fetchEngineJSON(path string) (map[string]interface{}, error) {
 
 // ── /api/engine/stats ─────────────────────────────────────────────────────────
 
+// ── /api/engine/info ──────────────────────────────────────────────────────────
+// Engine self-identity. Static fields are baked into the binary so they populate
+// on any host (ForgeNX, UmbrelOS, StratumOS, standalone); version/build come from
+// the build-time ldflags via SetEngineVersion.
+func (c *CoinAPI) HandleEngineInfo(w http.ResponseWriter, r *http.Request) {
+	poolName := ""
+	if data, err := c.fetchEngineJSON("/stats"); err == nil {
+		if v, ok := data["pool_name"].(string); ok {
+			poolName = v
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"name":        "ForgeNX Engine",
+		"version":     c.engineVersion,
+		"build_date":  c.engineBuildDate,
+		"developer":   "ForgeNX",
+		"description": "Multi-coin Stratum mining engine",
+		"category":    "mining",
+		"website":     "",
+		"support":     "",
+		"pool_name":   poolName,
+	})
+}
+
 func (c *CoinAPI) HandleEngineStats(w http.ResponseWriter, r *http.Request) {
 	data, err := c.fetchEngineJSON("/stats")
 	if err != nil {
@@ -751,6 +775,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/miners", c.HandleEngineMiners)
 	mux.HandleFunc("/api/engine/donation-address/", c.HandleDonationAddress)
 	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
+	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
 
 	// Coin app routes — matched by prefix, coin ID extracted from path
 	mux.HandleFunc("/api/apps/", func(w http.ResponseWriter, r *http.Request) {
