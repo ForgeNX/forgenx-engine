@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ForgeNX/forgenx-engine/pkg/stratumv2"
 )
 
 // CoinAPI handles HTTP requests for coin app endpoints.
@@ -25,6 +28,7 @@ type CoinAPI struct {
 	nodeRPCFunc     NodeRPCFunc
 	blockConfFunc   BlockConfFunc
 	coinConfigFunc  CoinConfigFunc
+	reloadCoinFunc  func(symbol string) error
 	logsFunc        LogsFunc
 	donationFunc    DonationFunc
 	portStatusFunc  PortStatusFunc
@@ -88,9 +92,13 @@ func (c *CoinAPI) SetEngineVersion(version, buildDate string) {
 func (c *CoinAPI) SetNodeRPCFunc(f NodeRPCFunc)       { c.nodeRPCFunc = f }
 func (c *CoinAPI) SetBlockConfFunc(f BlockConfFunc)   { c.blockConfFunc = f }
 func (c *CoinAPI) SetCoinConfigFunc(f CoinConfigFunc) { c.coinConfigFunc = f }
-func (c *CoinAPI) SetLogsFunc(f LogsFunc)             { c.logsFunc = f }
-func (c *CoinAPI) SetDonationFunc(f DonationFunc)     { c.donationFunc = f }
-func (c *CoinAPI) SetPortStatusFunc(f PortStatusFunc) { c.portStatusFunc = f }
+
+// SetReloadCoinFunc injects the engine's coin-reload function, used to apply a
+// regenerated SV2 authority key by reloading the coin runner.
+func (c *CoinAPI) SetReloadCoinFunc(f func(symbol string) error) { c.reloadCoinFunc = f }
+func (c *CoinAPI) SetLogsFunc(f LogsFunc)                        { c.logsFunc = f }
+func (c *CoinAPI) SetDonationFunc(f DonationFunc)                { c.donationFunc = f }
+func (c *CoinAPI) SetPortStatusFunc(f PortStatusFunc)            { c.portStatusFunc = f }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────
 
@@ -823,9 +831,49 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 			c.HandleAction(w, r, coinID, endpoint)
 		case endpoint == "reset-stats" && r.Method == http.MethodPost:
 			c.HandleResetStats(w, r, symbol)
+		case endpoint == "regenerate-sv2" && r.Method == http.MethodPost:
+			c.HandleRegenerateSV2(w, r, symbol)
 		default:
 			http.NotFound(w, r)
 		}
+	})
+}
+
+// ── /api/apps/{coin}/regenerate-sv2 ──────────────────────────────────────────
+// Regenerates the coin's SV2 authority keypair, persists it (owner-read-only),
+// and reloads the coin runner so the new key takes effect. Returns the new
+// X-only authority public key. DESTRUCTIVE: miners must update their sv2_auth_pk
+// to the new key, and the coin's SV2 listener briefly drops during the reload.
+func (c *CoinAPI) HandleRegenerateSV2(w http.ResponseWriter, r *http.Request, symbol string) {
+	kp, err := stratumv2.GenerateAuthorityKeypair()
+	if err != nil {
+		writeError(w, 500, "generate keypair: "+err.Error())
+		return
+	}
+	keyPath := fmt.Sprintf("/pool/coins/%s_sv2_authority.key", strings.ToLower(symbol))
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(kp.PrivKeyBytes())), 0600); err != nil {
+		writeError(w, 500, "save keypair: "+err.Error())
+		return
+	}
+	pubHex := hex.EncodeToString(func() []byte { b := kp.XOnlyPubKeyBytes(); return b[:] }())
+	// Reload the coin so the runner re-reads the new authority key.
+	reloaded := false
+	if c.reloadCoinFunc != nil {
+		if err := c.reloadCoinFunc(symbol); err != nil {
+			writeJSON(w, map[string]interface{}{
+				"success":  true,
+				"warning":  "key regenerated but reload failed: " + err.Error(),
+				"pubkey":   pubHex,
+				"reloaded": false,
+			})
+			return
+		}
+		reloaded = true
+	}
+	writeJSON(w, map[string]interface{}{
+		"success":  true,
+		"pubkey":   pubHex,
+		"reloaded": reloaded,
 	})
 }
 
