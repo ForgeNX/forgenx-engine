@@ -1026,21 +1026,22 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 			}
 		}
 		out = append(out, map[string]interface{}{
-			"id":                b.ID,
-			"coin_symbol":       b.CoinSymbol,
-			"height":            b.Height,
-			"block_hash":        b.BlockHash,
-			"block_time":        b.BlockTime,
-			"miner_address":     b.MinerAddress,
-			"worker_name":       b.WorkerName,
-			"share_difficulty":  b.ShareDifficulty,
-			"reward":            b.Reward,
-			"shares_since_last": b.SharesSinceLast,
-			"luck_percent":      b.LuckPercent,
-			"created_at":        b.CreatedAt,
-			"confirmations":     conf,
-			"status":            blockStatus(conf),
-			"acknowledged":      b.Acknowledged,
+			"id":                 b.ID,
+			"coin_symbol":        b.CoinSymbol,
+			"height":             b.Height,
+			"block_hash":         b.BlockHash,
+			"block_time":         b.BlockTime,
+			"miner_address":      b.MinerAddress,
+			"worker_name":        b.WorkerName,
+			"share_difficulty":   b.ShareDifficulty,
+			"reward":             b.Reward,
+			"shares_since_last":  b.SharesSinceLast,
+			"luck_percent":       b.LuckPercent,
+			"network_difficulty": b.NetworkDifficulty,
+			"created_at":         b.CreatedAt,
+			"confirmations":      conf,
+			"status":             blockStatus(conf),
+			"acknowledged":       b.Acknowledged,
 		})
 	}
 	if out == nil {
