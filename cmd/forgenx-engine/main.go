@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +35,49 @@ var (
 	buildDate = "unknown"
 	commit    = "unknown"
 )
+
+// applyMeshEnv overlays Nexus Mesh settings from environment variables onto the
+// (otherwise default/empty) mesh config. Used because this deployment configures
+// the engine via env + /pool/coins rather than a top-level config.json.
+//
+//	MESH_ENABLED=true|false
+//	MESH_PORT=3350
+//	MESH_ROTATE_INTERVAL=20s
+//	MESH_DEFAULT_DIFF=1024
+//	MESH_DEFAULT_ALLOCATION=DGB:100   (comma-separated COIN:PCT pairs)
+func applyMeshEnv(m *config.MeshConfig) {
+	if v := os.Getenv("MESH_ENABLED"); v == "true" || v == "1" {
+		m.Enabled = true
+	}
+	if v := os.Getenv("MESH_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			m.Port = p
+		}
+	}
+	if v := os.Getenv("MESH_ROTATE_INTERVAL"); v != "" {
+		m.RotateInterval = v
+	}
+	if v := os.Getenv("MESH_DEFAULT_DIFF"); v != "" {
+		if d, err := strconv.ParseFloat(v, 64); err == nil {
+			m.DefaultDiff = d
+		}
+	}
+	if v := os.Getenv("MESH_DEFAULT_ALLOCATION"); v != "" {
+		var out []config.MeshWeight
+		for _, pair := range strings.Split(v, ",") {
+			parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			pct, err := strconv.ParseFloat(parts[1], 64)
+			if err != nil {
+				continue
+			}
+			out = append(out, config.MeshWeight{Coin: strings.ToUpper(parts[0]), Percent: pct})
+		}
+		m.DefaultAllocation = out
+	}
+}
 
 func main() {
 	configPath := flag.String("config", "config.json", "path to configuration file")
@@ -92,8 +137,11 @@ func main() {
 	eng.WatchCoins(engine.CoinsDir, cfg.Donation)
 	eng.StartNodeRetryLoop(engine.CoinsDir, cfg.Donation)
 
-	// Nexus Mesh — opt-in. Only starts if explicitly enabled in config; otherwise
-	// the engine behaves exactly as a non-mesh engine (the mesh is inert code).
+	// Nexus Mesh — opt-in. Enabled via environment (MESH_ENABLED=true), because
+	// this deployment has no top-level config.json (config.Load returns defaults;
+	// coins load from /pool/coins). Env is how the compose injects mesh settings.
+	// The engine behaves exactly as a non-mesh engine unless MESH_ENABLED=true.
+	applyMeshEnv(&cfg.Mesh)
 	if cfg.Mesh.Enabled {
 		rotate, _ := time.ParseDuration(cfg.Mesh.RotateInterval)
 		nexusMesh := mesh.New(eng, mesh.Options{
