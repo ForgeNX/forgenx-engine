@@ -100,26 +100,40 @@ func (sch *Scheduler) SetAllocation(ms *MinerSession, alloc *Allocation) {
 	ms.alloc = alloc
 }
 
-// runLoop is one miner's rotation goroutine.
+// runLoop is one miner's rotation goroutine. It sends an initial job immediately
+// (miners' dead-pool watchdogs drop a connection that receives no work within
+// ~20-30s, so we must not wait for the first ticker tick), then rotates on the
+// interval thereafter.
 func (sch *Scheduler) runLoop(ml *minerLoop) {
+	var lastCoin string
+
+	// rotateOnce picks the next coin and sends it, returning the coin sent (or ""
+	// if nothing could be sent this round). Shared by the immediate first send and
+	// the ticker loop so the clean-jobs logic is identical.
+	rotateOnce := func() {
+		coin := sch.pickCoin(ml)
+		if coin == "" {
+			return // no allocation / no available coin right now
+		}
+		cleanJobs := coin != lastCoin
+		if err := sch.sendJob(ml.ms, coin, cleanJobs); err != nil {
+			sch.logger.Debug("[mesh] send job to %s for %s failed: %v", ml.ms.Worker, coin, err)
+			return
+		}
+		lastCoin = coin
+	}
+
+	// Immediate first job on connect — keeps the miner's watchdog satisfied.
+	rotateOnce()
+
 	t := time.NewTicker(sch.rotateInterval)
 	defer t.Stop()
-	var lastCoin string
 	for {
 		select {
 		case <-ml.stop:
 			return
 		case <-t.C:
-			coin := sch.pickCoin(ml)
-			if coin == "" {
-				continue // no allocation / no available coin this tick
-			}
-			cleanJobs := coin != lastCoin
-			if err := sch.sendJob(ml.ms, coin, cleanJobs); err != nil {
-				sch.logger.Debug("[mesh] send job to %s for %s failed: %v", ml.ms.Worker, coin, err)
-				continue
-			}
-			lastCoin = coin
+			rotateOnce()
 		}
 	}
 }
