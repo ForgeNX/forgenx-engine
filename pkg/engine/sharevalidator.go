@@ -63,10 +63,22 @@ func NewShareValidator(c coin.Coin, jobMgr *JobManager, rpcClient *noderpc.Clien
 	}
 }
 
+// ShareSession is the minimal view of a miner session that ValidateShare needs.
+// The concrete *stratum.Session satisfies it directly; the Nexus Mesh provides
+// its own per-job implementation so shares can be routed to the correct coin's
+// validator with the right extranonce1 / mining address / difficulty for that
+// job, without the mesh reimplementing any coin-specific validation.
+type ShareSession interface {
+	MiningAddress() string
+	ExtraNonce1() string
+	GetDifficulty() float64
+	GetPrevDifficulty() (float64, time.Time)
+}
+
 // ValidateShare processes a share submission from a miner session.
 // This follows the same approach as GSS: reconstruct coinbase from job data,
 // compute merkle root using branches, build header, and check difficulty.
-func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum.ShareSubmission) error {
+func (sv *ShareValidator) ValidateShare(session ShareSession, share *stratum.ShareSubmission) error {
 	// Look up the job
 	jobData := sv.jobMgr.GetJob(share.JobID)
 	if jobData == nil {
