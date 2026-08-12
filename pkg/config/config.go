@@ -25,6 +25,28 @@ type Config struct {
 	DBPath   string                `json:"db_path"`
 	Donation DonationConfig        `json:"donation"`
 	Coins    map[string]CoinConfig `json:"coins"`
+	Mesh     MeshConfig            `json:"mesh"`
+}
+
+// MeshConfig configures Nexus Mesh: the single Stratum endpoint that time-slices
+// one miner's hashrate proportionally across multiple SHA256d coins. Disabled by
+// default — the mesh listener does not start unless Enabled is true, so a
+// mesh-capable engine behaves exactly like a non-mesh one until explicitly turned
+// on.
+type MeshConfig struct {
+	Enabled        bool    `json:"enabled"`
+	Port           int     `json:"port"`            // mesh Stratum endpoint port
+	RotateInterval string  `json:"rotate_interval"` // coin-slice duration, e.g. "20s" (clamped <=30s)
+	DefaultDiff    float64 `json:"default_diff"`    // starting per-miner difficulty
+	// DefaultAllocation is applied to any miner that connects until the UI sets a
+	// custom split. Each entry is {coin, percent}; percents should sum to ~100.
+	DefaultAllocation []MeshWeight `json:"default_allocation"`
+}
+
+// MeshWeight is one coin's percent in a mesh allocation.
+type MeshWeight struct {
+	Coin    string  `json:"coin"`
+	Percent float64 `json:"percent"`
 }
 
 // DonationConfig holds developer donation settings.

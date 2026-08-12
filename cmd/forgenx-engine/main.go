@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	// Import coin packages to trigger init() registration
 	_ "github.com/ForgeNX/forgenx-engine/pkg/coin"
@@ -23,6 +24,7 @@ import (
 	"github.com/ForgeNX/forgenx-engine/pkg/config"
 	"github.com/ForgeNX/forgenx-engine/pkg/engine"
 	"github.com/ForgeNX/forgenx-engine/pkg/logging"
+	"github.com/ForgeNX/forgenx-engine/pkg/mesh"
 	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
 )
 
@@ -89,6 +91,34 @@ func main() {
 
 	eng.WatchCoins(engine.CoinsDir, cfg.Donation)
 	eng.StartNodeRetryLoop(engine.CoinsDir, cfg.Donation)
+
+	// Nexus Mesh — opt-in. Only starts if explicitly enabled in config; otherwise
+	// the engine behaves exactly as a non-mesh engine (the mesh is inert code).
+	if cfg.Mesh.Enabled {
+		rotate, _ := time.ParseDuration(cfg.Mesh.RotateInterval)
+		nexusMesh := mesh.New(eng, mesh.Options{
+			Host:           "0.0.0.0",
+			Port:           cfg.Mesh.Port,
+			DefaultDiff:    cfg.Mesh.DefaultDiff,
+			RotateInterval: rotate,
+		})
+		// Apply the configured default allocation to every miner that connects,
+		// until the UI sets a custom split. Wired via the mesh's onAuthorized path
+		// by pre-seeding here through SetAllocation in the scheduler once a session
+		// appears — for the first bring-up we set it in a lightweight watcher.
+		defAlloc := make([]mesh.CoinWeight, 0, len(cfg.Mesh.DefaultAllocation))
+		for _, w := range cfg.Mesh.DefaultAllocation {
+			defAlloc = append(defAlloc, mesh.CoinWeight{Coin: w.Coin, Percent: w.Percent})
+		}
+		nexusMesh.SetDefaultAllocation(defAlloc)
+		go func() {
+			if err := nexusMesh.Start(); err != nil {
+				logger.Error("Nexus Mesh start failed: %v", err)
+			}
+		}()
+		logger.Info("Nexus Mesh enabled on port %d (rotate=%s, default coins=%d)",
+			cfg.Mesh.Port, cfg.Mesh.RotateInterval, len(defAlloc))
+	}
 
 	// Start metrics API
 	api := metrics.NewAPIServer(cfg.APIPort, cfg.PoolName, stats)

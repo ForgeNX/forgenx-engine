@@ -18,6 +18,11 @@ type Mesh struct {
 	router    *ShareRouter
 	routes    *RouteMap
 	logger    *logging.Logger
+
+	// defaultAlloc is applied to each miner on authorize until a custom split is
+	// set via SetAllocation. Nil/empty means miners start with no work until the
+	// UI assigns an allocation.
+	defaultAlloc []CoinWeight
 }
 
 // Options configures a Mesh.
@@ -68,6 +73,9 @@ func New(registry CoinRegistry, opts Options) *Mesh {
 	//  - a departed miner stops rotation
 	//  - each share is routed to its originating coin's validator
 	listener.SetOnAuthorized(func(ms *MinerSession) {
+		if len(m.defaultAlloc) > 0 {
+			scheduler.SetAllocation(ms, NewAllocation(m.defaultAlloc))
+		}
 		scheduler.StartMiner(ms)
 	})
 	listener.SetOnRemoved(func(ms *MinerSession) {
@@ -90,6 +98,12 @@ func (m *Mesh) Start() error {
 func (m *Mesh) Stop() {
 	m.listener.Stop()
 	m.logger.Info("[mesh] Nexus Mesh stopped")
+}
+
+// SetDefaultAllocation sets the allocation applied to each miner on connect until
+// a custom split is assigned. Safe to call before Start.
+func (m *Mesh) SetDefaultAllocation(weights []CoinWeight) {
+	m.defaultAlloc = weights
 }
 
 // SetAllocation sets or updates a miner's coin split. The UI calls this when the
