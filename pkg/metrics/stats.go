@@ -93,6 +93,8 @@ type CoinStats struct {
 	LastBlockTime   time.Time `json:"last_block_time,omitempty"`
 	SyncProgress    float64   `json:"sync_progress"`
 	MaxPoolHashrate float64   `json:"max_pool_hashrate"`
+	RoundWork       float64   // accumulated actual share difficulty since last block (internal; not serialized)
+	RoundShares     uint64    // count of valid shares since last block (internal; not serialized)
 	mu              sync.Mutex
 }
 
@@ -205,6 +207,34 @@ func (s *Stats) InitCoin(symbol string) {
 	}
 }
 
+// SetRoundWork seeds the accumulated round work for a coin, used at startup to
+// restore the persisted value from pool_counters so a mid-round restart doesn't
+// zero the effort accumulator. No-op if the coin isn't initialized yet.
+func (s *Stats) SetRoundWork(symbol string, val float64) {
+	s.mu.RLock()
+	cs, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	cs.mu.Lock()
+	cs.RoundWork = val
+	cs.mu.Unlock()
+}
+
+// SetRoundShares seeds the per-round share count at startup (restart resilience).
+func (s *Stats) SetRoundShares(symbol string, val uint64) {
+	s.mu.RLock()
+	cs, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	cs.mu.Lock()
+	cs.RoundShares = val
+	cs.mu.Unlock()
+}
+
 // RecordConnect records when a worker connects.
 func (s *Stats) RecordConnect(symbol, workerName string) {
 	if workerName == "" {
@@ -295,6 +325,16 @@ func (s *Stats) RecordShare(symbol string, result ShareResult, workerName string
 	switch result {
 	case ShareValid:
 		cs.SharesAccepted++
+		// Accumulate actual (network-scale) share difficulty for round effort.
+		// effort = roundWork / networkDiff * 100, computed & reset when a block
+		// is found. actualDiff[0] is the real share difficulty; fall back to the
+		// pool-diff shareDiff only if no actual diff was provided.
+		if len(actualDiff) > 0 && actualDiff[0] > 0 {
+			cs.RoundWork += actualDiff[0]
+		} else if shareDiff > 0 {
+			cs.RoundWork += shareDiff
+		}
+		cs.RoundShares++
 	case ShareInvalid:
 		cs.SharesRejected++
 	case ShareStale:
@@ -328,6 +368,56 @@ func (s *Stats) RecordShare(symbol string, result ShareResult, workerName string
 		}
 		ws.mu.Unlock()
 	}
+}
+
+// TakeRoundWork returns the accumulated actual share difficulty for a coin since
+// the last block and resets it to zero, atomically. Called when a block is found
+// to compute effort = roundWork / networkDiff * 100. Returns 0 if the coin is
+// unknown or no shares have accumulated.
+func (s *Stats) TakeRoundWork(symbol string) (float64, uint64) {
+	s.mu.RLock()
+	cs, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return 0, 0
+	}
+	cs.mu.Lock()
+	rw := cs.RoundWork
+	rs := cs.RoundShares
+	cs.RoundWork = 0
+	cs.RoundShares = 0
+	cs.mu.Unlock()
+	return rw, rs
+}
+
+// PeekRoundWork returns the current accumulated round work without resetting it,
+// for live "current round" effort display. Returns 0 if the coin is unknown.
+func (s *Stats) PeekRoundWork(symbol string) float64 {
+	s.mu.RLock()
+	cs, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+	cs.mu.Lock()
+	rw := cs.RoundWork
+	cs.mu.Unlock()
+	return rw
+}
+
+// PeekRoundShares returns the current per-round valid share count without
+// resetting it, for live "Shares tracked (this round)" display.
+func (s *Stats) PeekRoundShares(symbol string) uint64 {
+	s.mu.RLock()
+	cs, ok := s.coins[symbol]
+	s.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+	cs.mu.Lock()
+	rs := cs.RoundShares
+	cs.mu.Unlock()
+	return rs
 }
 
 // RecordBlock records a block found event.

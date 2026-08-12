@@ -121,6 +121,7 @@ func main() {
 		})
 		coinAPI.SetBlockConfFunc(eng.GetBlockConfirmations)
 		coinAPI.SetDonationFunc(eng.GetDonationAddress)
+		coinAPI.SetReloadCoinFunc(func(sym string) error { return eng.ReloadCoinBySymbol(sym, cfg.Donation) })
 		coinAPI.SetPortStatusFunc(eng.GetCoinPortStatus)
 
 		coinAPI.RegisterRoutes(api.Mux())

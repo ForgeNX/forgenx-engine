@@ -45,9 +45,13 @@ type shareWork struct {
 type workerDiffStore interface {
 	SaveWorkerDifficulty(symbol, workerName string, difficulty float64)
 	GetWorkerLastDifficulty(symbol, workerName string) float64
+	// GetRoundWork returns the persisted round-work accumulator for a coin so
+	// SetStore can restore it across restarts (effort tracking).
+	GetRoundWork(symbol string) float64
+	GetRoundShares(symbol string) int64
 	// RecordBlock persists a solved block to the durable blocks table so it
 	// appears in the Blocks/Luck UI. Idempotent (INSERT OR IGNORE on height).
-	RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, shareDifficulty, reward float64, sharesSinceLast int64, luckPercent float64) error
+	RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, shareDifficulty, reward float64, sharesSinceLast int64, luckPercent, networkDifficulty float64) error
 }
 
 type CoinRunner struct {
@@ -80,18 +84,27 @@ type CoinRunner struct {
 	bestRatioHeight    uint32
 	bestRatioTime      time.Time
 	bestRatioWorker    string
+	lastNetDiff        float64 // most recent job's network difficulty (protected by sharesMu)
 }
 
 // NewCoinRunner creates and wires up all components for a single coin.
-func (r *CoinRunner) SetStore(s workerDiffStore) { r.store = s }
+func (r *CoinRunner) SetStore(s workerDiffStore) {
+	r.store = s
+	// Restore the persisted round-work accumulator so a mid-round restart does
+	// not zero out block effort. One-time seed at startup.
+	if s != nil && r.stats != nil {
+		r.stats.SetRoundWork(r.symbol, s.GetRoundWork(r.symbol))
+		r.stats.SetRoundShares(r.symbol, uint64(s.GetRoundShares(r.symbol)))
+	}
+}
 
 // BestRatioContext returns the pool-wide (engine-session) best shareDiff/
 // networkDiff ratio for this coin — the closest any worker has come to a block
 // since the runner started — plus the share behind it and the worker name.
-func (r *CoinRunner) BestRatioContext() (ratio, shareDiff, netDiff float64, height uint32, when time.Time, worker string) {
+func (r *CoinRunner) BestRatioContext() (ratio, shareDiff, netDiff float64, height uint32, when time.Time, worker string, lastNetDiff float64) {
 	r.sharesMu.Lock()
 	defer r.sharesMu.Unlock()
-	return r.bestRatio, r.bestRatioShareDiff, r.bestRatioNetDiff, r.bestRatioHeight, r.bestRatioTime, r.bestRatioWorker
+	return r.bestRatio, r.bestRatioShareDiff, r.bestRatioNetDiff, r.bestRatioHeight, r.bestRatioTime, r.bestRatioWorker, r.lastNetDiff
 }
 
 func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.DonationConfig, stats *metrics.Stats) (*CoinRunner, error) {
@@ -406,6 +419,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 					// under one lock. Best-ratio = closest any worker has come to a
 					// block this engine-session (distinct from best difficulty).
 					runner.sharesMu.Lock()
+					runner.lastNetDiff = netDiff
 					runner.recentShares = append(runner.recentShares, shareWork{t: time.Now(), diff: poolDiff})
 					if netDiff > 0 {
 						if ratio := result.Difficulty / netDiff; ratio > runner.bestRatio {
@@ -917,7 +931,15 @@ func submitSV2Block(
 			reward = float64(tmpl.CoinbaseValue) / 1e8
 		}
 		if runner.store != nil {
-			if err := runner.store.RecordBlock(symbol, int64(job.Height), result.HashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, result.Difficulty, reward, 0, 100.0); err != nil {
+			// Compute real effort for this block: accumulated round work vs network
+			// difficulty. TakeRoundWork also resets the accumulator for the next round.
+			roundWork, roundShares := runner.stats.TakeRoundWork(symbol)
+			effort := 100.0
+			blockNetDiff := stratumv2.TargetToDifficulty(stratumv2.NBitsToTarget(job.NBits))
+			if blockNetDiff > 0 && roundWork > 0 {
+				effort = (roundWork / blockNetDiff) * 100
+			}
+			if err := runner.store.RecordBlock(symbol, int64(job.Height), result.HashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, result.Difficulty, reward, int64(roundShares), effort, blockNetDiff); err != nil {
 				runner.logger.Warn("[%s] could not persist block to blocks table: %v", symbol, err)
 			}
 		}

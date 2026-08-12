@@ -38,6 +38,7 @@ func (s *Store) init() error {
 			block_hash TEXT, block_time TEXT, miner_address TEXT, worker_name TEXT,
 			share_difficulty REAL DEFAULT 0, reward REAL DEFAULT 0,
 			shares_since_last INTEGER DEFAULT 0, luck_percent REAL DEFAULT 100.0,
+			network_difficulty REAL DEFAULT 0,
 			created_at TEXT NOT NULL, UNIQUE(coin_symbol, height))`,
 		`CREATE INDEX IF NOT EXISTS idx_blocks_symbol ON blocks(coin_symbol)`,
 		`CREATE TABLE IF NOT EXISTS pool_counters (
@@ -71,11 +72,14 @@ func (s *Store) init() error {
 	}
 	// Migrate: add last_difficulty column if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE pool_counters ADD COLUMN session_start INTEGER DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE pool_counters ADD COLUMN round_work REAL DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE pool_counters ADD COLUMN round_shares INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN worker_name TEXT`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN share_difficulty REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN reward REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN last_confirmations INTEGER DEFAULT -2`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN acknowledged INTEGER DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE blocks ADD COLUMN network_difficulty REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
 	// Migrate: add best-share context columns if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN network_diff_at_best REAL DEFAULT 0`)
@@ -103,6 +107,8 @@ type PoolCounters struct {
 	SharesStale          int64
 	Uptime               int64
 	SessionStart         int64
+	RoundWork            float64
+	RoundShares          int64
 }
 
 func (s *Store) GetLastCounters(symbol string) PoolCounters {
@@ -112,26 +118,46 @@ func (s *Store) GetLastCounters(symbol string) PoolCounters {
 		COALESCE(shares_offset,0), COALESCE(shares_rejected_offset,0),
 		COALESCE(shares_stale_offset,0), COALESCE(last_shares_rejected,0),
 		COALESCE(last_shares_stale,0), COALESCE(uptime,999999),
-		COALESCE(session_start,0)
+		COALESCE(session_start,0), COALESCE(round_work,0), COALESCE(round_shares,0)
 		FROM pool_counters WHERE coin_symbol=?`, symbol)
 	var c PoolCounters
 	c.Uptime = 999999
 	row.Scan(&c.BlocksFound, &c.SharesAccepted, &c.SharesOffset,
 		&c.SharesRejectedOffset, &c.SharesStaleOffset,
-		&c.SharesRejected, &c.SharesStale, &c.Uptime, &c.SessionStart)
+		&c.SharesRejected, &c.SharesStale, &c.Uptime, &c.SessionStart, &c.RoundWork, &c.RoundShares)
 	return c
+}
+
+// GetRoundWork returns the persisted accumulated round work for a coin (the
+// share difficulty summed since the last block), used at startup to restore the
+// in-memory effort accumulator across restarts. Returns 0 if none stored.
+func (s *Store) GetRoundWork(symbol string) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var rw float64
+	s.db.QueryRow(`SELECT COALESCE(round_work,0) FROM pool_counters WHERE coin_symbol=?`, symbol).Scan(&rw)
+	return rw
+}
+
+// GetRoundShares returns the persisted per-round valid share count for a coin.
+func (s *Store) GetRoundShares(symbol string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var rs int64
+	s.db.QueryRow(`SELECT COALESCE(round_shares,0) FROM pool_counters WHERE coin_symbol=?`, symbol).Scan(&rs)
+	return rs
 }
 
 func (s *Store) UpdateCounters(symbol string, blocksFound, sharesAccepted,
 	sharesOffset, sharesRejected, sharesRejectedOffset,
-	sharesStale, sharesStaleOffset, uptime, sessionStart int64) error {
+	sharesStale, sharesStaleOffset, uptime, sessionStart int64, roundWork float64, roundShares int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO pool_counters
 		(coin_symbol, last_blocks_found, last_shares_accepted, shares_offset,
 		last_shares_rejected, shares_rejected_offset,
-		last_shares_stale, shares_stale_offset, uptime, session_start)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+		last_shares_stale, shares_stale_offset, uptime, session_start, round_work, round_shares)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(coin_symbol) DO UPDATE SET
 		last_blocks_found=excluded.last_blocks_found,
 		last_shares_accepted=excluded.last_shares_accepted,
@@ -141,10 +167,12 @@ func (s *Store) UpdateCounters(symbol string, blocksFound, sharesAccepted,
 		last_shares_stale=excluded.last_shares_stale,
 		shares_stale_offset=excluded.shares_stale_offset,
 		uptime=excluded.uptime,
-		session_start=excluded.session_start`,
+		session_start=excluded.session_start,
+		round_work=excluded.round_work,
+		round_shares=excluded.round_shares`,
 		symbol, blocksFound, sharesAccepted, sharesOffset,
 		sharesRejected, sharesRejectedOffset,
-		sharesStale, sharesStaleOffset, uptime, sessionStart)
+		sharesStale, sharesStaleOffset, uptime, sessionStart, roundWork, roundShares)
 	return err
 }
 
@@ -344,29 +372,30 @@ func (s *Store) GetWorkerSharesAlltime(symbol, workerName string) ShareCounts {
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
 type Block struct {
-	ID              int64
-	CoinSymbol      string
-	Height          int64
-	BlockHash       string
-	BlockTime       string
-	MinerAddress    string
-	WorkerName      string
-	ShareDifficulty float64
-	Reward          float64
-	SharesSinceLast int64
-	LuckPercent     float64
-	CreatedAt       string
-	Acknowledged    bool
+	ID                int64
+	CoinSymbol        string
+	Height            int64
+	BlockHash         string
+	BlockTime         string
+	MinerAddress      string
+	WorkerName        string
+	ShareDifficulty   float64
+	Reward            float64
+	SharesSinceLast   int64
+	LuckPercent       float64
+	NetworkDifficulty float64
+	CreatedAt         string
+	Acknowledged      bool
 }
 
-func (s *Store) RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, shareDifficulty, reward float64, sharesSinceLast int64, luckPercent float64) error {
+func (s *Store) RecordBlock(symbol string, height int64, blockHash, blockTime, minerAddress, workerName string, shareDifficulty, reward float64, sharesSinceLast int64, luckPercent, networkDifficulty float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO blocks
-		(coin_symbol, height, block_hash, block_time, miner_address, worker_name, share_difficulty, reward, shares_since_last, luck_percent, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		symbol, height, blockHash, blockTime, minerAddress, workerName, shareDifficulty, reward, sharesSinceLast, luckPercent, now)
+		(coin_symbol, height, block_hash, block_time, miner_address, worker_name, share_difficulty, reward, shares_since_last, luck_percent, network_difficulty, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		symbol, height, blockHash, blockTime, minerAddress, workerName, shareDifficulty, reward, sharesSinceLast, luckPercent, networkDifficulty, now)
 	return err
 }
 
@@ -439,7 +468,7 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, coin_symbol, height,
 		COALESCE(block_hash,''), COALESCE(block_time,''),
-		COALESCE(miner_address,''), COALESCE(worker_name,''), COALESCE(share_difficulty,0), COALESCE(reward,0), shares_since_last, luck_percent, created_at, COALESCE(acknowledged,0)
+		COALESCE(miner_address,''), COALESCE(worker_name,''), COALESCE(share_difficulty,0), COALESCE(reward,0), shares_since_last, luck_percent, COALESCE(network_difficulty,0), created_at, COALESCE(acknowledged,0)
 		FROM blocks WHERE coin_symbol=? ORDER BY height DESC LIMIT ?`, symbol, limit)
 	if err != nil {
 		return nil, err
@@ -450,7 +479,7 @@ func (s *Store) GetBlocks(symbol string, limit int) ([]Block, error) {
 		var b Block
 		if err := rows.Scan(&b.ID, &b.CoinSymbol, &b.Height, &b.BlockHash,
 			&b.BlockTime, &b.MinerAddress, &b.WorkerName, &b.ShareDifficulty, &b.Reward, &b.SharesSinceLast,
-			&b.LuckPercent, &b.CreatedAt, &b.Acknowledged); err == nil {
+			&b.LuckPercent, &b.NetworkDifficulty, &b.CreatedAt, &b.Acknowledged); err == nil {
 			blocks = append(blocks, b)
 		}
 	}

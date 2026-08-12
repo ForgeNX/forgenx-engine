@@ -25,6 +25,7 @@ import (
 	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
 	"github.com/ForgeNX/forgenx-engine/pkg/noderpc"
 	"github.com/ForgeNX/forgenx-engine/pkg/stratum"
+	"github.com/ForgeNX/forgenx-engine/pkg/stratumv2"
 )
 
 // ecashBlockCooldown is the duration after submitting an eCash block
@@ -322,8 +323,20 @@ func (sv *ShareValidator) ValidateShare(session *stratum.Session, share *stratum
 					workerName = identity[dot+1:]
 				}
 				reward := float64(jobData.Template.CoinbaseValue) / 1e8
+				// Compute real effort: accumulated round work vs network difficulty.
+				// Network difficulty derived from the job's NBits (hex → uint32 →
+				// target → difficulty). TakeRoundWork resets the accumulator.
+				roundWork, roundShares := sv.stats.TakeRoundWork(sv.symbol)
+				effort := 100.0
+				netDiff := 0.0
+				if bb, err := hex.DecodeString(jobData.Job.NBits); err == nil && len(bb) == 4 {
+					netDiff = stratumv2.TargetToDifficulty(stratumv2.NBitsToTarget(binary.BigEndian.Uint32(bb)))
+					if netDiff > 0 && roundWork > 0 {
+						effort = (roundWork / netDiff) * 100
+					}
+				}
 				if sv.runner != nil && sv.runner.store != nil {
-					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, actualDiff, reward, 0, 100.0); err != nil {
+					if err := sv.runner.store.RecordBlock(sv.symbol, jobData.Template.Height, blockHashHex, time.Now().UTC().Format(time.RFC3339), miner, workerName, actualDiff, reward, int64(roundShares), effort, netDiff); err != nil {
 						sv.logger.Warn("could not persist block to blocks table: %v", err)
 					}
 				}

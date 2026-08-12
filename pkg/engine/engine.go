@@ -254,6 +254,23 @@ func (e *Engine) ReloadCoin(symbol string, coinCfg *config.CoinConfig, donation 
 	return e.StartCoin(symbol, coinCfg, donation)
 }
 
+// ReloadCoinBySymbol reloads a coin's runner from its on-disk config so the
+// runner re-reads persistent state (e.g. a regenerated SV2 authority key). The
+// caller supplies the global donation config; the coin's own config overrides
+// layer on top inside NewCoinRunner, exactly as at first startup.
+func (e *Engine) ReloadCoinBySymbol(symbol string, donation config.DonationConfig) error {
+	path := filepath.Join(CoinsDir, strings.ToLower(symbol)+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read coin config %s: %w", symbol, err)
+	}
+	var coinCfg config.CoinConfig
+	if err := json.Unmarshal(data, &coinCfg); err != nil {
+		return fmt.Errorf("parse coin config %s: %w", symbol, err)
+	}
+	return e.ReloadCoin(symbol, &coinCfg, donation)
+}
+
 // GetNodeStatus returns live node RPC data for a coin symbol by reusing the
 // running coin's existing RPC client. The second return value indicates
 // whether a runner (and therefore a live RPC client) exists for this symbol.
@@ -583,13 +600,14 @@ func (e *Engine) HandlePoolRatio(w http.ResponseWriter, r *http.Request) {
 	e.runnersMu.RUnlock()
 	resp := map[string]interface{}{}
 	if ok && runner != nil {
-		ratio, shareDiff, netDiff, height, when, worker := runner.BestRatioContext()
+		ratio, shareDiff, netDiff, height, when, worker, lastNetDiff := runner.BestRatioContext()
 		resp = map[string]interface{}{
 			"best_ratio":            ratio,
 			"best_ratio_share_diff": shareDiff,
 			"best_ratio_net_diff":   netDiff,
 			"best_ratio_height":     height,
 			"best_ratio_worker":     worker,
+			"network_difficulty":    lastNetDiff,
 		}
 		if !when.IsZero() {
 			resp["best_ratio_time"] = when.Format(time.RFC3339)
