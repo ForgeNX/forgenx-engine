@@ -31,16 +31,16 @@ type Scheduler struct {
 	// defaultDiff is the starting per-route difficulty until split vardiff tunes.
 	defaultDiff float64
 
-	mu      sync.Mutex
-	loops   map[string]*minerLoop // keyed by miner worker/session
-	jobSeq  atomic.Uint64
+	mu     sync.Mutex
+	loops  map[string]*minerLoop // keyed by miner worker/session
+	jobSeq atomic.Uint64
 }
 
 // minerLoop is one miner's rotation goroutine state.
 type minerLoop struct {
-	ms       *MinerSession
-	stop     chan struct{}
-	rotor    *weightedRotor
+	ms    *MinerSession
+	stop  chan struct{}
+	rotor *weightedRotor
 }
 
 // NewScheduler creates the scheduler. rotateInterval is clamped to <=30s.

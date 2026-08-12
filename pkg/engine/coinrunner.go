@@ -56,6 +56,7 @@ type workerDiffStore interface {
 
 type CoinRunner struct {
 	symbol          string
+	miningAddress   string // configured payout address (cfg.Mining.Address); used by Nexus Mesh for payout substitution
 	coin            coin.Coin
 	store           workerDiffStore
 	rpcClient       *noderpc.Client
@@ -135,12 +136,13 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 	)
 
 	runner := &CoinRunner{
-		symbol:    symbol,
-		coin:      c,
-		rpcClient: rpcClient,
-		stats:     stats,
-		logger:    logging.New(logging.ModuleEngine),
-		startTime: time.Now(),
+		symbol:        symbol,
+		miningAddress: cfg.Mining.Address,
+		coin:          c,
+		rpcClient:     rpcClient,
+		stats:         stats,
+		logger:        logging.New(logging.ModuleEngine),
+		startTime:     time.Now(),
 	}
 
 	// 🔥 CRITICAL: Register coin in stats immediately
