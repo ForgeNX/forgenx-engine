@@ -117,7 +117,7 @@ func (sch *Scheduler) runLoop(ml *minerLoop) {
 		}
 		cleanJobs := coin != lastCoin
 		if err := sch.sendJob(ml.ms, coin, cleanJobs); err != nil {
-			sch.logger.Debug("[mesh] send job to %s for %s failed: %v", ml.ms.Worker, coin, err)
+			sch.logger.Info("[mesh] SEND JOB to %s for %s FAILED: %v", ml.ms.Worker, coin, err)
 			return
 		}
 		lastCoin = coin
@@ -199,6 +199,7 @@ func (sch *Scheduler) sendJob(ms *MinerSession, coinSym string, cleanJobs bool) 
 		CreatedAt:        time.Now(),
 	})
 
+	sch.logger.Info("[mesh] sent %s job meshID=%s (srcID=%s) diff=%.0f to %s", coinSym, meshJobID, sourceJobID, sch.defaultDiff, ms.Worker)
 	ms.Session.SendJob(job)
 	return nil
 }

@@ -33,11 +33,12 @@ func NewShareRouter(registry CoinRegistry, routes *RouteMap) *ShareRouter {
 func (sr *ShareRouter) Route(ms *MinerSession, share *stratum.ShareSubmission) error {
 	// The miner submitted against a mesh job-ID.
 	meshJobID := share.JobID
+	sr.logger.Info("[mesh] SHARE from %s meshJobID=%s", ms.Worker, meshJobID)
 	ctx := sr.routes.Get(meshJobID)
 	if ctx == nil {
 		// Unknown/expired job — treat as stale. Returning an error lets the
 		// listener send the miner a rejection; the miner moves on to the next job.
-		sr.logger.Debug("[mesh] share for unknown/expired job %s from %s", meshJobID, ms.Worker)
+		sr.logger.Info("[mesh] share REJECTED unknown/expired job %s from %s (routemap miss)", meshJobID, ms.Worker)
 		return stratum.ErrJobNotFound
 	}
 
@@ -57,5 +58,7 @@ func (sr *ShareRouter) Route(ms *MinerSession, share *stratum.ShareSubmission) e
 	// validator. All coin-specific logic (difficulty check, block detection, RTT,
 	// SubmitBlock) happens inside ValidateShare.
 	sess := NewMeshSession(ctx)
-	return h.ValidateShare(sess, &coinShare)
+	err := h.ValidateShare(sess, &coinShare)
+	sr.logger.Info("[mesh] share routed to %s (srcID=%s) result=%v", ctx.Coin, ctx.SourceJobID, err)
+	return err
 }
