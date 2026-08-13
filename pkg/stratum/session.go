@@ -211,8 +211,13 @@ func (s *Session) handleAuthorize(req *Request) {
 	}
 
 	s.logger.Info("[%s] authorized worker: %s (diff: %.2f)", s.ID, s.workerName, s.difficulty)
-	if s.server.onSessionAuthorized != nil {
-		s.server.onSessionAuthorized(s)
+	// Call the authorized hook in a goroutine: handleAuthorize holds s.mu (via the
+	// defer at the top), and the hook may call session methods that also lock s.mu
+	// (e.g. WorkerName()). Calling it inline would deadlock (sync.Mutex is not
+	// re-entrant). Running it after this returns — via a goroutine — lets the lock
+	// release first.
+	if hook := s.server.onSessionAuthorized; hook != nil {
+		go hook(s)
 	}
 }
 
@@ -560,25 +565,25 @@ func (s *Session) Info() SessionInfo {
 
 // SessionInfo holds session metadata for external consumption.
 type SessionInfo struct {
-	ID             string    `json:"id"`
-	WorkerName     string    `json:"worker_name"`
-	RemoteAddr     string    `json:"remote_addr"`
-	Difficulty     float64   `json:"difficulty"`
-	ConnectedAt    time.Time `json:"connected_at"`
-	State          string    `json:"state"`
-	SharesAccepted uint64    `json:"shares_accepted"`
-	SharesRejected uint64    `json:"shares_rejected"`
-	Protocol       string    `json:"protocol"`
-	BestDifficulty float64   `json:"best_difficulty_session"`
-	BestNetworkDiff float64  `json:"best_network_diff,omitempty"`
-	BestHeight      uint32   `json:"best_height,omitempty"`
-	BestTime        time.Time `json:"best_time,omitempty"`
+	ID                 string    `json:"id"`
+	WorkerName         string    `json:"worker_name"`
+	RemoteAddr         string    `json:"remote_addr"`
+	Difficulty         float64   `json:"difficulty"`
+	ConnectedAt        time.Time `json:"connected_at"`
+	State              string    `json:"state"`
+	SharesAccepted     uint64    `json:"shares_accepted"`
+	SharesRejected     uint64    `json:"shares_rejected"`
+	Protocol           string    `json:"protocol"`
+	BestDifficulty     float64   `json:"best_difficulty_session"`
+	BestNetworkDiff    float64   `json:"best_network_diff,omitempty"`
+	BestHeight         uint32    `json:"best_height,omitempty"`
+	BestTime           time.Time `json:"best_time,omitempty"`
 	BestRatio          float64   `json:"best_ratio,omitempty"`
 	BestRatioShareDiff float64   `json:"best_ratio_share_diff,omitempty"`
 	BestRatioNetDiff   float64   `json:"best_ratio_net_diff,omitempty"`
 	BestRatioHeight    uint32    `json:"best_ratio_height,omitempty"`
 	BestRatioTime      time.Time `json:"best_ratio_time,omitempty"`
-	Vendor         string    `json:"vendor,omitempty"`
-	Firmware       string    `json:"firmware,omitempty"`
-	DeviceID       string    `json:"device_id,omitempty"`
+	Vendor             string    `json:"vendor,omitempty"`
+	Firmware           string    `json:"firmware,omitempty"`
+	DeviceID           string    `json:"device_id,omitempty"`
 }
