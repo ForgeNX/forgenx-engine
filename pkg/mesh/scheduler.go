@@ -133,11 +133,12 @@ func (sch *Scheduler) runLoop(ml *minerLoop) {
 		if !cleanSwitch && job.JobID == lastSrcJobID {
 			return
 		}
+		srcID := job.JobID // capture before sendJobPrepared rewrites job.JobID to meshID
 		if err := sch.sendJobPrepared(ml.ms, coin, addr, job, cleanSwitch); err != nil {
 			sch.logger.Info("[mesh] SEND JOB to %s for %s FAILED: %v", ml.ms.Worker, coin, err)
 			return
 		}
-		lastSrcJobID = job.JobID
+		lastSrcJobID = srcID
 	}
 
 	// Pick the initial coin and send immediately (watchdog: miner needs work now).
