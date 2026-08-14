@@ -105,35 +105,70 @@ func (sch *Scheduler) SetAllocation(ms *MinerSession, alloc *Allocation) {
 // ~20-30s, so we must not wait for the first ticker tick), then rotates on the
 // interval thereafter.
 func (sch *Scheduler) runLoop(ml *minerLoop) {
-	var lastCoin string
+	var currentCoin string
+	var lastSrcJobID string
 
-	// rotateOnce picks the next coin and sends it, returning the coin sent (or ""
-	// if nothing could be sent this round). Shared by the immediate first send and
-	// the ticker loop so the clean-jobs logic is identical.
-	rotateOnce := func() {
-		coin := sch.pickCoin(ml)
-		if coin == "" {
-			return // no allocation / no available coin right now
+	// send pushes the current coin's latest job to the miner, but only if the
+	// coin's underlying job changed since we last sent (identified by the coin's
+	// source job-ID) OR a coin switch forces a clean job. This keeps the miner on
+	// a fresh template — coin templates go stale within seconds, so a job held for
+	// the whole rotation slice would produce "job not found" on every share once
+	// the coin advanced. cleanSwitch=true when we've just changed coins.
+	send := func(coin string, cleanSwitch bool) {
+		h := sch.registry.Coin(coin)
+		if h == nil || !h.Running() {
+			return
 		}
-		cleanJobs := coin != lastCoin
-		if err := sch.sendJob(ml.ms, coin, cleanJobs); err != nil {
+		addr := h.PayoutAddress()
+		if addr == "" {
+			return
+		}
+		h.RegisterMeshAddress(addr)
+		job := h.JobForAddress(addr)
+		if job == nil {
+			return
+		}
+		// Skip if the coin's job is unchanged and this isn't a coin switch —
+		// avoids spamming the miner with identical work.
+		if !cleanSwitch && job.JobID == lastSrcJobID {
+			return
+		}
+		if err := sch.sendJobPrepared(ml.ms, coin, addr, job, cleanSwitch); err != nil {
 			sch.logger.Info("[mesh] SEND JOB to %s for %s FAILED: %v", ml.ms.Worker, coin, err)
 			return
 		}
-		lastCoin = coin
+		lastSrcJobID = job.JobID
 	}
 
-	// Immediate first job on connect — keeps the miner's watchdog satisfied.
-	rotateOnce()
+	// Pick the initial coin and send immediately (watchdog: miner needs work now).
+	currentCoin = sch.pickCoin(ml)
+	if currentCoin != "" {
+		send(currentCoin, true)
+	}
 
-	t := time.NewTicker(sch.rotateInterval)
-	defer t.Stop()
+	// Fast refresh keeps the miner on the current coin's freshest template.
+	refresh := time.NewTicker(3 * time.Second)
+	defer refresh.Stop()
+	// Rotation switches which coin the miner is on.
+	rotate := time.NewTicker(sch.rotateInterval)
+	defer rotate.Stop()
+
 	for {
 		select {
 		case <-ml.stop:
 			return
-		case <-t.C:
-			rotateOnce()
+		case <-refresh.C:
+			if currentCoin != "" {
+				send(currentCoin, false)
+			}
+		case <-rotate.C:
+			next := sch.pickCoin(ml)
+			if next == "" {
+				continue
+			}
+			cleanSwitch := next != currentCoin
+			currentCoin = next
+			send(currentCoin, cleanSwitch)
 		}
 	}
 }
@@ -179,6 +214,14 @@ func (sch *Scheduler) sendJob(ms *MinerSession, coinSym string, cleanJobs bool) 
 		return fmt.Errorf("coin %s has no current job", coinSym)
 	}
 
+	return sch.sendJobPrepared(ms, coinSym, addr, job, cleanJobs)
+}
+
+// sendJobPrepared assigns a mesh job-ID to an already-pulled coin job, records
+// the routing context, and sends it to the miner. The caller supplies the coin's
+// payout address and the freshly-pulled job so the refresh loop can compare the
+// coin's source job-ID before deciding whether to re-send.
+func (sch *Scheduler) sendJobPrepared(ms *MinerSession, coinSym, addr string, job *stratum.Job, cleanJobs bool) error {
 	// Assign a mesh-scoped job-ID and record context so the returned share can be
 	// routed back to this coin with the right session view.
 	meshJobID := fmt.Sprintf("m%x", sch.jobSeq.Add(1))
