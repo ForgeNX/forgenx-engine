@@ -617,6 +617,31 @@ func (e *Engine) HandlePoolRatio(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// NexusEndpoint describes one coin's V1 stratum endpoint for the Nexus relay.
+type NexusEndpoint struct {
+	Symbol    string
+	V1Port    int
+	Payout    string
+	V1Running bool
+}
+
+// NexusEndpoints returns the V1 stratum endpoint info for every coin runner,
+// keyed by symbol. The Nexus relay uses this to dial each coin's real stratum
+// server as an ordinary client (no internal coin APIs are touched).
+func (e *Engine) NexusEndpoints() map[string]NexusEndpoint {
+	snap := e.snapshotRunners()
+	out := make(map[string]NexusEndpoint, len(snap))
+	for sym, r := range snap {
+		out[sym] = NexusEndpoint{
+			Symbol:    sym,
+			V1Port:    r.V1Port(),
+			Payout:    r.MiningAddress(),
+			V1Running: r.StratumRunning(),
+		}
+	}
+	return out
+}
+
 func (e *Engine) GetCoinPortStatus(symbol string) (v1Running, v2Running bool) {
 	e.runnersMu.RLock()
 	runner, exists := e.runners[symbol]

@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	// Import coin packages to trigger init() registration
 	_ "github.com/ForgeNX/forgenx-engine/pkg/coin"
@@ -143,29 +142,32 @@ func main() {
 	// The engine behaves exactly as a non-mesh engine unless MESH_ENABLED=true.
 	applyMeshEnv(&cfg.Mesh)
 	if cfg.Mesh.Enabled {
-		rotate, _ := time.ParseDuration(cfg.Mesh.RotateInterval)
-		nexusMesh := mesh.New(eng, mesh.Options{
-			Host:           "0.0.0.0",
-			Port:           cfg.Mesh.Port,
-			DefaultDiff:    cfg.Mesh.DefaultDiff,
-			RotateInterval: rotate,
-		})
-		// Apply the configured default allocation to every miner that connects,
-		// until the UI sets a custom split. Wired via the mesh's onAuthorized path
-		// by pre-seeding here through SetAllocation in the scheduler once a session
-		// appears — for the first bring-up we set it in a lightweight watcher.
-		defAlloc := make([]mesh.CoinWeight, 0, len(cfg.Mesh.DefaultAllocation))
-		for _, w := range cfg.Mesh.DefaultAllocation {
-			defAlloc = append(defAlloc, mesh.CoinWeight{Coin: w.Coin, Percent: w.Percent})
+		// Single-coin bond target = first coin in the configured allocation
+		// (e.g. "DGB:100" -> "DGB"). Multi-coin rotation is added later.
+		defaultCoin := "DGB"
+		if len(cfg.Mesh.DefaultAllocation) > 0 && cfg.Mesh.DefaultAllocation[0].Coin != "" {
+			defaultCoin = cfg.Mesh.DefaultAllocation[0].Coin
 		}
-		nexusMesh.SetDefaultAllocation(defAlloc)
-		go func() {
-			if err := nexusMesh.Start(); err != nil {
-				logger.Error("Nexus Mesh start failed: %v", err)
+		// Resolver hands the relay each coin's real V1 stratum endpoint. The
+		// relay dials it as an ordinary client — no internal coin APIs touched.
+		resolve := func(symbol string) (host string, port int, payout string, running bool, ok bool) {
+			eps := eng.NexusEndpoints()
+			ep, found := eps[symbol]
+			if !found {
+				return "", 0, "", false, false
 			}
-		}()
-		logger.Info("Nexus Mesh enabled on port %d (rotate=%s, default coins=%d)",
-			cfg.Mesh.Port, cfg.Mesh.RotateInterval, len(defAlloc))
+			return "127.0.0.1", ep.V1Port, ep.Payout, ep.V1Running, true
+		}
+		nexusMesh := mesh.New(mesh.Options{
+			Port:        cfg.Mesh.Port,
+			DefaultCoin: defaultCoin,
+			Resolve:     resolve,
+		})
+		if err := nexusMesh.Start(); err != nil {
+			logger.Error("Nexus Mesh start failed: %v", err)
+		} else {
+			logger.Info("Nexus Mesh enabled on port %d (bond=%s)", cfg.Mesh.Port, defaultCoin)
+		}
 	}
 
 	// Start metrics API

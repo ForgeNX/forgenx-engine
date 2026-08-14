@@ -57,6 +57,7 @@ type workerDiffStore interface {
 type CoinRunner struct {
 	symbol          string
 	miningAddress   string // configured payout address (cfg.Mining.Address); used by Nexus Mesh for payout substitution
+	v1Port          int    // V1 stratum listen port (cfg.Stratum.Port); used by Nexus relay to dial this coin
 	coin            coin.Coin
 	store           workerDiffStore
 	rpcClient       *noderpc.Client
@@ -138,6 +139,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 	runner := &CoinRunner{
 		symbol:        symbol,
 		miningAddress: cfg.Mining.Address,
+		v1Port:        cfg.Stratum.Port,
 		coin:          c,
 		rpcClient:     rpcClient,
 		stats:         stats,
@@ -1108,6 +1110,15 @@ func persistSV2AuthPubkey(symbol, authPubHex string, logger *logging.Logger) {
 // to the key files. Called once at SV2 server startup.
 
 // StratumRunning reports whether the Stratum V1 server is currently listening.
+// Symbol returns this coin's symbol (e.g. "DGB").
+func (r *CoinRunner) Symbol() string { return r.symbol }
+
+// MiningAddress returns this coin's configured solo payout address.
+func (r *CoinRunner) MiningAddress() string { return r.miningAddress }
+
+// V1Port returns this coin's Stratum V1 listen port (for the Nexus relay to dial).
+func (r *CoinRunner) V1Port() int { return r.v1Port }
+
 func (r *CoinRunner) StratumRunning() bool {
 	if r.server == nil {
 		return false

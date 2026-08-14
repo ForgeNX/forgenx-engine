@@ -121,6 +121,7 @@ const (
 	ModuleStratum = "stratum"
 	ModuleEngine  = "engine"
 	ModuleCoin    = "coin"
+	ModuleNexus   = "nexus"
 	ModuleRPC     = "rpc"
 	ModuleMetrics = "metrics"
 	ModuleConfig  = "config"
