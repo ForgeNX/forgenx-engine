@@ -65,6 +65,12 @@ type Config struct {
 	// DefaultDiff is the starting per-miner difficulty before split vardiff tunes
 	// it to the miner's measured hashrate.
 	DefaultDiff float64
+	// VarDiff bounds/targets for per-miner difficulty adjustment.
+	MinDiff      float64
+	MaxDiff      float64
+	TargetTime   float64
+	RetargetTime float64
+	VariancePct  float64
 }
 
 // NewListener creates the mesh listener. It does not start listening until
@@ -91,10 +97,18 @@ func NewListener(cfg Config) *Listener {
 	}
 
 	serverCfg := stratum.ServerConfig{
-		Host:              cfg.Host,
-		Port:              cfg.Port,
-		ExtraNonceSize:    cfg.ExtraNonceSize,
-		DefaultDiff:       cfg.DefaultDiff,
+		Host:           cfg.Host,
+		Port:           cfg.Port,
+		ExtraNonceSize: cfg.ExtraNonceSize,
+		DefaultDiff:    cfg.DefaultDiff,
+		VarDiff: &stratum.VarDiffConfig{
+			MinDiff:      cfg.MinDiff,
+			MaxDiff:      cfg.MaxDiff,
+			TargetTime:   cfg.TargetTime,
+			RetargetTime: cfg.RetargetTime,
+			VariancePct:  cfg.VariancePct,
+		},
+		VarDiffOnNewBlock: true,
 		AcceptSuggestDiff: true,
 		PingEnabled:       true,
 		PingInterval:      30 * time.Second,

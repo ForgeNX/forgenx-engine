@@ -232,14 +232,17 @@ func (sch *Scheduler) sendJobPrepared(ms *MinerSession, coinSym, addr string, jo
 	// we can look it up. (The coin's own validator looks up by SourceJobID, which
 	// we carry in the context; the router will restore it.)
 	job.JobID = meshJobID
-	job.CleanJobs = cleanJobs
+	// Clean when switching coins OR when the coin itself signals a new block (its
+	// job's CleanJobs). Preserving the coin's flag makes the miner correctly abandon
+	// work on a stale block — important for solo mining.
+	job.CleanJobs = cleanJobs || job.CleanJobs
 
 	sch.routes.Put(meshJobID, &MeshJobContext{
 		Coin:             coinSym,
 		SourceJobID:      sourceJobID,
 		MiningAddressVal: addr,
 		ExtraNonce1Val:   ms.Session.ExtraNonce1(),
-		DifficultyVal:    sch.defaultDiff, // TODO: per-route split vardiff
+		DifficultyVal:    ms.Session.GetDifficulty(), // live vardiff-adjusted difficulty for this session
 		CreatedAt:        time.Now(),
 	})
 

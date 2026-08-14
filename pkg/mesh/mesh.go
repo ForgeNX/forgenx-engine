@@ -31,6 +31,13 @@ type Options struct {
 	Port           int
 	ExtraNonceSize int
 	DefaultDiff    float64
+	// VarDiff bounds/targets for per-miner difficulty adjustment. Zero values take
+	// sensible defaults in New(). These will eventually be driven by the Nexus UI.
+	MinDiff      float64
+	MaxDiff      float64
+	TargetTime   float64
+	RetargetTime float64
+	VariancePct  float64
 	// RotateInterval is the coin-slice duration; clamped to <=30s for watchdog
 	// safety. Zero uses the default (20s).
 	RotateInterval time.Duration
@@ -46,7 +53,22 @@ func New(registry CoinRegistry, opts Options) *Mesh {
 		opts.ExtraNonceSize = 4
 	}
 	if opts.DefaultDiff <= 0 {
-		opts.DefaultDiff = 1024
+		opts.DefaultDiff = 4096
+	}
+	if opts.MinDiff <= 0 {
+		opts.MinDiff = 4096
+	}
+	if opts.MaxDiff <= 0 {
+		opts.MaxDiff = 262144
+	}
+	if opts.TargetTime <= 0 {
+		opts.TargetTime = 8
+	}
+	if opts.RetargetTime <= 0 {
+		opts.RetargetTime = 90
+	}
+	if opts.VariancePct <= 0 {
+		opts.VariancePct = 30
 	}
 
 	routes := NewRouteMap(opts.RouteTTL)
@@ -58,6 +80,11 @@ func New(registry CoinRegistry, opts Options) *Mesh {
 		Port:           opts.Port,
 		ExtraNonceSize: opts.ExtraNonceSize,
 		DefaultDiff:    opts.DefaultDiff,
+		MinDiff:        opts.MinDiff,
+		MaxDiff:        opts.MaxDiff,
+		TargetTime:     opts.TargetTime,
+		RetargetTime:   opts.RetargetTime,
+		VariancePct:    opts.VariancePct,
 	})
 
 	m := &Mesh{
