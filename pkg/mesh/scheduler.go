@@ -246,7 +246,7 @@ func (sch *Scheduler) sendJobPrepared(ms *MinerSession, coinSym, addr string, jo
 		CreatedAt:        time.Now(),
 	})
 
-	sch.logger.Info("[mesh] sent %s job meshID=%s (srcID=%s) diff=%.0f to %s", coinSym, meshJobID, sourceJobID, sch.defaultDiff, ms.Worker)
+	sch.logger.Info("[mesh] sent %s job meshID=%s (srcID=%s) diff=%.0f to %s", coinSym, meshJobID, sourceJobID, ms.Session.GetDifficulty(), ms.Worker)
 	ms.Session.SendJob(job)
 	return nil
 }

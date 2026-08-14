@@ -108,7 +108,10 @@ func NewListener(cfg Config) *Listener {
 			RetargetTime: cfg.RetargetTime,
 			VariancePct:  cfg.VariancePct,
 		},
-		VarDiffOnNewBlock: true,
+		// false: deliver vardiff changes immediately via mid-block resend rather than
+		// waiting for a clean job. The mesh sends mostly non-clean refresh jobs, so
+		// waiting for a clean job would strand the pending diff (miner stuck at start diff).
+		VarDiffOnNewBlock: false,
 		AcceptSuggestDiff: true,
 		PingEnabled:       true,
 		PingInterval:      30 * time.Second,
