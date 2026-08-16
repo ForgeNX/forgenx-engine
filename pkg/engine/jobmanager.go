@@ -266,7 +266,12 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		template.Height, template.PreviousBlockHash[:16]+"...", len(template.Transactions))
 
 	jm.mu.Lock()
-	defer jm.mu.Unlock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			jm.mu.Unlock()
+		}
+	}()
 
 	// Determine if this is a new block
 	cleanJobs := template.PreviousBlockHash != jm.currentTip
@@ -384,14 +389,30 @@ func (jm *JobManager) refreshTemplate(force bool) error {
 		jm.logger.Info("[%s] new block detected at height %d", jm.coin.Symbol(), template.Height)
 	}
 
-	// Notify while holding the lock — prevents concurrent calls from double-broadcasting
-	if jm.onNewJob != nil {
-		jm.onNewJob(job)
-	}
+	// Record the SV2 event under the lock, but invoke the callbacks AFTER
+	// releasing jm.mu. The V1 customizer (BroadcastJobPerSession) calls back
+	// into GetAddressCoinb2, which takes jm.mu.RLock(); sync.RWMutex is not
+	// re-entrant, so notifying while holding the write lock deadlocks the
+	// goroutine permanently — halting template production for this coin and
+	// starving every miner on it. Double-broadcast is already prevented by the
+	// lastBroadcastTip guard at the top of this function.
+	var evtPtr *NewJobEvent
 	if jm.onNewJobV2 != nil {
 		evt := NewJobEvent{JobData: jobData, Template: template}
 		jm.latestJobEvent = &evt
-		jm.onNewJobV2(evt)
+		evtPtr = &evt
+	}
+	onNewJob := jm.onNewJob
+	onNewJobV2 := jm.onNewJobV2
+
+	jm.mu.Unlock()
+	unlocked = true
+
+	if onNewJob != nil {
+		onNewJob(job)
+	}
+	if onNewJobV2 != nil && evtPtr != nil {
+		onNewJobV2(*evtPtr)
 	}
 	return nil
 }
