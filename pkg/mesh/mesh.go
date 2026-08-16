@@ -84,7 +84,7 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	}
 
 	backendAddr := fmt.Sprintf("%s:%d", host, port)
-	b := NewBackend(m.opts.DefaultCoin, backendAddr, payout, "nexus-"+id, m.logger)
+	b := NewBackend(m.opts.DefaultCoin, backendAddr, payout, "", m.logger)
 	if err := b.Connect(); err != nil {
 		m.logger.Warn("[nexus] %s: backend connect failed: %v", id, err)
 		s.Close()

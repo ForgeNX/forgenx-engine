@@ -28,13 +28,6 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 	}
 	go b.Run()
 
-	// Wait for the backend to capture the coin's first job before serving the
-	// miner, so the miner always receives real work on authorize (no stall).
-	if !b.WaitForFirstJob(10 * time.Second) {
-		s.logger.Warn("[nexus] %s: no job from %s within 10s; closing", s.id, b.Symbol)
-		return
-	}
-
 	for {
 		line, err := s.readLine()
 		if err != nil {
@@ -91,6 +84,19 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 				worker = params[0]
 			}
 			s.setWorker(worker)
+
+			// Authorize the backend to the coin using the MINER's own worker name,
+			// so the coin tracks a stable identity across reconnects. b.Run() is
+			// already reading, so the auth response, set_difficulty and first job
+			// arrive asynchronously — WaitForFirstJob gates on that.
+			if err := b.Authorize(worker); err != nil {
+				m.logger.Warn("[nexus] %s: backend authorize failed: %v", s.id, err)
+				return
+			}
+			if !b.WaitForFirstJob(10 * time.Second) {
+				m.logger.Warn("[nexus] %s: no job from %s within 10s; closing", s.id, b.Symbol)
+				return
+			}
 			if err := s.send(map[string]interface{}{
 				"id": rawOrNull(msg.ID), "result": true, "error": nil,
 			}); err != nil {

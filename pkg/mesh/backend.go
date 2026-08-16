@@ -107,31 +107,11 @@ func (b *Backend) Connect() error {
 		return fmt.Errorf("subscribe parse: %w", err)
 	}
 
-	// Authorize immediately: DGB's V1 stratum only sends set_difficulty + the
-	// first mining.notify AFTER authorize (see handleAuthorize). We authorize with
-	// the caller-provided worker name, which MUST be unique per connection to avoid
-	// duplicate-worker collisions in the coin's worker table.
-	authUser := b.Payout
-	if b.Worker != "" {
-		authUser = b.Payout + "." + b.Worker
-	}
-	if err := b.send(map[string]interface{}{
-		"id": 2, "method": "mining.authorize", "params": []interface{}{authUser, "x"},
-	}); err != nil {
-		return fmt.Errorf("authorize send: %w", err)
-	}
-	b.mu.Lock()
-	b.authorized = true
-	b.mu.Unlock()
-
-	b.logger.Info("[nexus] backend %s connected+authorized: %s (as %s en1=%s en2sz=%d)",
-		b.Symbol, b.Addr, authUser, b.extranonce1, b.extranonce2sz)
+	b.logger.Info("[nexus] backend %s connected: %s (en1=%s en2sz=%d)",
+		b.Symbol, b.Addr, b.extranonce1, b.extranonce2sz)
 	return nil
 }
 
-// Authorize sends mining.authorize to the coin with the miner's REAL worker name
-// so each relayed miner is a distinct worker in the coin's worker list (no
-// identity collision / duplication). Called after the miner authorizes to Nexus.
 func (b *Backend) Authorize(worker string) error {
 	b.mu.Lock()
 	b.Worker = worker
