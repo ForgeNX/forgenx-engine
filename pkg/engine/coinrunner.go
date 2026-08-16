@@ -253,6 +253,18 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 	})
 	runner.jobMgr = jobMgr
 
+	// Permanently register the coin's configured payout address so job generation
+	// always builds its coinbase, regardless of session count. In solo mode the
+	// payout address is always valid. Without this, a V1 session (e.g. a Nexus
+	// relay backend) that connects then disconnects drives connectedAddrs for this
+	// address to zero and deletes it -> new jobs stop generating its coinb2 ->
+	// ALL miners on that address starve, including SV2 miners (which do not
+	// register in connectedAddrs). This pin is never paired with UnregisterAddress.
+	if soloMode && cfg.Mining.Address != "" {
+		jobMgr.RegisterAddress(cfg.Mining.Address)
+		runner.logger.Info("solo: pinned payout address %s for permanent job generation", cfg.Mining.Address)
+	}
+
 	// Create share validator
 	staleGrace := time.Duration(cfg.Stratum.StaleShareGrace) * time.Second
 	lowDiffGrace := time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second
@@ -340,12 +352,15 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			server.BroadcastJobPerSession(job, func(session *stratum.Session) *stratum.Job {
 				addr := session.MiningAddress()
 				if addr == "" {
+					runner.logger.Info("[jobcast] skip session %s: empty address (job %s)", session.ID, job.JobID)
 					return nil
 				}
 				coinb2, ok := jobMgr.GetAddressCoinb2(job.JobID, addr)
 				if !ok {
+					runner.logger.Info("[jobcast] skip session %s addr=%s: no coinb2 for job %s", session.ID, addr, job.JobID)
 					return nil
 				}
+				runner.logger.Info("[jobcast] SEND job %s to session %s addr=%s", job.JobID, session.ID, addr)
 				return &stratum.Job{
 					JobID:          job.JobID,
 					PrevHash:       job.PrevHash,

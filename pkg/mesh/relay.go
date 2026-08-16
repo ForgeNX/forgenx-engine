@@ -123,7 +123,9 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			// the connection it authorized (mismatched names are rejected).
 			out := rewriteSubmitWorker(line, b.Worker)
 			if err := b.SendRaw(out); err != nil {
-				s.logger.Debug("[nexus] %s submit forward failed: %v", s.id, err)
+				m.logger.Info("[nexus] %s submit forward FAILED: %v", s.id, err)
+			} else {
+				m.logger.Info("[nexus] %s submit forwarded to %s: %s", s.id, b.Symbol, truncate(string(out), 160))
 			}
 
 		default:
