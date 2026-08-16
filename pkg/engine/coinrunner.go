@@ -352,15 +352,12 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			server.BroadcastJobPerSession(job, func(session *stratum.Session) *stratum.Job {
 				addr := session.MiningAddress()
 				if addr == "" {
-					runner.logger.Info("[jobcast] skip session %s: empty address (job %s)", session.ID, job.JobID)
 					return nil
 				}
 				coinb2, ok := jobMgr.GetAddressCoinb2(job.JobID, addr)
 				if !ok {
-					runner.logger.Info("[jobcast] skip session %s addr=%s: no coinb2 for job %s", session.ID, addr, job.JobID)
 					return nil
 				}
-				runner.logger.Info("[jobcast] SEND job %s to session %s addr=%s", job.JobID, session.ID, addr)
 				return &stratum.Job{
 					JobID:          job.JobID,
 					PrevHash:       job.PrevHash,

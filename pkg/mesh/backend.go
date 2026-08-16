@@ -230,7 +230,6 @@ func (b *Backend) Run() {
 			Method string          `json:"method"`
 		}
 		_ = json.Unmarshal(line, &msg)
-		b.logger.Info("[nexus] backend %s <- coin: %s", b.Symbol, string(line))
 
 		// Swallow the backend's own subscribe/authorize responses (id 1 or 2,
 		// no method). The miner issued its own subscribe/authorize which the

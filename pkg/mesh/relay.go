@@ -46,7 +46,6 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			s.logger.Debug("[nexus] %s bad miner json: %s", s.id, string(line))
 			continue
 		}
-		s.logger.Info("[nexus] %s <- miner: %s", s.id, truncate(string(line), 200))
 
 		switch msg.Method {
 		case "mining.configure":
@@ -125,7 +124,7 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			if err := b.SendRaw(out); err != nil {
 				m.logger.Info("[nexus] %s submit forward FAILED: %v", s.id, err)
 			} else {
-				m.logger.Info("[nexus] %s submit forwarded to %s: %s", s.id, b.Symbol, truncate(string(out), 160))
+				m.logger.Debug("[nexus] %s submit forwarded to %s: %s", s.id, b.Symbol, truncate(string(out), 160))
 			}
 
 		default:
