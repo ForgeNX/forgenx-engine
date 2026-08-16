@@ -1,6 +1,9 @@
 package mesh
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 type rpcMsg struct {
 	ID     json.RawMessage `json:"id"`
@@ -25,6 +28,13 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 	}
 	go b.Run()
 
+	// Wait for the backend to capture the coin's first job before serving the
+	// miner, so the miner always receives real work on authorize (no stall).
+	if !b.WaitForFirstJob(10 * time.Second) {
+		s.logger.Warn("[nexus] %s: no job from %s within 10s; closing", s.id, b.Symbol)
+		return
+	}
+
 	for {
 		line, err := s.readLine()
 		if err != nil {
@@ -36,6 +46,7 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			s.logger.Debug("[nexus] %s bad miner json: %s", s.id, string(line))
 			continue
 		}
+		s.logger.Info("[nexus] %s <- miner: %s", s.id, truncate(string(line), 200))
 
 		switch msg.Method {
 		case "mining.subscribe":
@@ -68,7 +79,18 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			}); err != nil {
 				return
 			}
-			m.logger.Info("[nexus] %s miner authorized (worker=%q) -> bonded to %s", s.id, worker, b.Symbol)
+			// Flip the backend live and replay the current difficulty + latest job
+			// so the miner starts immediately — no race, no waiting for the coin's
+			// next template refresh.
+			setDiff, notify := b.GoLive()
+			if setDiff != nil {
+				s.SendRaw(setDiff)
+			}
+			if notify != nil {
+				s.SendRaw(notify)
+			}
+			m.logger.Info("[nexus] %s miner authorized (worker=%q) -> bonded to %s (replayed diff=%t job=%t)",
+				s.id, worker, b.Symbol, setDiff != nil, notify != nil)
 
 		case "mining.extranonce.subscribe":
 			s.mu.Lock()
@@ -77,7 +99,12 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			s.send(map[string]interface{}{"id": rawOrNull(msg.ID), "result": true, "error": nil})
 
 		case "mining.submit":
-			if err := b.SendRaw(line); err != nil {
+			// The miner submits with ITS OWN worker name in params[0], but the
+			// backend authorized to the coin as b.Worker (e.g. "nexus-n1"). Rewrite
+			// params[0] to the backend's worker so the coin attributes the share to
+			// the connection it authorized (mismatched names are rejected).
+			out := rewriteSubmitWorker(line, b.Worker)
+			if err := b.SendRaw(out); err != nil {
 				s.logger.Debug("[nexus] %s submit forward failed: %v", s.id, err)
 			}
 
@@ -92,4 +119,40 @@ func rawOrNull(id json.RawMessage) interface{} {
 		return nil
 	}
 	return id
+}
+
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// rewriteSubmitWorker replaces params[0] (the worker name) in a mining.submit
+// line with the given worker, preserving all other fields.
+func rewriteSubmitWorker(line []byte, worker string) []byte {
+	var m map[string]interface{}
+	if err := json.Unmarshal(line, &m); err != nil {
+		return line
+	}
+	params, ok := m["params"].([]interface{})
+	if !ok || len(params) < 1 {
+		return line
+	}
+	params[0] = worker
+	m["params"] = params
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line
+	}
+	return out
 }

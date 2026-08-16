@@ -316,7 +316,14 @@ func (s *Server) pingLoop() {
 
 func (s *Server) generateExtraNonce1() string {
 	seq := s.extraNonceSeq.Add(1)
-	// Use 4 bytes for extranonce1 (enough for 4 billion miners)
+	// Reserve the high half of the extranonce1 space for V1 connections so they
+	// can NEVER collide with SV2 channels, which draw from a separate pool that
+	// counts up from 0. Without this partition, a V1 connection (e.g. the Nexus
+	// relay) and an early SV2 channel could be assigned overlapping extranonce1
+	// values, producing identical coinbases -> corrupted shares + duplicated
+	// workers. Setting the top bit keeps V1 >= 0x80000000; SV2 stays below.
+	seq |= 0x80000000
+	// Use 4 bytes for extranonce1 (enough for ~2 billion V1 miners).
 	b := []byte{byte(seq >> 24), byte(seq >> 16), byte(seq >> 8), byte(seq)}
 	return hex.EncodeToString(b)
 }

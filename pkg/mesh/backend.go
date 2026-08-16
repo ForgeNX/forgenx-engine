@@ -31,12 +31,29 @@ type Backend struct {
 	subscribed    bool
 	authorized    bool
 
+	// Latest control state from the coin, captured so we can replay it to the
+	// miner as soon as it is ready (avoids a race where jobs arrive before the
+	// miner has subscribed).
+	lastSetDifficulty []byte // raw mining.set_difficulty line
+	lastNotify        []byte // raw mining.notify line
+
+	// live gates backend->miner forwarding. While false, messages are captured
+	// (latest difficulty/job) but NOT forwarded. The relay flips it true once the
+	// miner has authorized, then replays lastSetDifficulty + lastNotify.
+	live bool
+
+	// firstJob is closed once the backend has captured DGB's first mining.notify,
+	// so Connect can wait for a job to be ready before the miner starts (avoids a
+	// race where the miner authorizes before any job exists -> stalls/reconnects).
+	firstJob     chan struct{}
+	firstJobOnce sync.Once
+
 	onMessage func(line []byte)
 }
 
 // NewBackend creates (but does not connect) a backend for one coin.
 func NewBackend(symbol, addr, payout, worker string, logger *logging.Logger) *Backend {
-	return &Backend{Symbol: symbol, Addr: addr, Payout: payout, Worker: worker, logger: logger}
+	return &Backend{Symbol: symbol, Addr: addr, Payout: payout, Worker: worker, logger: logger, firstJob: make(chan struct{})}
 }
 
 // Connect dials the coin's V1 stratum, subscribes, and authorizes with the coin
@@ -67,6 +84,10 @@ func (b *Backend) Connect() error {
 		return fmt.Errorf("subscribe parse: %w", err)
 	}
 
+	// Authorize immediately: DGB's V1 stratum only sends set_difficulty + the
+	// first mining.notify AFTER authorize (see handleAuthorize). We authorize with
+	// the caller-provided worker name, which MUST be unique per connection to avoid
+	// duplicate-worker collisions in the coin's worker table.
 	authUser := b.Payout
 	if b.Worker != "" {
 		authUser = b.Payout + "." + b.Worker
@@ -80,8 +101,31 @@ func (b *Backend) Connect() error {
 	b.authorized = true
 	b.mu.Unlock()
 
-	b.logger.Info("[nexus] backend %s connected: %s (payout=%s.%s en1=%s en2sz=%d)",
-		b.Symbol, b.Addr, b.Payout, b.Worker, b.extranonce1, b.extranonce2sz)
+	b.logger.Info("[nexus] backend %s connected+authorized: %s (as %s en1=%s en2sz=%d)",
+		b.Symbol, b.Addr, authUser, b.extranonce1, b.extranonce2sz)
+	return nil
+}
+
+// Authorize sends mining.authorize to the coin with the miner's REAL worker name
+// so each relayed miner is a distinct worker in the coin's worker list (no
+// identity collision / duplication). Called after the miner authorizes to Nexus.
+func (b *Backend) Authorize(worker string) error {
+	b.mu.Lock()
+	b.Worker = worker
+	b.mu.Unlock()
+	authUser := b.Payout
+	if worker != "" {
+		authUser = b.Payout + "." + worker
+	}
+	if err := b.send(map[string]interface{}{
+		"id": 2, "method": "mining.authorize", "params": []interface{}{authUser, "x"},
+	}); err != nil {
+		return fmt.Errorf("authorize send: %w", err)
+	}
+	b.mu.Lock()
+	b.authorized = true
+	b.mu.Unlock()
+	b.logger.Info("[nexus] backend %s authorized as %s.%s", b.Symbol, b.Payout, worker)
 	return nil
 }
 
@@ -119,7 +163,10 @@ func (b *Backend) Extranonce() (string, int) {
 	return b.extranonce1, b.extranonce2sz
 }
 
-// Run reads from the coin backend and forwards each line via onMessage.
+// Run reads from the coin backend, captures the latest difficulty/job, and
+// forwards messages to the miner once the backend is live. Responses to the
+// backend's own subscribe/authorize (id 1/2) are swallowed — the miner never
+// sent those and must not see them.
 func (b *Backend) Run() {
 	for {
 		line, err := b.readLine()
@@ -127,10 +174,64 @@ func (b *Backend) Run() {
 			b.logger.Debug("[nexus] backend %s read end: %v", b.Symbol, err)
 			return
 		}
-		if b.onMessage != nil {
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		_ = json.Unmarshal(line, &msg)
+
+		// Swallow the backend's own subscribe/authorize responses (id 1 or 2,
+		// no method). The miner issued its own subscribe/authorize which the
+		// relay answered locally.
+		if msg.Method == "" && len(msg.ID) > 0 {
+			idStr := string(msg.ID)
+			if idStr == "1" || idStr == "2" {
+				continue
+			}
+		}
+
+		// Capture latest control state for replay.
+		switch msg.Method {
+		case "mining.set_difficulty":
+			b.mu.Lock()
+			b.lastSetDifficulty = append([]byte(nil), line...)
+			b.mu.Unlock()
+		case "mining.notify":
+			b.mu.Lock()
+			b.lastNotify = append([]byte(nil), line...)
+			b.mu.Unlock()
+			b.firstJobOnce.Do(func() { close(b.firstJob) })
+		}
+
+		b.mu.Lock()
+		live := b.live
+		b.mu.Unlock()
+		if live && b.onMessage != nil {
 			b.onMessage(line)
 		}
 	}
+}
+
+// WaitForFirstJob blocks until the backend has captured the coin's first job
+// (mining.notify) or the timeout elapses. This guarantees a job is cached before
+// the miner starts, so GoLive always has real work to replay.
+func (b *Backend) WaitForFirstJob(timeout time.Duration) bool {
+	select {
+	case <-b.firstJob:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// GoLive flips the backend to forwarding mode and returns the latest
+// set_difficulty and notify lines (if any) so the relay can replay them to the
+// miner immediately.
+func (b *Backend) GoLive() (setDiff, notify []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.live = true
+	return b.lastSetDifficulty, b.lastNotify
 }
 
 // SendRaw writes a raw JSON line to the coin backend.
