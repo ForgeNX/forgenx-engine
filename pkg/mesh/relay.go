@@ -49,6 +49,24 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 		s.logger.Info("[nexus] %s <- miner: %s", s.id, truncate(string(line), 200))
 
 		switch msg.Method {
+		case "mining.configure":
+			// Answer the miner's version-rolling request with the mask the coin
+			// actually granted this backend (see Backend.Connect). Handling it here
+			// (not forwarding) keeps the miner's rolled version bits within the
+			// coin's accepted mask so its shares validate.
+			mask := b.VersionMask()
+			if mask == "" {
+				mask = "1fffe000" // BIP320 standard fallback
+			}
+			s.send(map[string]interface{}{
+				"id": rawOrNull(msg.ID),
+				"result": map[string]interface{}{
+					"version-rolling":      true,
+					"version-rolling.mask": mask,
+				},
+				"error": nil,
+			})
+
 		case "mining.subscribe":
 			en1, en2sz := b.Extranonce()
 			resp := map[string]interface{}{

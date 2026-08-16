@@ -48,6 +48,11 @@ type Backend struct {
 	firstJob     chan struct{}
 	firstJobOnce sync.Once
 
+	// versionMask is the version-rolling mask the coin granted this connection
+	// (from mining.configure). The relay hands this same mask to the miner so it
+	// only rolls bits the coin will accept.
+	versionMask string
+
 	onMessage func(line []byte)
 }
 
@@ -70,6 +75,24 @@ func (b *Backend) Connect() error {
 	}
 	b.conn = conn
 	b.reader = bufio.NewReader(conn)
+
+	// Negotiate version-rolling FIRST. Miners like the Bitaxe roll the block
+	// version (ASICBoost); the coin must enable version-rolling on THIS connection
+	// or it validates rolled shares against a zero mask and silently drops them.
+	if err := b.send(map[string]interface{}{
+		"id": 0, "method": "mining.configure",
+		"params": []interface{}{
+			[]interface{}{"version-rolling"},
+			map[string]interface{}{"version-rolling.mask": "ffffffff"},
+		},
+	}); err != nil {
+		return fmt.Errorf("configure send: %w", err)
+	}
+	cfgResp, err := b.readLine()
+	if err != nil {
+		return fmt.Errorf("configure read: %w", err)
+	}
+	b.parseConfigure(cfgResp)
 
 	if err := b.send(map[string]interface{}{
 		"id": 1, "method": "mining.subscribe", "params": []interface{}{"nexus-relay/1.0"},
@@ -127,6 +150,34 @@ func (b *Backend) Authorize(worker string) error {
 	b.mu.Unlock()
 	b.logger.Info("[nexus] backend %s authorized as %s.%s", b.Symbol, b.Payout, worker)
 	return nil
+}
+
+// parseConfigure reads the coin's mining.configure response and records the
+// granted version-rolling mask (if any).
+func (b *Backend) parseConfigure(line []byte) {
+	var resp struct {
+		Result map[string]interface{} `json:"result"`
+	}
+	if err := json.Unmarshal(line, &resp); err != nil {
+		return
+	}
+	if resp.Result == nil {
+		return
+	}
+	if vr, ok := resp.Result["version-rolling"].(bool); ok && vr {
+		if mask, ok := resp.Result["version-rolling.mask"].(string); ok {
+			b.mu.Lock()
+			b.versionMask = mask
+			b.mu.Unlock()
+		}
+	}
+}
+
+// VersionMask returns the version-rolling mask the coin granted (empty if none).
+func (b *Backend) VersionMask() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.versionMask
 }
 
 func (b *Backend) parseSubscribe(line []byte) error {
