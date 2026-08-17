@@ -267,7 +267,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 	if len(hashPrefix) > 16 {
 		hashPrefix = hashPrefix[:16]
 	}
-	sv.logger.Info("[v1] session %s: %s Share accepted (diff %.2f) hash=%s block=%v",
+	sv.logger.Info("[sv1] session %s: %s Share accepted (diff %.2f) hash=%s block=%v",
 		session.SessionID(), share.WorkerName, actualDiff, hashPrefix, meetsBlock)
 
 	if meetsBlock {
