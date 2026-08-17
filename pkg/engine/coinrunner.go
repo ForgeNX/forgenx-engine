@@ -406,7 +406,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 				VarDiff:                  vardiffCfg,
 				VarDiffOnNewBlock:        cfg.VarDiff.OnNewBlock == nil || *cfg.VarDiff.OnNewBlock,
 				StartDiff:                cfg.Stratum.Difficulty,
-				Logger:                   runner.logger,
+				Logger:                   logging.New(logging.ModuleStratumV2),
 				ConnectionTimeoutSeconds: cfg.Stratum.ConnectionTimeout,
 				KeepaliveIntervalSeconds: cfg.Stratum.KeepaliveInterval,
 				OnShare: func(job *stratumv2.JobTemplate, ch *stratumv2.Channel, share *stratumv2.MsgSubmitSharesStandardFields, extranonce []byte, result *stratumv2.ShareResult) {

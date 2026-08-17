@@ -117,15 +117,17 @@ func rotateLocked() {
 
 // Module constants for consistent tagging.
 const (
-	ModuleMain    = "main"
-	ModuleStratum = "stratum"
-	ModuleEngine  = "engine"
-	ModuleCoin    = "coin"
-	ModuleNexus   = "nexus"
-	ModuleRPC     = "rpc"
-	ModuleMetrics = "metrics"
-	ModuleConfig  = "config"
-	ModuleZMQ     = "zmq"
+	ModuleMain      = "main"
+	ModuleStratum   = "stratum"
+	ModuleStratumV1 = "stratumV1"
+	ModuleStratumV2 = "stratumV2"
+	ModuleEngine    = "engine"
+	ModuleCoin      = "coin"
+	ModuleNexus     = "nexus"
+	ModuleRPC       = "rpc"
+	ModuleMetrics   = "metrics"
+	ModuleConfig    = "config"
+	ModuleZMQ       = "zmq"
 )
 
 // Logger provides module-tagged leveled logging to stdout.

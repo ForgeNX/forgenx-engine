@@ -101,7 +101,7 @@ func NewServer(cfg ServerConfig, shareHandler ShareHandler) *Server {
 		coinTicker:           cfg.CoinTicker,
 		vardiffCfg:           cfg.VarDiff,
 		vardiffOnNewBlock:    cfg.VarDiffOnNewBlock,
-		logger:               logging.New(logging.ModuleStratum),
+		logger:               logging.New(logging.ModuleStratumV1),
 		shutdownCh:           make(chan struct{}),
 	}
 }

@@ -88,7 +88,7 @@ func newSession(id string, conn net.Conn, extraNonce1 string, server *Server) *S
 		state:        StateConnected,
 		extraNonce1:  extraNonce1,
 		difficulty:   server.defaultDiff,
-		logger:       logging.New(logging.ModuleStratum),
+		logger:       logging.New(logging.ModuleStratumV1),
 		connectedAt:  time.Now(),
 		lastActivity: time.Now(),
 	}
@@ -331,7 +331,15 @@ func (s *Session) handleSuggestDifficulty(req *Request) {
 	s.prevDiff = s.difficulty
 	s.diffChangedAt = time.Now()
 	s.difficulty = newDiff
+	vd := s.vardiff
 	s.mu.Unlock()
+
+	// Keep the vardiff tracker in step, as SetInitialDifficulty does: otherwise it
+	// keeps retargeting from the difficulty the session had before the miner's
+	// suggestion was accepted.
+	if vd != nil {
+		vd.ResetWindow(newDiff)
+	}
 
 	s.sendJSON(SetDifficultyNotification(newDiff))
 	s.logger.Info("[%s] mining.suggest_difficulty accepted: requested=%.2f set=%.2f", s.ID, suggested, newDiff)
@@ -392,6 +400,12 @@ func (s *Session) parsePasswordDifficulty(password string) {
 			s.prevDiff = s.difficulty
 			s.diffChangedAt = time.Now()
 			s.difficulty = val
+			// Keep the vardiff tracker in step. Callers hold s.mu (this runs inside
+			// handleAuthorize), so read the pointer here and reset outside the lock is
+			// unnecessary — ResetWindow takes its own lock on the VarDiff, not this one.
+			if s.vardiff != nil {
+				s.vardiff.ResetWindow(val)
+			}
 			s.logger.Info("[%s] password difficulty set to %.2f for %s", s.ID, val, s.workerName)
 			return
 		}
@@ -522,6 +536,14 @@ func (s *Session) SetInitialDifficulty(diff float64) {
 		return
 	}
 	s.mu.Lock()
+	// Record the outgoing difficulty the way every other difficulty change does.
+	// handleSubmit falls back to prevDiff within lowDiffShareGrace, so a share the
+	// miner computed before this change lands is still accepted. Without it a
+	// restored session rejects the first share submitted across the transition —
+	// the miner is hashing at the difficulty it had a moment ago and there is
+	// nothing for the grace path to compare against.
+	s.prevDiff = s.difficulty
+	s.diffChangedAt = time.Now()
 	s.difficulty = diff
 	vd := s.vardiff
 	s.mu.Unlock()
