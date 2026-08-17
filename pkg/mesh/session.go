@@ -96,6 +96,14 @@ func (s *Session) Close() {
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
 
+// activeBackend returns the coin backend currently feeding this miner. Warm
+// backends compare unequal to it and so hold their jobs back.
+func (s *Session) activeBackend() *Backend {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active
+}
+
 // registerJob assigns a Nexus-namespaced job ID for a job issued by backend b,
 // records the mapping, and evicts the oldest entry once the registry is full.
 func (s *Session) registerJob(b *Backend, coinJob string) string {

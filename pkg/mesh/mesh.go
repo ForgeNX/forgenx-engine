@@ -15,9 +15,25 @@ type Resolver func(symbol string) (host string, port int, payout string, running
 
 // Options configures the Nexus Mesh relay.
 type Options struct {
-	Port        int      // miner-facing listen port (e.g. 3350)
-	DefaultCoin string   // single-coin bond target (e.g. "DGB")
-	Resolve     Resolver // resolves coin symbol -> endpoint
+	Port int // miner-facing listen port (e.g. 3350)
+
+	// Coins lists the coin symbols a miner is bonded to, in preference order. The
+	// first that resolves and is running becomes the active coin; the rest are
+	// connected and authorized but held warm, capturing jobs without forwarding
+	// them, ready for rotation to switch to. A single entry reproduces the
+	// original single-coin behaviour exactly.
+	Coins []string
+
+	Resolve Resolver // resolves coin symbol -> endpoint
+}
+
+// primaryCoin returns the first configured coin, for logging before any session
+// has resolved which coins are actually available.
+func (o Options) primaryCoin() string {
+	if len(o.Coins) == 0 {
+		return ""
+	}
+	return o.Coins[0]
 }
 
 // Mesh is the Nexus Mesh relay: one stable miner endpoint that bonds each miner
@@ -41,7 +57,7 @@ func (m *Mesh) Start() error {
 		return fmt.Errorf("nexus listen %s: %w", addr, err)
 	}
 	m.listener = ln
-	m.logger.Info("[nexus] Mesh listening on %s (single-coin bond=%s)", addr, m.opts.DefaultCoin)
+	m.logger.Info("[nexus] Mesh listening on %s (coins=%v)", addr, m.opts.Coins)
 	go m.acceptLoop()
 	return nil
 }
@@ -66,32 +82,48 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	id := "n" + strconv.FormatUint(m.sessSeq.Add(1), 16)
 	s := NewSession(id, conn, m.logger)
 
-	host, port, payout, running, ok := m.opts.Resolve(m.opts.DefaultCoin)
-	if !ok {
-		m.logger.Warn("[nexus] %s: coin %s not found; closing", id, m.opts.DefaultCoin)
-		s.Close()
-		return
+	// Bond a backend per configured coin. The first that connects becomes active;
+	// the rest are held warm (connected and authorized, capturing jobs but not
+	// forwarding them) so rotation can switch to them without a handshake. A coin
+	// that is missing, stopped, or unconfigured is skipped rather than failing the
+	// whole session — one unavailable coin must not cost the miner its bond.
+	var backends []*Backend
+	for _, symbol := range m.opts.Coins {
+		host, port, payout, running, ok := m.opts.Resolve(symbol)
+		if !ok {
+			m.logger.Warn("[nexus] %s: coin %s not found; skipping", id, symbol)
+			continue
+		}
+		if !running {
+			m.logger.Warn("[nexus] %s: coin %s V1 stratum not running; skipping", id, symbol)
+			continue
+		}
+		if payout == "" {
+			m.logger.Warn("[nexus] %s: coin %s has no payout configured; skipping", id, symbol)
+			continue
+		}
+		backendAddr := fmt.Sprintf("%s:%d", host, port)
+		b := NewBackend(symbol, backendAddr, payout, "", m.logger)
+		if err := b.Connect(); err != nil {
+			m.logger.Warn("[nexus] %s: backend %s connect failed: %v", id, symbol, err)
+			continue
+		}
+		backends = append(backends, b)
 	}
-	if !running {
-		m.logger.Warn("[nexus] %s: coin %s V1 stratum not running; closing", id, m.opts.DefaultCoin)
-		s.Close()
-		return
-	}
-	if payout == "" {
-		m.logger.Warn("[nexus] %s: coin %s has no payout configured; closing", id, m.opts.DefaultCoin)
+
+	if len(backends) == 0 {
+		m.logger.Warn("[nexus] %s: no coin available to bond; closing", id)
 		s.Close()
 		return
 	}
 
-	backendAddr := fmt.Sprintf("%s:%d", host, port)
-	b := NewBackend(m.opts.DefaultCoin, backendAddr, payout, "", m.logger)
-	if err := b.Connect(); err != nil {
-		m.logger.Warn("[nexus] %s: backend connect failed: %v", id, err)
-		s.Close()
-		return
+	symbols := make([]string, 0, len(backends))
+	for _, b := range backends {
+		symbols = append(symbols, b.Symbol)
 	}
-	m.logger.Info("[nexus] %s: miner bonded to %s via %s", id, m.opts.DefaultCoin, backendAddr)
-	m.runMiner(s, b)
+	m.logger.Info("[nexus] %s: miner bonded to %v (active=%s)", id, symbols, backends[0].Symbol)
+
+	m.runMiner(s, backends)
 }
 
 func (m *Mesh) Stop() {

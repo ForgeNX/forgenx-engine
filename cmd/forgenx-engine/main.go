@@ -142,11 +142,18 @@ func main() {
 	// The engine behaves exactly as a non-mesh engine unless MESH_ENABLED=true.
 	applyMeshEnv(&cfg.Mesh)
 	if cfg.Mesh.Enabled {
-		// Single-coin bond target = first coin in the configured allocation
-		// (e.g. "DGB:100" -> "DGB"). Multi-coin rotation is added later.
-		defaultCoin := "DGB"
-		if len(cfg.Mesh.DefaultAllocation) > 0 && cfg.Mesh.DefaultAllocation[0].Coin != "" {
-			defaultCoin = cfg.Mesh.DefaultAllocation[0].Coin
+		// Bond order comes from the configured allocation (e.g. "DGB:50,BCH:50" ->
+		// ["DGB","BCH"]). The first coin that resolves and is running becomes active;
+		// the rest are held warm for rotation. A single entry keeps the original
+		// single-coin behaviour.
+		coins := make([]string, 0, len(cfg.Mesh.DefaultAllocation))
+		for _, a := range cfg.Mesh.DefaultAllocation {
+			if a.Coin != "" {
+				coins = append(coins, a.Coin)
+			}
+		}
+		if len(coins) == 0 {
+			coins = []string{"DGB"}
 		}
 		// Resolver hands the relay each coin's real V1 stratum endpoint. The
 		// relay dials it as an ordinary client — no internal coin APIs touched.
@@ -159,14 +166,14 @@ func main() {
 			return "127.0.0.1", ep.V1Port, ep.Payout, ep.V1Running, true
 		}
 		nexusMesh := mesh.New(mesh.Options{
-			Port:        cfg.Mesh.Port,
-			DefaultCoin: defaultCoin,
-			Resolve:     resolve,
+			Port:    cfg.Mesh.Port,
+			Coins:   coins,
+			Resolve: resolve,
 		})
 		if err := nexusMesh.Start(); err != nil {
 			logger.Error("Nexus Mesh start failed: %v", err)
 		} else {
-			logger.Info("Nexus Mesh enabled on port %d (bond=%s)", cfg.Mesh.Port, defaultCoin)
+			logger.Info("Nexus Mesh enabled on port %d (coins=%v)", cfg.Mesh.Port, coins)
 		}
 	}
 

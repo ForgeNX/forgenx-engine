@@ -15,23 +15,41 @@ type rpcMsg struct {
 // miner's subscribe/authorize locally (adopting the backend's extranonce),
 // forwards submits to the coin, and relays the coin's jobs/difficulty/responses
 // back to the miner.
-func (m *Mesh) runMiner(s *Session, b *Backend) {
+func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	defer s.Close()
-	defer b.Close()
-
-	s.setActive(b)
-
-	b.onMessage = func(line []byte) {
-		// Namespace job IDs before they reach the miner, and remember which backend
-		// issued each one, so a submit can be routed back to the coin that owns it.
-		if coinJob := notifyJobID(line); coinJob != "" {
-			line = rewriteNotifyJobID(line, s.registerJob(b, coinJob))
+	defer func() {
+		for _, b := range backends {
+			b.Close()
 		}
-		if err := s.SendRaw(line); err != nil {
-			s.logger.Debug("[nexus] %s miner write failed: %v", s.id, err)
+	}()
+
+	// The first bonded coin is active; the rest run warm. Every backend reads from
+	// its coin continuously so its latest job and difficulty stay current, but only
+	// the active one's messages reach the miner. Jobs are registered as they are
+	// forwarded, not as they arrive, so the registry only holds jobs the miner has
+	// actually been given and could submit against.
+	active := backends[0]
+	s.setActive(active)
+
+	for _, b := range backends {
+		b := b
+		b.onMessage = func(line []byte) {
+			if s.activeBackend() != b {
+				return
+			}
+			// Namespace job IDs before they reach the miner, and remember which backend
+			// issued each one, so a submit can be routed back to the coin that owns it.
+			if coinJob := notifyJobID(line); coinJob != "" {
+				line = rewriteNotifyJobID(line, s.registerJob(b, coinJob))
+			}
+			if err := s.SendRaw(line); err != nil {
+				s.logger.Debug("[nexus] %s miner write failed: %v", s.id, err)
+			}
 		}
+		go b.Run()
 	}
-	go b.Run()
+
+	b := active
 
 	for {
 		line, err := s.readLine()
@@ -90,14 +108,22 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			}
 			s.setWorker(worker)
 
-			// Authorize the backend to the coin using the MINER's own worker name,
-			// so the coin tracks a stable identity across reconnects. b.Run() is
-			// already reading, so the auth response, set_difficulty and first job
-			// arrive asynchronously — WaitForFirstJob gates on that.
-			if err := b.Authorize(worker); err != nil {
-				m.logger.Warn("[nexus] %s: backend authorize failed: %v", s.id, err)
-				return
+			// Authorize every bonded backend using the MINER's own worker name, so each
+			// coin tracks a stable identity across reconnects. Warm coins must be
+			// authorized too: a coin only starts sending jobs after authorize, and a
+			// warm backend with no cached job would have nothing to hand the miner when
+			// rotation switches to it. Run() is already reading on each, so responses,
+			// difficulty and first jobs arrive asynchronously.
+			for _, wb := range backends {
+				if err := wb.Authorize(worker); err != nil {
+					m.logger.Warn("[nexus] %s: backend %s authorize failed: %v", s.id, wb.Symbol, err)
+					if wb == b {
+						return
+					}
+				}
 			}
+			// Only the active coin gates the miner's authorize response: warm coins can
+			// take their time producing a first job without holding the miner up.
 			if !b.WaitForFirstJob(10 * time.Second) {
 				m.logger.Warn("[nexus] %s: no job from %s within 10s; closing", s.id, b.Symbol)
 				return
@@ -115,6 +141,13 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 				s.SendRaw(setDiff)
 			}
 			if notify != nil {
+				// The replayed job bypasses onMessage, so namespace and register it here
+				// too. Without this the miner mines a job Nexus has no record of, and its
+				// submit can only be routed by falling back to the active backend — which
+				// is the wrong coin as soon as rotation has moved on.
+				if coinJob := notifyJobID(notify); coinJob != "" {
+					notify = rewriteNotifyJobID(notify, s.registerJob(b, coinJob))
+				}
 				s.SendRaw(notify)
 			}
 			m.logger.Info("[nexus] %s miner authorized (worker=%q) -> bonded to %s (replayed diff=%t job=%t)",
