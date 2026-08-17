@@ -48,12 +48,24 @@ type Backend struct {
 	firstJob     chan struct{}
 	firstJobOnce sync.Once
 
+	// dead is set when Run() exits — the coin closed the connection, restarted, or
+	// the link dropped. Nothing else notices otherwise: a warm backend would sit
+	// silently unusable until rotation switched onto it, and an active one would
+	// leave the miner receiving no jobs with no error to explain it.
+	dead bool
+
 	// versionMask is the version-rolling mask the coin granted this connection
 	// (from mining.configure). The relay hands this same mask to the miner so it
 	// only rolls bits the coin will accept.
 	versionMask string
 
 	onMessage func(line []byte)
+
+	// onDead, if set, is called once when Run() exits. The relay uses it to tear
+	// down the miner session when the ACTIVE backend dies, so the miner reconnects
+	// and re-bonds instead of sitting on a connection that will never send another
+	// job. A warm backend dying is not fatal: rotation skips it via Alive().
+	onDead func()
 }
 
 // NewBackend creates (but does not connect) a backend for one coin.
@@ -202,7 +214,14 @@ func (b *Backend) Run() {
 	for {
 		line, err := b.readLine()
 		if err != nil {
-			b.logger.Debug("[nexus] backend %s read end: %v", b.Symbol, err)
+			b.logger.Info("[nexus] backend %s connection ended: %v", b.Symbol, err)
+			b.mu.Lock()
+			b.dead = true
+			onDead := b.onDead
+			b.mu.Unlock()
+			if onDead != nil {
+				onDead()
+			}
 			return
 		}
 		var msg struct {
@@ -232,6 +251,19 @@ func (b *Backend) Run() {
 			b.lastNotify = append([]byte(nil), line...)
 			b.mu.Unlock()
 			b.firstJobOnce.Do(func() { close(b.firstJob) })
+		case "mining.ping":
+			// Answer the coin's keepalive ourselves rather than forwarding it. The V1
+			// server closes any session it has not READ from within IdleTimeout (5
+			// minutes), and a warm backend — one bonded to a coin the miner is not
+			// currently mining — sends nothing at all. Without this reply every
+			// non-active backend is dropped a few minutes after bonding, and rotation
+			// would switch the miner onto a dead connection.
+			if err := b.send(map[string]interface{}{
+				"id": rawOrNull(msg.ID), "result": "pong", "error": nil,
+			}); err != nil {
+				b.logger.Debug("[nexus] backend %s pong failed: %v", b.Symbol, err)
+			}
+			continue
 		}
 
 		b.mu.Lock()
@@ -304,4 +336,14 @@ func (b *Backend) Close() {
 		b.conn.Close()
 		b.conn = nil
 	}
+}
+
+// Alive reports whether this backend's connection to the coin is still usable.
+// Rotation must check it before switching a miner onto a backend, and the relay
+// checks it for the active backend so a dropped upstream surfaces as a miner
+// disconnect rather than silence.
+func (b *Backend) Alive() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return !b.dead
 }

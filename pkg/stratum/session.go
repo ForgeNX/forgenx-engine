@@ -276,10 +276,10 @@ func (s *Session) handleSubmit(req *Request) {
 			result := s.vardiff.RecordShare()
 			if diag := result.DiagString(); diag != "" {
 				if result.Adjusted {
-					s.logger.Debug("[%s] %s VARDIFF: adjusted %.4f -> %.4f | %s",
+					s.logger.Info("[%s] %s VARDIFF: adjusted %.4f -> %.4f | %s",
 						s.ID, s.workerName, result.CurrentDiff, result.ClampedDiff, diag)
 				} else {
-					s.logger.Debug("[%s] %s VARDIFF: no adjustment - %s (difficulty stays at %.4f) | %s",
+					s.logger.Info("[%s] %s VARDIFF: no adjustment - %s (difficulty stays at %.4f) | %s",
 						s.ID, s.workerName, result.Reason, result.CurrentDiff, diag)
 				}
 			}

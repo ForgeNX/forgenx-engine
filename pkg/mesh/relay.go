@@ -46,6 +46,16 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 				s.logger.Debug("[nexus] %s miner write failed: %v", s.id, err)
 			}
 		}
+		b.onDead = func() {
+			// Only the active coin dying is fatal to the session: the miner has nowhere
+			// to get work from, so close its connection and let it reconnect rather than
+			// leaving it hashing a job that will never be replaced. A warm coin dying is
+			// tolerated — rotation checks Alive() and skips it.
+			if s.activeBackend() == b {
+				m.logger.Warn("[nexus] %s: active backend %s died; closing miner to force re-bond", s.id, b.Symbol)
+				s.Close()
+			}
+		}
 		go b.Run()
 	}
 
