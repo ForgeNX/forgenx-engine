@@ -278,6 +278,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 
 	// Build server config
 	serverCfg := stratum.ServerConfig{
+		CoinTicker:        symbol,
 		Host:              cfg.Stratum.Host,
 		Port:              cfg.Stratum.Port,
 		ExtraNonceSize:    cfg.Mining.ExtraNonceSize,

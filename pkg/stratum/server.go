@@ -49,6 +49,7 @@ type Server struct {
 	pingEnabled          bool
 	pingInterval         time.Duration
 	idleTimeout          time.Duration
+	coinTicker           string
 	vardiffCfg           *VarDiffConfig
 	vardiffOnNewBlock    bool
 	logger               *logging.Logger
@@ -61,6 +62,7 @@ type Server struct {
 
 // ServerConfig holds configuration for the stratum server.
 type ServerConfig struct {
+	CoinTicker           string // for logging, e.g. "DGB"
 	Host                 string
 	Port                 int
 	ExtraNonceSize       int
@@ -96,6 +98,7 @@ func NewServer(cfg ServerConfig, shareHandler ShareHandler) *Server {
 		pingEnabled:          cfg.PingEnabled,
 		pingInterval:         cfg.PingInterval,
 		idleTimeout:          cfg.IdleTimeout,
+		coinTicker:           cfg.CoinTicker,
 		vardiffCfg:           cfg.VarDiff,
 		vardiffOnNewBlock:    cfg.VarDiffOnNewBlock,
 		logger:               logging.New(logging.ModuleStratum),
@@ -224,13 +227,19 @@ func (s *Server) BroadcastJobPerSession(baseJob *Job, customizer func(*Session) 
 	s.sessionsMu.RLock()
 	defer s.sessionsMu.RUnlock()
 
+	sent := 0
 	for _, session := range s.sessions {
 		if session.State() < StateAuthorized {
 			continue
 		}
 		if job := customizer(session); job != nil {
 			session.SendJob(job)
+			sent++
 		}
+	}
+	if sent > 0 {
+		s.logger.Info("[sv1-%s] broadcasting job %s to %d session(s)",
+			s.coinTicker, baseJob.JobID, sent)
 	}
 }
 
