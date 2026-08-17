@@ -229,8 +229,6 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 	// Share is valid at pool difficulty
 	sv.stats.RecordShare(sv.symbol, metrics.ShareValid, share.WorkerName, actualDiff)
 
-	sv.logger.Info("share accepted: worker=%s diff=%g", share.WorkerName, actualDiff)
-
 	// Check if it meets the network target (potential block!)
 	nbits, _ := coin.BitsToHex(jobData.Job.NBits)
 
@@ -261,7 +259,18 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 		sv.runner.sharesMu.Unlock()
 	}
 	targetBig := coin.CompactToBig(nbits)
-	if coin.HashMeetsTarget(blockHashBE, targetBig) {
+	meetsBlock := coin.HashMeetsTarget(blockHashBE, targetBig)
+
+	// Same shape as the SV2 accepted-share line so both protocols can be read and
+	// filtered together. No channel field: V1 sessions have no channels.
+	hashPrefix := blockHashHex
+	if len(hashPrefix) > 16 {
+		hashPrefix = hashPrefix[:16]
+	}
+	sv.logger.Info("[v1] session %s: %s Share accepted (diff %.2f) hash=%s block=%v",
+		session.SessionID(), share.WorkerName, actualDiff, hashPrefix, meetsBlock)
+
+	if meetsBlock {
 		sv.logger.Info("*** POTENTIAL BLOCK FOUND by %s at height %d! *** hash=%s", share.WorkerName, jobData.Template.Height, blockHashHex)
 
 		// eCash block cooldown: suppress submissions shortly after a block

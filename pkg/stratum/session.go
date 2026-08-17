@@ -565,6 +565,10 @@ func (s *Session) Close() {
 }
 
 // Info returns a summary of the session for metrics/API.
+// SessionID returns this session's identifier. Named to satisfy ShareSession
+// without colliding with the exported ID field.
+func (s *Session) SessionID() string { return s.ID }
+
 // State returns the session's current protocol state. Callers outside this file
 // must use this rather than reading s.state directly: the field is written under
 // s.mu (handleSubscribe/handleAuthorize) and read from other goroutines — notably

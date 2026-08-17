@@ -12,6 +12,10 @@ import "time"
 // mesh can name the type without an import cycle: engine imports mesh to start
 // it, so mesh must not import engine; both already import stratum.
 type ShareSession interface {
+	// SessionID identifies the connection, so share logging can correlate a share
+	// back to the session that submitted it the way the SV2 path does.
+	SessionID() string
+
 	MiningAddress() string
 	ExtraNonce1() string
 	GetDifficulty() float64
