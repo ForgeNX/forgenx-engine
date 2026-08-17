@@ -220,7 +220,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 			}
 		}
 		if !accepted {
-			sv.logger.Debug("share rejected: worker=%s required=%g actual=%g hash=%s", share.WorkerName, sessionDiff, actualDiff, blockHashHex)
+			sv.logger.Info("share rejected: worker=%s required=%g actual=%g hash=%s", share.WorkerName, sessionDiff, actualDiff, blockHashHex)
 			sv.stats.RecordShare(sv.symbol, metrics.ShareInvalid, share.WorkerName, actualDiff)
 			return stratum.ErrLowDifficulty
 		}
