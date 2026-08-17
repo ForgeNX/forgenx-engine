@@ -230,3 +230,32 @@ func TestVarDiffFloatDiffBelowOne(t *testing.T) {
 		}
 	})
 }
+
+// A full window of fast shares raises difficulty. Guards the normal retarget path.
+func TestVarDiffFullWindowStillRaisesDifficulty(t *testing.T) {
+	vd := NewVarDiff(VarDiffConfig{
+		MinDiff:      1,
+		MaxDiff:      65536,
+		TargetTime:   40,
+		RetargetTime: 10,
+		VariancePct:  30,
+	}, 1024)
+
+	now := time.Now()
+	vd.lastRetarget = now.Add(-60 * time.Second)
+	vd.shareTimes = []time.Time{
+		now.Add(-4 * time.Second),
+		now.Add(-3 * time.Second),
+		now.Add(-2 * time.Second),
+		now.Add(-1 * time.Second),
+	}
+
+	result := vd.RecordShare()
+	if !result.Adjusted {
+		t.Fatalf("full window did not retarget: reason=%q", result.Reason)
+	}
+	if result.ClampedDiff <= result.CurrentDiff {
+		t.Errorf("fast shares should raise difficulty: %.0f -> %.0f",
+			result.CurrentDiff, result.ClampedDiff)
+	}
+}

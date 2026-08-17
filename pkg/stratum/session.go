@@ -523,7 +523,20 @@ func (s *Session) SetInitialDifficulty(diff float64) {
 	}
 	s.mu.Lock()
 	s.difficulty = diff
+	vd := s.vardiff
 	s.mu.Unlock()
+
+	// Point the vardiff tracker at the same difficulty. It is constructed with the
+	// coin's default start difficulty, so restoring a session to a stored value
+	// left the two disagreeing: every retarget was then computed against the wrong
+	// baseline, and a miner restored above its capability could never be brought
+	// down — the calculated reduction was measured from the default and clamped
+	// away. ResetWindow also clears the measurement window, which is correct here:
+	// no shares have been seen at this difficulty yet.
+	if vd != nil {
+		vd.ResetWindow(diff)
+	}
+
 	s.sendJSON(SetDifficultyNotification(diff))
 }
 
