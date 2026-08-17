@@ -22,6 +22,11 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 	s.setActive(b)
 
 	b.onMessage = func(line []byte) {
+		// Namespace job IDs before they reach the miner, and remember which backend
+		// issued each one, so a submit can be routed back to the coin that owns it.
+		if coinJob := notifyJobID(line); coinJob != "" {
+			line = rewriteNotifyJobID(line, s.registerJob(b, coinJob))
+		}
 		if err := s.SendRaw(line); err != nil {
 			s.logger.Debug("[nexus] %s miner write failed: %v", s.id, err)
 		}
@@ -119,18 +124,29 @@ func (m *Mesh) runMiner(s *Session, b *Backend) {
 			s.mu.Lock()
 			s.supportsXnSub = true
 			s.mu.Unlock()
+			m.logger.Info("[nexus] %s: miner supports extranonce subscribe (seamless coin switching available)", s.id)
 			s.send(map[string]interface{}{"id": rawOrNull(msg.ID), "result": true, "error": nil})
 
 		case "mining.submit":
-			// The miner submits with ITS OWN worker name in params[0], but the
-			// backend authorized to the coin as b.Worker (e.g. "nexus-n1"). Rewrite
-			// params[0] to the backend's worker so the coin attributes the share to
-			// the connection it authorized (mismatched names are rejected).
-			out := rewriteSubmitWorker(line, b.Worker)
-			if err := b.SendRaw(out); err != nil {
+			// Route the submit to the backend that issued this job, not merely the
+			// active one: after a coin switch, work returned for the previous coin
+			// must still reach it. Falls back to the active backend if the job has
+			// aged out of the registry.
+			target := b
+			out := line
+			if nexusJob := submitJobID(line); nexusJob != "" {
+				if owner, coinJob, ok := s.lookupJob(nexusJob); ok {
+					target = owner
+					out = rewriteSubmitJobID(out, coinJob)
+				} else {
+					m.logger.Warn("[nexus] %s: submit for unknown job %s; forwarding to active backend", s.id, nexusJob)
+				}
+			}
+			out = rewriteSubmitWorker(out, target.Worker)
+			if err := target.SendRaw(out); err != nil {
 				m.logger.Info("[nexus] %s submit forward FAILED: %v", s.id, err)
 			} else {
-				m.logger.Debug("[nexus] %s submit forwarded to %s: %s", s.id, b.Symbol, truncate(string(out), 160))
+				m.logger.Debug("[nexus] %s submit forwarded to %s: %s", s.id, target.Symbol, truncate(string(out), 160))
 			}
 
 		default:
@@ -160,6 +176,80 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s
+}
+
+// rewriteNotifyJobID replaces params[0] (the job ID) in a mining.notify with the
+// Nexus-issued ID, so IDs from different coins can't collide on the miner side.
+// Returns the line unchanged if it isn't a well-formed notify.
+func rewriteNotifyJobID(line []byte, jobID string) []byte {
+	var m map[string]interface{}
+	if err := json.Unmarshal(line, &m); err != nil {
+		return line
+	}
+	params, ok := m["params"].([]interface{})
+	if !ok || len(params) < 1 {
+		return line
+	}
+	params[0] = jobID
+	m["params"] = params
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line
+	}
+	return out
+}
+
+// notifyJobID extracts params[0] from a mining.notify, or "" if the line is not
+// a notify. Checks the method explicitly rather than inferring from the shape of
+// params, so other server-to-miner messages can never be mistaken for jobs.
+func notifyJobID(line []byte) string {
+	var m map[string]interface{}
+	if err := json.Unmarshal(line, &m); err != nil {
+		return ""
+	}
+	if method, _ := m["method"].(string); method != "mining.notify" {
+		return ""
+	}
+	params, ok := m["params"].([]interface{})
+	if !ok || len(params) < 1 {
+		return ""
+	}
+	id, _ := params[0].(string)
+	return id
+}
+
+// rewriteSubmitJobID replaces params[1] (the job ID) in a mining.submit with the
+// coin's own ID for that job, undoing the Nexus namespacing before forwarding.
+func rewriteSubmitJobID(line []byte, coinJob string) []byte {
+	var m map[string]interface{}
+	if err := json.Unmarshal(line, &m); err != nil {
+		return line
+	}
+	params, ok := m["params"].([]interface{})
+	if !ok || len(params) < 2 {
+		return line
+	}
+	params[1] = coinJob
+	m["params"] = params
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line
+	}
+	return out
+}
+
+// submitJobID extracts params[1] from a mining.submit, or "" if absent.
+func submitJobID(line []byte) string {
+	var m map[string]interface{}
+	if err := json.Unmarshal(line, &m); err != nil {
+		return ""
+	}
+	params, ok := m["params"].([]interface{})
+	if !ok || len(params) < 2 {
+		return ""
+	}
+	id, _ := params[1].(string)
+	return id
 }
 
 // rewriteSubmitWorker replaces params[0] (the worker name) in a mining.submit
