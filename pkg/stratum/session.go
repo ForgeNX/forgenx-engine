@@ -537,6 +537,16 @@ func (s *Session) Close() {
 }
 
 // Info returns a summary of the session for metrics/API.
+// State returns the session's current protocol state. Callers outside this file
+// must use this rather than reading s.state directly: the field is written under
+// s.mu (handleSubscribe/handleAuthorize) and read from other goroutines — notably
+// the server's broadcast and ping loops — so an unsynchronised read is a data race.
+func (s *Session) State() SessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state
+}
+
 func (s *Session) WorkerName() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

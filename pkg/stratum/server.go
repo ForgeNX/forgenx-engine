@@ -225,7 +225,7 @@ func (s *Server) BroadcastJobPerSession(baseJob *Job, customizer func(*Session) 
 	defer s.sessionsMu.RUnlock()
 
 	for _, session := range s.sessions {
-		if session.state < StateAuthorized {
+		if session.State() < StateAuthorized {
 			continue
 		}
 		if job := customizer(session); job != nil {
@@ -304,7 +304,7 @@ func (s *Server) pingLoop() {
 		case <-ticker.C:
 			s.sessionsMu.RLock()
 			for _, session := range s.sessions {
-				if session.state >= StateAuthorized {
+				if session.State() >= StateAuthorized {
 					id := s.pingIDSeq.Add(1) + 9 // Start at 10
 					session.SendPing(id)
 				}
