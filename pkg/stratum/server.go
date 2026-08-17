@@ -49,6 +49,7 @@ type Server struct {
 	pingEnabled          bool
 	pingInterval         time.Duration
 	idleTimeout          time.Duration
+	coinTicker           string
 	vardiffCfg           *VarDiffConfig
 	vardiffOnNewBlock    bool
 	logger               *logging.Logger
@@ -61,6 +62,7 @@ type Server struct {
 
 // ServerConfig holds configuration for the stratum server.
 type ServerConfig struct {
+	CoinTicker           string // for logging, e.g. "DGB"
 	Host                 string
 	Port                 int
 	ExtraNonceSize       int
@@ -96,6 +98,7 @@ func NewServer(cfg ServerConfig, shareHandler ShareHandler) *Server {
 		pingEnabled:          cfg.PingEnabled,
 		pingInterval:         cfg.PingInterval,
 		idleTimeout:          cfg.IdleTimeout,
+		coinTicker:           cfg.CoinTicker,
 		vardiffCfg:           cfg.VarDiff,
 		vardiffOnNewBlock:    cfg.VarDiffOnNewBlock,
 		logger:               logging.New(logging.ModuleStratum),
@@ -224,13 +227,19 @@ func (s *Server) BroadcastJobPerSession(baseJob *Job, customizer func(*Session) 
 	s.sessionsMu.RLock()
 	defer s.sessionsMu.RUnlock()
 
+	sent := 0
 	for _, session := range s.sessions {
-		if session.state < StateAuthorized {
+		if session.State() < StateAuthorized {
 			continue
 		}
 		if job := customizer(session); job != nil {
 			session.SendJob(job)
+			sent++
 		}
+	}
+	if sent > 0 {
+		s.logger.Info("[sv1-%s] broadcasting job %s to %d session(s)",
+			s.coinTicker, baseJob.JobID, sent)
 	}
 }
 
@@ -304,7 +313,7 @@ func (s *Server) pingLoop() {
 		case <-ticker.C:
 			s.sessionsMu.RLock()
 			for _, session := range s.sessions {
-				if session.state >= StateAuthorized {
+				if session.State() >= StateAuthorized {
 					id := s.pingIDSeq.Add(1) + 9 // Start at 10
 					session.SendPing(id)
 				}
@@ -316,7 +325,14 @@ func (s *Server) pingLoop() {
 
 func (s *Server) generateExtraNonce1() string {
 	seq := s.extraNonceSeq.Add(1)
-	// Use 4 bytes for extranonce1 (enough for 4 billion miners)
+	// Reserve the high half of the extranonce1 space for V1 connections so they
+	// can NEVER collide with SV2 channels, which draw from a separate pool that
+	// counts up from 0. Without this partition, a V1 connection (e.g. the Nexus
+	// relay) and an early SV2 channel could be assigned overlapping extranonce1
+	// values, producing identical coinbases -> corrupted shares + duplicated
+	// workers. Setting the top bit keeps V1 >= 0x80000000; SV2 stays below.
+	seq |= 0x80000000
+	// Use 4 bytes for extranonce1 (enough for ~2 billion V1 miners).
 	b := []byte{byte(seq >> 24), byte(seq >> 16), byte(seq >> 8), byte(seq)}
 	return hex.EncodeToString(b)
 }

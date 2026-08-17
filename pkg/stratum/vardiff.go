@@ -218,6 +218,7 @@ func (v *VarDiff) RecordShare() VarDiffResult {
 	}
 
 	oldDiff := v.currentDiff
+	sampleCount := len(v.shareTimes) // capture before the window is cleared
 	v.currentDiff = newDiff
 	v.lastRetarget = now
 	v.shareTimes = v.shareTimes[:0] // reset share window
@@ -225,7 +226,7 @@ func (v *VarDiff) RecordShare() VarDiffResult {
 	return VarDiffResult{
 		Adjusted:    true,
 		Reason:      "adjusted",
-		Shares:      0, // reset, so report what we had
+		Shares:      sampleCount,
 		AvgTime:     avgTime,
 		TargetTime:  v.targetTime,
 		AcceptLow:   acceptLow,

@@ -37,21 +37,36 @@ const VersionRollingMask = "1fffe000"
 
 // Session represents a single miner connection.
 type Session struct {
-	ID            string
-	conn          net.Conn
-	server        *Server
-	state         SessionState
-	workerName    string
-	extraNonce1   string
-	difficulty    float64
-	prevDiff      float64   // previous difficulty before last change
-	diffChangedAt time.Time // when difficulty last changed
-	vardiff       *VarDiff
-	logger        *logging.Logger
-	mu            sync.Mutex
-	closed        bool
-	connectedAt   time.Time
-	lastActivity  time.Time
+	ID     string
+	conn   net.Conn
+	server *Server
+	state  SessionState
+
+	// Per-session share statistics, all guarded by s.mu. Populated by the share
+	// validator via RecordAcceptedShare; surfaced through Info(). Until Nexus Mesh
+	// there were no V1 miners, so these were never tracked and the workers API
+	// reported zeros for any v1 session.
+	sharesAccepted     uint64
+	bestDifficulty     float64
+	bestNetworkDiff    float64
+	bestHeight         uint32
+	bestTime           time.Time
+	bestRatio          float64
+	bestRatioShareDiff float64
+	bestRatioNetDiff   float64
+	bestRatioHeight    uint32
+	bestRatioTime      time.Time
+	workerName         string
+	extraNonce1        string
+	difficulty         float64
+	prevDiff           float64   // previous difficulty before last change
+	diffChangedAt      time.Time // when difficulty last changed
+	vardiff            *VarDiff
+	logger             *logging.Logger
+	mu                 sync.Mutex
+	closed             bool
+	connectedAt        time.Time
+	lastActivity       time.Time
 
 	// Version rolling
 	versionRollingEnabled bool
@@ -211,8 +226,13 @@ func (s *Session) handleAuthorize(req *Request) {
 	}
 
 	s.logger.Info("[%s] authorized worker: %s (diff: %.2f)", s.ID, s.workerName, s.difficulty)
-	if s.server.onSessionAuthorized != nil {
-		s.server.onSessionAuthorized(s)
+	// Call the authorized hook in a goroutine: handleAuthorize holds s.mu (via the
+	// defer at the top), and the hook may call session methods that also lock s.mu
+	// (e.g. WorkerName()). Calling it inline would deadlock (sync.Mutex is not
+	// re-entrant). Running it after this returns — via a goroutine — lets the lock
+	// release first.
+	if hook := s.server.onSessionAuthorized; hook != nil {
+		go hook(s)
 	}
 }
 
@@ -256,10 +276,10 @@ func (s *Session) handleSubmit(req *Request) {
 			result := s.vardiff.RecordShare()
 			if diag := result.DiagString(); diag != "" {
 				if result.Adjusted {
-					s.logger.Debug("[%s] %s VARDIFF: adjusted %.4f -> %.4f | %s",
+					s.logger.Info("[%s] %s VARDIFF: adjusted %.4f -> %.4f | %s",
 						s.ID, s.workerName, result.CurrentDiff, result.ClampedDiff, diag)
 				} else {
-					s.logger.Debug("[%s] %s VARDIFF: no adjustment - %s (difficulty stays at %.4f) | %s",
+					s.logger.Info("[%s] %s VARDIFF: no adjustment - %s (difficulty stays at %.4f) | %s",
 						s.ID, s.workerName, result.Reason, result.CurrentDiff, diag)
 				}
 			}
@@ -503,7 +523,20 @@ func (s *Session) SetInitialDifficulty(diff float64) {
 	}
 	s.mu.Lock()
 	s.difficulty = diff
+	vd := s.vardiff
 	s.mu.Unlock()
+
+	// Point the vardiff tracker at the same difficulty. It is constructed with the
+	// coin's default start difficulty, so restoring a session to a stored value
+	// left the two disagreeing: every retarget was then computed against the wrong
+	// baseline, and a miner restored above its capability could never be brought
+	// down — the calculated reduction was measured from the default and clamped
+	// away. ResetWindow also clears the measurement window, which is correct here:
+	// no shares have been seen at this difficulty yet.
+	if vd != nil {
+		vd.ResetWindow(diff)
+	}
+
 	s.sendJSON(SetDifficultyNotification(diff))
 }
 
@@ -532,6 +565,46 @@ func (s *Session) Close() {
 }
 
 // Info returns a summary of the session for metrics/API.
+// SessionID returns this session's identifier. Named to satisfy ShareSession
+// without colliding with the exported ID field.
+func (s *Session) SessionID() string { return s.ID }
+
+// State returns the session's current protocol state. Callers outside this file
+// must use this rather than reading s.state directly: the field is written under
+// s.mu (handleSubscribe/handleAuthorize) and read from other goroutines — notably
+// the server's broadcast and ping loops — so an unsynchronised read is a data race.
+// RecordAcceptedShare records a validated share against this session: the
+// accepted count, the best difficulty seen, and the best share-difficulty to
+// network-difficulty ratio ("closest to block"). netDiff and height may be zero
+// if the caller could not derive them, in which case only the count and best
+// difficulty are updated.
+func (s *Session) RecordAcceptedShare(shareDiff, netDiff float64, height uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sharesAccepted++
+	if shareDiff > s.bestDifficulty {
+		s.bestDifficulty = shareDiff
+		s.bestNetworkDiff = netDiff
+		s.bestHeight = height
+		s.bestTime = time.Now().UTC()
+	}
+	if netDiff > 0 {
+		if ratio := shareDiff / netDiff; ratio > s.bestRatio {
+			s.bestRatio = ratio
+			s.bestRatioShareDiff = shareDiff
+			s.bestRatioNetDiff = netDiff
+			s.bestRatioHeight = height
+			s.bestRatioTime = time.Now().UTC()
+		}
+	}
+}
+
+func (s *Session) State() SessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state
+}
+
 func (s *Session) WorkerName() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -548,37 +621,47 @@ func (s *Session) Info() SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return SessionInfo{
-		ID:          s.ID,
-		WorkerName:  s.workerName,
-		RemoteAddr:  s.conn.RemoteAddr().String(),
-		Difficulty:  s.difficulty,
-		ConnectedAt: s.connectedAt,
-		State:       fmt.Sprintf("%d", s.state),
-		Protocol:    "v1",
+		ID:                 s.ID,
+		WorkerName:         s.workerName,
+		RemoteAddr:         s.conn.RemoteAddr().String(),
+		Difficulty:         s.difficulty,
+		ConnectedAt:        s.connectedAt,
+		State:              fmt.Sprintf("%d", s.state),
+		Protocol:           "v1",
+		SharesAccepted:     s.sharesAccepted,
+		BestDifficulty:     s.bestDifficulty,
+		BestNetworkDiff:    s.bestNetworkDiff,
+		BestHeight:         s.bestHeight,
+		BestTime:           s.bestTime,
+		BestRatio:          s.bestRatio,
+		BestRatioShareDiff: s.bestRatioShareDiff,
+		BestRatioNetDiff:   s.bestRatioNetDiff,
+		BestRatioHeight:    s.bestRatioHeight,
+		BestRatioTime:      s.bestRatioTime,
 	}
 }
 
 // SessionInfo holds session metadata for external consumption.
 type SessionInfo struct {
-	ID             string    `json:"id"`
-	WorkerName     string    `json:"worker_name"`
-	RemoteAddr     string    `json:"remote_addr"`
-	Difficulty     float64   `json:"difficulty"`
-	ConnectedAt    time.Time `json:"connected_at"`
-	State          string    `json:"state"`
-	SharesAccepted uint64    `json:"shares_accepted"`
-	SharesRejected uint64    `json:"shares_rejected"`
-	Protocol       string    `json:"protocol"`
-	BestDifficulty float64   `json:"best_difficulty_session"`
-	BestNetworkDiff float64  `json:"best_network_diff,omitempty"`
-	BestHeight      uint32   `json:"best_height,omitempty"`
-	BestTime        time.Time `json:"best_time,omitempty"`
+	ID                 string    `json:"id"`
+	WorkerName         string    `json:"worker_name"`
+	RemoteAddr         string    `json:"remote_addr"`
+	Difficulty         float64   `json:"difficulty"`
+	ConnectedAt        time.Time `json:"connected_at"`
+	State              string    `json:"state"`
+	SharesAccepted     uint64    `json:"shares_accepted"`
+	SharesRejected     uint64    `json:"shares_rejected"`
+	Protocol           string    `json:"protocol"`
+	BestDifficulty     float64   `json:"best_difficulty_session"`
+	BestNetworkDiff    float64   `json:"best_network_diff,omitempty"`
+	BestHeight         uint32    `json:"best_height,omitempty"`
+	BestTime           time.Time `json:"best_time,omitempty"`
 	BestRatio          float64   `json:"best_ratio,omitempty"`
 	BestRatioShareDiff float64   `json:"best_ratio_share_diff,omitempty"`
 	BestRatioNetDiff   float64   `json:"best_ratio_net_diff,omitempty"`
 	BestRatioHeight    uint32    `json:"best_ratio_height,omitempty"`
 	BestRatioTime      time.Time `json:"best_ratio_time,omitempty"`
-	Vendor         string    `json:"vendor,omitempty"`
-	Firmware       string    `json:"firmware,omitempty"`
-	DeviceID       string    `json:"device_id,omitempty"`
+	Vendor             string    `json:"vendor,omitempty"`
+	Firmware           string    `json:"firmware,omitempty"`
+	DeviceID           string    `json:"device_id,omitempty"`
 }

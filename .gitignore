@@ -59,3 +59,5 @@ CLAUDE.md
 # backup files
 *.backup
 config.backup.json
+parktest
+cmd/parktest/

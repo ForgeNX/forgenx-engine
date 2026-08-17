@@ -56,6 +56,8 @@ type workerDiffStore interface {
 
 type CoinRunner struct {
 	symbol          string
+	miningAddress   string // configured payout address (cfg.Mining.Address); used by Nexus Mesh for payout substitution
+	v1Port          int    // V1 stratum listen port (cfg.Stratum.Port); used by Nexus relay to dial this coin
 	coin            coin.Coin
 	store           workerDiffStore
 	rpcClient       *noderpc.Client
@@ -135,12 +137,14 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 	)
 
 	runner := &CoinRunner{
-		symbol:    symbol,
-		coin:      c,
-		rpcClient: rpcClient,
-		stats:     stats,
-		logger:    logging.New(logging.ModuleEngine),
-		startTime: time.Now(),
+		symbol:        symbol,
+		miningAddress: cfg.Mining.Address,
+		v1Port:        cfg.Stratum.Port,
+		coin:          c,
+		rpcClient:     rpcClient,
+		stats:         stats,
+		logger:        logging.New(logging.ModuleEngine),
+		startTime:     time.Now(),
 	}
 
 	// 🔥 CRITICAL: Register coin in stats immediately
@@ -249,6 +253,18 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 	})
 	runner.jobMgr = jobMgr
 
+	// Permanently register the coin's configured payout address so job generation
+	// always builds its coinbase, regardless of session count. In solo mode the
+	// payout address is always valid. Without this, a V1 session (e.g. a Nexus
+	// relay backend) that connects then disconnects drives connectedAddrs for this
+	// address to zero and deletes it -> new jobs stop generating its coinb2 ->
+	// ALL miners on that address starve, including SV2 miners (which do not
+	// register in connectedAddrs). This pin is never paired with UnregisterAddress.
+	if soloMode && cfg.Mining.Address != "" {
+		jobMgr.RegisterAddress(cfg.Mining.Address)
+		runner.logger.Info("solo: pinned payout address %s for permanent job generation", cfg.Mining.Address)
+	}
+
 	// Create share validator
 	staleGrace := time.Duration(cfg.Stratum.StaleShareGrace) * time.Second
 	lowDiffGrace := time.Duration(cfg.Stratum.LowDiffShareGrace) * time.Second
@@ -262,6 +278,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 
 	// Build server config
 	serverCfg := stratum.ServerConfig{
+		CoinTicker:        symbol,
 		Host:              cfg.Stratum.Host,
 		Port:              cfg.Stratum.Port,
 		ExtraNonceSize:    cfg.Mining.ExtraNonceSize,
@@ -1106,6 +1123,15 @@ func persistSV2AuthPubkey(symbol, authPubHex string, logger *logging.Logger) {
 // to the key files. Called once at SV2 server startup.
 
 // StratumRunning reports whether the Stratum V1 server is currently listening.
+// Symbol returns this coin's symbol (e.g. "DGB").
+func (r *CoinRunner) Symbol() string { return r.symbol }
+
+// MiningAddress returns this coin's configured solo payout address.
+func (r *CoinRunner) MiningAddress() string { return r.miningAddress }
+
+// V1Port returns this coin's Stratum V1 listen port (for the Nexus relay to dial).
+func (r *CoinRunner) V1Port() int { return r.v1Port }
+
 func (r *CoinRunner) StratumRunning() bool {
 	if r.server == nil {
 		return false
