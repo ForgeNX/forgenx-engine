@@ -233,6 +233,33 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 
 	// Check if it meets the network target (potential block!)
 	nbits, _ := coin.BitsToHex(jobData.Job.NBits)
+
+	netDiff := stratumv2.TargetToDifficulty(stratumv2.NBitsToTarget(nbits))
+
+	// Per-session stats (accepted count, best difficulty, best ratio) so the workers
+	// API reports v1 sessions the way it does SV2 channels. Called unconditionally:
+	// RecordAcceptedShare skips only the ratio when netDiff is unavailable, so the
+	// share still counts and best-difficulty still updates.
+	session.RecordAcceptedShare(actualDiff, netDiff, uint32(jobData.Template.Height))
+
+	// Pool-wide best-ratio tracking ("closest to block"). The SV2 path does this in
+	// coinrunner's OnShareAccepted; V1 shares had no equivalent, so any v1 worker —
+	// including Nexus-relayed miners — always reported a zero ratio.
+	if netDiff > 0 {
+		ratio := actualDiff / netDiff
+
+		sv.runner.sharesMu.Lock()
+		sv.runner.lastNetDiff = netDiff
+		if ratio > sv.runner.bestRatio {
+			sv.runner.bestRatio = ratio
+			sv.runner.bestRatioShareDiff = actualDiff
+			sv.runner.bestRatioNetDiff = netDiff
+			sv.runner.bestRatioHeight = uint32(jobData.Template.Height)
+			sv.runner.bestRatioTime = time.Now().UTC()
+			sv.runner.bestRatioWorker = share.WorkerName
+		}
+		sv.runner.sharesMu.Unlock()
+	}
 	targetBig := coin.CompactToBig(nbits)
 	if coin.HashMeetsTarget(blockHashBE, targetBig) {
 		sv.logger.Info("*** POTENTIAL BLOCK FOUND by %s at height %d! *** hash=%s", share.WorkerName, jobData.Template.Height, blockHashHex)

@@ -37,21 +37,36 @@ const VersionRollingMask = "1fffe000"
 
 // Session represents a single miner connection.
 type Session struct {
-	ID            string
-	conn          net.Conn
-	server        *Server
-	state         SessionState
-	workerName    string
-	extraNonce1   string
-	difficulty    float64
-	prevDiff      float64   // previous difficulty before last change
-	diffChangedAt time.Time // when difficulty last changed
-	vardiff       *VarDiff
-	logger        *logging.Logger
-	mu            sync.Mutex
-	closed        bool
-	connectedAt   time.Time
-	lastActivity  time.Time
+	ID     string
+	conn   net.Conn
+	server *Server
+	state  SessionState
+
+	// Per-session share statistics, all guarded by s.mu. Populated by the share
+	// validator via RecordAcceptedShare; surfaced through Info(). Until Nexus Mesh
+	// there were no V1 miners, so these were never tracked and the workers API
+	// reported zeros for any v1 session.
+	sharesAccepted     uint64
+	bestDifficulty     float64
+	bestNetworkDiff    float64
+	bestHeight         uint32
+	bestTime           time.Time
+	bestRatio          float64
+	bestRatioShareDiff float64
+	bestRatioNetDiff   float64
+	bestRatioHeight    uint32
+	bestRatioTime      time.Time
+	workerName         string
+	extraNonce1        string
+	difficulty         float64
+	prevDiff           float64   // previous difficulty before last change
+	diffChangedAt      time.Time // when difficulty last changed
+	vardiff            *VarDiff
+	logger             *logging.Logger
+	mu                 sync.Mutex
+	closed             bool
+	connectedAt        time.Time
+	lastActivity       time.Time
 
 	// Version rolling
 	versionRollingEnabled bool
@@ -541,6 +556,32 @@ func (s *Session) Close() {
 // must use this rather than reading s.state directly: the field is written under
 // s.mu (handleSubscribe/handleAuthorize) and read from other goroutines — notably
 // the server's broadcast and ping loops — so an unsynchronised read is a data race.
+// RecordAcceptedShare records a validated share against this session: the
+// accepted count, the best difficulty seen, and the best share-difficulty to
+// network-difficulty ratio ("closest to block"). netDiff and height may be zero
+// if the caller could not derive them, in which case only the count and best
+// difficulty are updated.
+func (s *Session) RecordAcceptedShare(shareDiff, netDiff float64, height uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sharesAccepted++
+	if shareDiff > s.bestDifficulty {
+		s.bestDifficulty = shareDiff
+		s.bestNetworkDiff = netDiff
+		s.bestHeight = height
+		s.bestTime = time.Now().UTC()
+	}
+	if netDiff > 0 {
+		if ratio := shareDiff / netDiff; ratio > s.bestRatio {
+			s.bestRatio = ratio
+			s.bestRatioShareDiff = shareDiff
+			s.bestRatioNetDiff = netDiff
+			s.bestRatioHeight = height
+			s.bestRatioTime = time.Now().UTC()
+		}
+	}
+}
+
 func (s *Session) State() SessionState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -563,13 +604,23 @@ func (s *Session) Info() SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return SessionInfo{
-		ID:          s.ID,
-		WorkerName:  s.workerName,
-		RemoteAddr:  s.conn.RemoteAddr().String(),
-		Difficulty:  s.difficulty,
-		ConnectedAt: s.connectedAt,
-		State:       fmt.Sprintf("%d", s.state),
-		Protocol:    "v1",
+		ID:                 s.ID,
+		WorkerName:         s.workerName,
+		RemoteAddr:         s.conn.RemoteAddr().String(),
+		Difficulty:         s.difficulty,
+		ConnectedAt:        s.connectedAt,
+		State:              fmt.Sprintf("%d", s.state),
+		Protocol:           "v1",
+		SharesAccepted:     s.sharesAccepted,
+		BestDifficulty:     s.bestDifficulty,
+		BestNetworkDiff:    s.bestNetworkDiff,
+		BestHeight:         s.bestHeight,
+		BestTime:           s.bestTime,
+		BestRatio:          s.bestRatio,
+		BestRatioShareDiff: s.bestRatioShareDiff,
+		BestRatioNetDiff:   s.bestRatioNetDiff,
+		BestRatioHeight:    s.bestRatioHeight,
+		BestRatioTime:      s.bestRatioTime,
 	}
 }
 

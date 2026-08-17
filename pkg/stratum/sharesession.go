@@ -16,4 +16,9 @@ type ShareSession interface {
 	ExtraNonce1() string
 	GetDifficulty() float64
 	GetPrevDifficulty() (float64, time.Time)
+
+	// RecordAcceptedShare lets the validator report a validated share back to the
+	// session so per-session stats (accepted count, best difficulty, best ratio)
+	// can be surfaced by the workers API.
+	RecordAcceptedShare(shareDiff, netDiff float64, height uint32)
 }
