@@ -227,7 +227,12 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 	}
 
 	// Share is valid at pool difficulty
-	sv.stats.RecordShare(sv.symbol, metrics.ShareValid, share.WorkerName, actualDiff)
+	// Pool difficulty first, actual hash difficulty second — the same order SV2
+	// uses. The per-worker hashrate sample takes the pool difficulty; passing the
+	// actual difficulty there let a single lucky share (which can exceed pool
+	// difficulty by orders of magnitude) inflate the rolling average for minutes.
+	// RoundWork still accumulates the actual difficulty via the variadic.
+	sv.stats.RecordShare(sv.symbol, metrics.ShareValid, share.WorkerName, sessionDiff, actualDiff)
 
 	// Check if it meets the network target (potential block!)
 	nbits, _ := coin.BitsToHex(jobData.Job.NBits)
