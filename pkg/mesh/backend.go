@@ -25,7 +25,12 @@ type Backend struct {
 	reader *bufio.Reader
 	logger *logging.Logger
 
-	mu            sync.Mutex
+	mu sync.Mutex
+	// writeMu serialises socket writes. Separate from mu on purpose: holding the
+	// state mutex across a write means a coin that stops reading blocks every
+	// other goroutine touching this backend, and a reconnect could not swap the
+	// connection while a write was stuck.
+	writeMu       sync.Mutex
 	extranonce1   string
 	extranonce2sz int
 	subscribed    bool
@@ -45,8 +50,10 @@ type Backend struct {
 	// firstJob is closed once the backend has captured DGB's first mining.notify,
 	// so Connect can wait for a job to be ready before the miner starts (avoids a
 	// race where the miner authorizes before any job exists -> stalls/reconnects).
-	firstJob     chan struct{}
-	firstJobOnce sync.Once
+	// Guarded by mu so a reconnect can re-arm it: after a coin comes back the
+	// backend has no job again, and callers must block until the new connection
+	// produces one rather than seeing the previous connection's closed channel.
+	firstJob chan struct{}
 
 	// dead is set when Run() exits — the coin closed the connection, restarted, or
 	// the link dropped. Nothing else notices otherwise: a warm backend would sit
@@ -85,8 +92,10 @@ func (b *Backend) Connect() error {
 		tcp.SetKeepAlive(true)
 		tcp.SetKeepAlivePeriod(30 * time.Second)
 	}
+	b.mu.Lock()
 	b.conn = conn
 	b.reader = bufio.NewReader(conn)
+	b.mu.Unlock()
 
 	// Negotiate version-rolling FIRST. Miners like the Bitaxe roll the block
 	// version (ASICBoost); the coin must enable version-rolling on THIS connection
@@ -119,8 +128,9 @@ func (b *Backend) Connect() error {
 		return fmt.Errorf("subscribe parse: %w", err)
 	}
 
+	en1, en2sz := b.Extranonce()
 	b.logger.Info("[nexus] backend %s connected: %s (en1=%s en2sz=%d)",
-		b.Symbol, b.Addr, b.extranonce1, b.extranonce2sz)
+		b.Symbol, b.Addr, en1, en2sz)
 	return nil
 }
 
@@ -215,11 +225,16 @@ func (b *Backend) Run() {
 		line, err := b.readLine()
 		if err != nil {
 			b.logger.Info("[nexus] backend %s connection ended: %v", b.Symbol, err)
+			// Only the alive->dead transition is an event. Once reconnecting, Run is
+			// started and stopped repeatedly by the reconnect loop — every failed
+			// attempt would otherwise look like a fresh death and re-trigger failover
+			// on a session that has already moved on.
 			b.mu.Lock()
+			wasAlive := !b.dead
 			b.dead = true
 			onDead := b.onDead
 			b.mu.Unlock()
-			if onDead != nil {
+			if wasAlive && onDead != nil {
 				onDead()
 			}
 			return
@@ -250,7 +265,7 @@ func (b *Backend) Run() {
 			b.mu.Lock()
 			b.lastNotify = append([]byte(nil), line...)
 			b.mu.Unlock()
-			b.firstJobOnce.Do(func() { close(b.firstJob) })
+			b.signalFirstJob()
 		case "mining.ping":
 			// Answer the coin's keepalive ourselves rather than forwarding it. The V1
 			// server closes any session it has not READ from within IdleTimeout (5
@@ -275,12 +290,112 @@ func (b *Backend) Run() {
 	}
 }
 
+// reconnectInterval bounds how often a dead backend redials its coin. Starts short
+// so a brief blip is picked up quickly, backs off so a coin that is down for hours
+// is not hammered.
+const (
+	reconnectMin = 15 * time.Second
+	reconnectMax = 2 * time.Minute
+)
+
+// Reconnect keeps a dead backend trying to come back. It owns the connection
+// lifecycle for the backend after the initial Connect: it redials, re-authorizes
+// with the worker name the miner gave, waits for the coin to actually produce a
+// job, and only then clears dead and starts a fresh Run.
+//
+// Waiting for a job before clearing dead matters: a node that has just restarted
+// accepts stratum connections long before it is synced and building templates. A
+// backend that reported itself alive at that point would be a failback candidate
+// the miner could be moved onto, only to sit there receiving nothing.
+//
+// Run is started from here and nowhere else once reconnecting, so there is never
+// more than one goroutine reading the backend's socket.
+func (b *Backend) Reconnect(stop func() bool) {
+	delay := reconnectMin
+	for {
+		time.Sleep(delay)
+		if stop() {
+			return
+		}
+		if !b.Alive() {
+			b.rearmFirstJob()
+			if err := b.Connect(); err != nil {
+				b.logger.Debug("[nexus] backend %s redial failed: %v", b.Symbol, err)
+				delay = nextDelay(delay)
+				continue
+			}
+			worker := b.currentWorker()
+			if worker != "" {
+				if err := b.Authorize(worker); err != nil {
+					b.logger.Debug("[nexus] backend %s reauthorize failed: %v", b.Symbol, err)
+					b.Close()
+					delay = nextDelay(delay)
+					continue
+				}
+			}
+			// Read from the new connection so jobs can arrive, then wait for one.
+			go b.Run()
+			if !b.WaitForFirstJob(30 * time.Second) {
+				b.logger.Debug("[nexus] backend %s reconnected but produced no job; still catching up", b.Symbol)
+				b.Close() // ends the Run we just started
+				delay = nextDelay(delay)
+				continue
+			}
+			b.mu.Lock()
+			b.dead = false
+			b.mu.Unlock()
+			b.logger.Info("[nexus] backend %s reconnected and producing jobs", b.Symbol)
+			delay = reconnectMin
+		}
+	}
+}
+
+func nextDelay(d time.Duration) time.Duration {
+	d *= 2
+	if d > reconnectMax {
+		d = reconnectMax
+	}
+	return d
+}
+
+// currentWorker returns the worker name this backend last authorized with, so a
+// reconnect can re-establish the same identity on the coin.
+func (b *Backend) currentWorker() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Worker
+}
+
+// signalFirstJob marks that this connection has produced a job. Safe to call on
+// every notify: only the first close per connection has any effect.
+func (b *Backend) signalFirstJob() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	select {
+	case <-b.firstJob:
+		// already signalled for this connection
+	default:
+		close(b.firstJob)
+	}
+}
+
+// rearmFirstJob replaces the signal channel before a reconnect attempt, so waiters
+// block on the new connection rather than the previous one's completed signal.
+func (b *Backend) rearmFirstJob() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.firstJob = make(chan struct{})
+}
+
 // WaitForFirstJob blocks until the backend has captured the coin's first job
 // (mining.notify) or the timeout elapses. This guarantees a job is cached before
 // the miner starts, so GoLive always has real work to replay.
 func (b *Backend) WaitForFirstJob(timeout time.Duration) bool {
+	b.mu.Lock()
+	ch := b.firstJob
+	b.mu.Unlock()
 	select {
-	case <-b.firstJob:
+	case <-ch:
 		return true
 	case <-time.After(timeout):
 		return false
@@ -300,12 +415,15 @@ func (b *Backend) GoLive() (setDiff, notify []byte) {
 // SendRaw writes a raw JSON line to the coin backend.
 func (b *Backend) SendRaw(line []byte) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.conn == nil {
+	c := b.conn
+	b.mu.Unlock()
+	if c == nil {
 		return fmt.Errorf("backend %s not connected", b.Symbol)
 	}
-	b.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, err := b.conn.Write(append(line, '\n'))
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+	c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_, err := c.Write(append(line, '\n'))
 	return err
 }
 
@@ -318,7 +436,13 @@ func (b *Backend) send(v interface{}) error {
 }
 
 func (b *Backend) readLine() ([]byte, error) {
-	line, err := b.reader.ReadBytes('\n')
+	b.mu.Lock()
+	r := b.reader
+	b.mu.Unlock()
+	if r == nil {
+		return nil, fmt.Errorf("backend %s not connected", b.Symbol)
+	}
+	line, err := r.ReadBytes('\n')
 	if err != nil {
 		return nil, err
 	}

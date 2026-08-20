@@ -93,8 +93,22 @@ func (s *Session) Close() {
 	}
 }
 
+// isClosed reports whether the miner connection has been torn down, so background
+// loops tied to this session can stop.
+func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.closed }
+
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// supportsExtranonceSub reports whether the miner asked for extranonce updates.
+// Only such miners can be moved between coins without reconnecting: the coins hand
+// out different extranonce1 values, and a miner that cannot be told its extranonce
+// changed would build shares the new coin rejects.
+func (s *Session) supportsExtranonceSub() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.supportsXnSub
+}
 
 // activeBackend returns the coin backend currently feeding this miner. Warm
 // backends compare unequal to it and so hold their jobs back.

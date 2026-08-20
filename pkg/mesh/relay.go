@@ -15,6 +15,115 @@ type rpcMsg struct {
 // miner's subscribe/authorize locally (adopting the backend's extranonce),
 // forwards submits to the coin, and relays the coin's jobs/difficulty/responses
 // back to the miner.
+// How often to check whether a higher-priority coin has come back. Long enough
+// that a flapping coin does not bounce the miner between chains, short enough that
+// a coin finishing its sync is picked up promptly.
+const failbackInterval = 30 * time.Second
+
+// firstAlive returns the highest-priority live backend, skipping one. Priority is
+// the order coins were configured in.
+func firstAlive(backends []*Backend, skip *Backend) *Backend {
+	for _, b := range backends {
+		if b != skip && b.Alive() {
+			return b
+		}
+	}
+	return nil
+}
+
+// failbackLoop watches for a higher-priority coin becoming available again and
+// moves the miner back to it. Runs until the session closes.
+func (m *Mesh) failbackLoop(s *Session, backends []*Backend) {
+	t := time.NewTicker(failbackInterval)
+	defer t.Stop()
+	for range t.C {
+		if s.isClosed() {
+			return
+		}
+		func() {
+			cur := s.activeBackend()
+			if cur == nil {
+				return
+			}
+			for _, b := range backends {
+				if b == cur {
+					break // nothing ahead of the current coin is alive
+				}
+				if b.Alive() {
+					m.logger.Info("[nexus] %s: %s is available again; failing back from %s", s.id, b.Symbol, cur.Symbol)
+					m.switchActive(s, b)
+					break
+				}
+			}
+		}()
+	}
+}
+
+// switchActive moves a bonded miner from its current coin to another without
+// dropping the connection where the miner supports it. The miner keeps hashing
+// throughout: it is sent the new coin's extranonce, then its cached difficulty and
+// latest job, so it starts on the new chain from the next nonce rather than after a
+// reconnect. Work already in flight for the previous coin still routes correctly,
+// because submits are looked up by job ID in the session registry rather than being
+// sent to whichever coin is active now.
+//
+// A miner that never sent mining.extranonce.subscribe cannot be told its extranonce
+// changed; sending it the new coin's jobs would produce shares built on the wrong
+// extranonce, which the coin would reject. Those sessions are closed instead so the
+// miner reconnects and re-bonds cleanly — a few seconds of lost work, but no stream
+// of rejects.
+func (m *Mesh) switchActive(s *Session, target *Backend) {
+	prev := s.activeBackend()
+	if target == nil || target == prev || !target.Alive() {
+		return
+	}
+
+	if !s.supportsExtranonceSub() {
+		m.logger.Info("[nexus] %s: switching %s -> %s requires reconnect (no extranonce.subscribe)",
+			s.id, symbolOf(prev), target.Symbol)
+		s.Close()
+		return
+	}
+
+	s.setActive(target)
+
+	en1, en2sz := target.Extranonce()
+	if err := s.send(map[string]interface{}{
+		"id":     nil,
+		"method": "mining.set_extranonce",
+		"params": []interface{}{en1, en2sz},
+	}); err != nil {
+		m.logger.Warn("[nexus] %s: set_extranonce failed during switch: %v", s.id, err)
+		s.Close()
+		return
+	}
+
+	setDiff, notify := target.GoLive()
+	if setDiff != nil {
+		s.SendRaw(setDiff)
+	}
+	if notify != nil {
+		// Registered here for the same reason as the authorize path: a replayed job
+		// bypasses onMessage, and an unregistered job can only be routed by falling
+		// back to the active backend.
+		if coinJob := notifyJobID(notify); coinJob != "" {
+			notify = rewriteNotifyJobID(notify, s.registerJob(target, coinJob))
+		}
+		s.SendRaw(notify)
+	}
+
+	m.logger.Info("[nexus] %s: switched %s -> %s (diff=%t job=%t)",
+		s.id, symbolOf(prev), target.Symbol, setDiff != nil, notify != nil)
+}
+
+// symbolOf is nil-safe so switch logging works before a backend is bonded.
+func symbolOf(b *Backend) string {
+	if b == nil {
+		return "none"
+	}
+	return b.Symbol
+}
+
 func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	defer s.Close()
 	defer func() {
@@ -47,19 +156,43 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			}
 		}
 		b.onDead = func() {
-			// Only the active coin dying is fatal to the session: the miner has nowhere
-			// to get work from, so close its connection and let it reconnect rather than
-			// leaving it hashing a job that will never be replaced. A warm coin dying is
-			// tolerated — rotation checks Alive() and skips it.
-			if s.activeBackend() == b {
-				m.logger.Warn("[nexus] %s: active backend %s died; closing miner to force re-bond", s.id, b.Symbol)
-				s.Close()
+			// A warm coin dying is tolerated — it is skipped until it comes back. The
+			// active coin dying means the miner has nowhere to get work from, so move it
+			// to the best coin still alive. Only if none are left is the session closed,
+			// letting the miner reconnect rather than hash a job that will never be
+			// replaced.
+			if s.activeBackend() != b {
+				return
 			}
+			if next := firstAlive(backends, b); next != nil {
+				m.logger.Warn("[nexus] %s: active backend %s died; failing over to %s", s.id, b.Symbol, next.Symbol)
+				m.switchActive(s, next)
+				return
+			}
+			m.logger.Warn("[nexus] %s: active backend %s died and no bonded coin is alive; closing miner", s.id, b.Symbol)
+			s.Close()
 		}
 		go b.Run()
 	}
 
-	b := active
+	// Failback. The coin list is in priority order, so a miner running on a later
+	// coin while an earlier one is alive is running on a fallback it no longer needs
+	// — which is what happens when a coin is briefly down at bond time, or is still
+	// syncing. Without this the miner stays on the fallback until something forces a
+	// reconnect.
+	// Keep every bonded coin trying to come back while the miner is connected, so a
+	// coin that was down at bond time or died since becomes a failback candidate
+	// again rather than staying dead for the life of the session.
+	for _, b := range backends {
+		b := b
+		go b.Reconnect(s.isClosed)
+	}
+
+	go m.failbackLoop(s, backends)
+
+	// The active backend is looked up per message rather than captured: it changes
+	// when a coin dies or a higher-priority one comes back, and a stale capture
+	// would keep forwarding to the coin the miner has already been moved off.
 
 	for {
 		line, err := s.readLine()
@@ -75,6 +208,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 
 		switch msg.Method {
 		case "mining.configure":
+			b := s.activeBackend()
 			// Answer the miner's version-rolling request with the mask the coin
 			// actually granted this backend (see Backend.Connect). Handling it here
 			// (not forwarding) keeps the miner's rolled version bits within the
@@ -93,6 +227,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			})
 
 		case "mining.subscribe":
+			b := s.activeBackend()
 			en1, en2sz := b.Extranonce()
 			resp := map[string]interface{}{
 				"id": rawOrNull(msg.ID),
@@ -110,6 +245,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			}
 
 		case "mining.authorize":
+			b := s.activeBackend()
 			var params []string
 			_ = json.Unmarshal(msg.Params, &params)
 			worker := ""
@@ -171,6 +307,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			s.send(map[string]interface{}{"id": rawOrNull(msg.ID), "result": true, "error": nil})
 
 		case "mining.submit":
+			b := s.activeBackend()
 			// Route the submit to the backend that issued this job, not merely the
 			// active one: after a coin switch, work returned for the previous coin
 			// must still reach it. Falls back to the active backend if the job has
@@ -193,7 +330,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			}
 
 		default:
-			b.SendRaw(line)
+			s.activeBackend().SendRaw(line)
 		}
 	}
 }
