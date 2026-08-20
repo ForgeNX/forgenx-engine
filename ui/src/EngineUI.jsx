@@ -288,7 +288,15 @@ function CoinCard({ symbol, engineData, nodeData, engineOnline, miners }) {
 // ── Dashboard tab ────────────────────────────────────────────────────────────
 function EngineDashboard({ stats, miners, loading, engineOnline, nodes, blockTotals }) {
   const minerList = Object.values(miners).flat()
-  const totalMiners = minerList.length
+  // Count distinct physical miners, not sessions. A miner bonded to several coins
+  // through Nexus Mesh appears once per coin in the list below — one active, the
+  // rest warm standbys reporting no hashrate — and each authorizes as
+  // <coin-address>.Name, so the suffix is what identifies the hardware.
+  const totalMiners = new Set(
+    minerList
+      .map(m => (m.worker_name ?? m.name ?? m.worker ?? "").split(".").pop())
+      .filter(Boolean)
+  ).size
   const totalHashrate = minerList.reduce((sum, m) => sum + ((m.hashrate_15m ?? m.hashrate_5m ?? m.hashrate_1m ?? m.hashrate ?? 0) * 1e12), 0)
   const totalHashrate5m = minerList.reduce((sum, m) => sum + ((m.hashrate_5m ?? m.hashrate_1m ?? m.hashrate ?? 0) * 1e12), 0)
   const coins = stats?.coins ?? {}
