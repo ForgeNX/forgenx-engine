@@ -1,3 +1,8 @@
+// Standalone ForgeNX Engine app — served from the engine container at /app/static.
+// Has Logs and Info tabs the embedded version does not; tab bar lives in ./main.jsx.
+// Build and release with ~/forgenx-engine/release-ui.sh. NOT the same file as
+// forgenx-ui/src/pages/EngineUI.jsx, which is the panel embedded in the ForgeNX page.
+
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Zap, Users, BarChart2, Clock, Box, Cpu, Wifi, WifiOff, RefreshCw, Server, Hash, Globe, Package, Tag, GitBranch, User, ExternalLink, Headphones, Play, Square, RotateCcw, Download, Copy, Check, ChevronDown } from "lucide-react"
 
