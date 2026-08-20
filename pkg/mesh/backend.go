@@ -66,6 +66,12 @@ type Backend struct {
 	// only rolls bits the coin will accept.
 	versionMask string
 
+	// resolve re-reads the coin's endpoint before each reconnect attempt. A coin
+	// that was stopped may come back on a different port, and one that was never
+	// running when the miner bonded has no address at all until it starts, so the
+	// address cannot be fixed at construction.
+	resolve func() (addr string, payout string, running bool)
+
 	onMessage func(line []byte)
 
 	// onDead, if set, is called once when Run() exits. The relay uses it to tear
@@ -318,6 +324,24 @@ func (b *Backend) Reconnect(stop func() bool) {
 			return
 		}
 		if !b.Alive() {
+			b.mu.Lock()
+			resolve := b.resolve
+			b.mu.Unlock()
+			if resolve != nil {
+				addr, payout, running := resolve()
+				if !running || addr == "" {
+					// Coin still down, or not yet started. Keep waiting rather than
+					// dialling an address that is not listening.
+					delay = nextDelay(delay)
+					continue
+				}
+				b.mu.Lock()
+				b.Addr = addr
+				if payout != "" {
+					b.Payout = payout
+				}
+				b.mu.Unlock()
+			}
 			b.rearmFirstJob()
 			if err := b.Connect(); err != nil {
 				b.logger.Debug("[nexus] backend %s redial failed: %v", b.Symbol, err)
@@ -364,6 +388,24 @@ func (b *Backend) currentWorker() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.Worker
+}
+
+// markDead puts a backend into the state Run leaves it in when a connection ends,
+// without having had a connection at all. Used when a coin is configured but not
+// serving at bond time: the backend joins the session as a dead one its reconnect
+// loop will bring up, rather than being left out and never watched for.
+func (b *Backend) markDead() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.dead = true
+}
+
+// SetResolver installs the callback Reconnect uses to find the coin's current
+// endpoint. Without one, Reconnect redials the address the backend was built with.
+func (b *Backend) SetResolver(f func() (string, string, bool)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.resolve = f
 }
 
 // signalFirstJob marks that this connection has produced a job. Safe to call on

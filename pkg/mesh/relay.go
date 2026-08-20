@@ -137,7 +137,15 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	// the active one's messages reach the miner. Jobs are registered as they are
 	// forwarded, not as they arrive, so the registry only holds jobs the miner has
 	// actually been given and could submit against.
-	active := backends[0]
+	// The highest-priority coin that is actually serving becomes active. Coins can
+	// now be bonded dead — configured but not running when the miner connected — so
+	// the first entry is not necessarily usable.
+	active := firstAlive(backends, nil)
+	if active == nil {
+		m.logger.Warn("[nexus] %s: no bonded coin is serving; closing so the miner retries", s.id)
+		s.Close()
+		return
+	}
 	s.setActive(active)
 
 	for _, b := range backends {

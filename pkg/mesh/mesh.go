@@ -94,9 +94,13 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 			m.logger.Warn("[nexus] %s: coin %s not found; skipping", id, symbol)
 			continue
 		}
+		// A coin that is configured but not currently serving is bonded dead rather
+		// than skipped: its reconnect loop re-resolves and dials until it comes back,
+		// at which point failback can move the miner onto it. Skipping instead left a
+		// miner that connected during an outage permanently on its fallback, since a
+		// coin absent at bond time was never watched for.
 		if !running {
-			m.logger.Warn("[nexus] %s: coin %s V1 stratum not running; skipping", id, symbol)
-			continue
+			m.logger.Info("[nexus] %s: coin %s not serving yet; bonding dead and watching", id, symbol)
 		}
 		if payout == "" {
 			m.logger.Warn("[nexus] %s: coin %s has no payout configured; skipping", id, symbol)
@@ -104,9 +108,22 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 		}
 		backendAddr := fmt.Sprintf("%s:%d", host, port)
 		b := NewBackend(symbol, backendAddr, payout, "", m.logger)
-		if err := b.Connect(); err != nil {
-			m.logger.Warn("[nexus] %s: backend %s connect failed: %v", id, symbol, err)
-			continue
+		sym := symbol
+		b.SetResolver(func() (string, string, bool) {
+			h, p, pay, run, ok := m.opts.Resolve(sym)
+			if !ok {
+				return "", "", false
+			}
+			return fmt.Sprintf("%s:%d", h, p), pay, run
+		})
+		if !running {
+			b.markDead()
+		} else if err := b.Connect(); err != nil {
+			// Same treatment as a coin that is not serving: the endpoint is known, the
+			// dial failed, so let the reconnect loop keep trying rather than dropping
+			// the coin for the life of the session.
+			m.logger.Info("[nexus] %s: backend %s connect failed (%v); bonding dead and watching", id, symbol, err)
+			b.markDead()
 		}
 		backends = append(backends, b)
 	}
@@ -119,9 +136,13 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 
 	symbols := make([]string, 0, len(backends))
 	for _, b := range backends {
-		symbols = append(symbols, b.Symbol)
+		sym := b.Symbol
+		if !b.Alive() {
+			sym += "(down)"
+		}
+		symbols = append(symbols, sym)
 	}
-	m.logger.Info("[nexus] %s: miner bonded to %v (active=%s)", id, symbols, backends[0].Symbol)
+	m.logger.Info("[nexus] %s: miner bonded to %v", id, symbols)
 
 	m.runMiner(s, backends)
 }
