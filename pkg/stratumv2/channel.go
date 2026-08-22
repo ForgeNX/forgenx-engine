@@ -88,6 +88,13 @@ type Channel struct {
 
 	// Job tracking
 	currentJobID uint32 // the most recent job sent to this channel
+
+	// activePrevHash is the previous-block hash this channel is currently mining
+	// on, recorded when a SetNewPrevHash is sent for it. A template arriving on
+	// the same prev-hash is a mid-block refresh — new transactions, same block
+	// being built — so the miner needs the job but not another prev-hash it
+	// already has. Only a change means staging a future job and activating it.
+	activePrevHash [32]byte
 	// staleJobIDs tracks the last N job IDs so we can detect stale shares.
 	// SV2 spec says servers MUST accept shares for at least the last job.
 	staleJobIDs [2]uint32
@@ -123,8 +130,8 @@ type Channel struct {
 	bestRatioNetDiff   float64   // network difficulty at that moment
 	bestRatioHeight    uint32    // block height of that job
 	bestRatioTime      time.Time // when it was recorded
-	sharesRejected uint64
-	totalDiff      float64
+	sharesRejected     uint64
+	totalDiff          float64
 
 	// Closed flag.
 	closed int32 // atomic; 1 = channel has been closed
@@ -320,6 +327,20 @@ func (c *Channel) SetCurrentJob(jobID uint32) {
 	c.staleJobIDs[1] = c.staleJobIDs[0]
 	c.staleJobIDs[0] = c.currentJobID
 	c.currentJobID = jobID
+}
+
+// ActivatePrevHash reports whether ph differs from the prev-hash this channel is
+// already mining on, recording it as active when it does. Test and set happen
+// under one lock so concurrent broadcasts cannot both decide they are the one
+// introducing a new block.
+func (c *Channel) ActivatePrevHash(ph [32]byte) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.activePrevHash == ph {
+		return false
+	}
+	c.activePrevHash = ph
+	return true
 }
 
 // IsJobValid returns true if jobID is the current job or one of the stale

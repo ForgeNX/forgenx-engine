@@ -79,7 +79,10 @@ type JobTemplate struct {
 	NBits        uint32
 	NTime        uint32 // current time at template creation; miners may use ≥ this
 	Height       uint32
-	IsFutureJob  bool // true when we send before SetNewPrevHash (pre-staging)
+	// IsFutureJob is vestigial: whether a job is staged is now decided per channel
+	// at send time (Channel.ActivatePrevHash) and passed explicitly, since the same
+	// template can be staged for one channel and immediate for another.
+	IsFutureJob bool
 	// SourceTemplate carries the ORIGINAL *noderpc.BlockTemplate this job was
 	// built from (stored as any to avoid a stratumv2→noderpc import). Block
 	// submission needs the exact template's transaction list — using the
@@ -500,9 +503,10 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
 	} else {
 		initTmpl := *tmpl // copy so we don't mutate the cached template
-		initTmpl.IsFutureJob = false
-		// Job first, then the prev-hash that activates it — see UpdateTemplate.
-		if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
+		// Stage the job, then activate it with the prev-hash — see UpdateTemplate.
+		// A new channel has no active prev-hash, so this always stages.
+		initFuture := ch.ActivatePrevHash(initTmpl.PrevHash)
+		if err := s.sendJobToChannel(ch, &initTmpl, initFuture); err != nil {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
 		} else if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
@@ -591,9 +595,10 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 		s.logf("[sv2] session %s: no template available yet for initial job", s.id)
 	} else {
 		initTmpl := *tmpl
-		initTmpl.IsFutureJob = false
-		// Job first, then the prev-hash that activates it — see UpdateTemplate.
-		if err := s.sendExtendedJobToChannel(ch, &initTmpl); err != nil {
+		// Stage the job, then activate it with the prev-hash — see UpdateTemplate.
+		// A new channel has no active prev-hash, so this always stages.
+		initFuture := ch.ActivatePrevHash(initTmpl.PrevHash)
+		if err := s.sendExtendedJobToChannel(ch, &initTmpl, initFuture); err != nil {
 			s.logf("[sv2] session %s: initial extended job send failed: %v", s.id, err)
 		} else if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
@@ -913,22 +918,31 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 			}
 		}
 
-		// The job goes first, then the SetNewPrevHash that activates it: the
-		// prev-hash names a job_id, so a client that validates the reference
-		// rejects it outright when the job has not been sent yet ("job ID N not
-		// found" on Braiins OS+). Permissive firmware accepts either order, which
-		// is why the reverse went unnoticed.
+		// A template on a new prev-hash starts a new block: the job is staged
+		// first with min_ntime unset, then SetNewPrevHash names its job_id and
+		// activates it. That is the order the protocol defines, and a client that
+		// validates the reference needs the job to exist before it is named.
+		//
+		// A template on the SAME prev-hash is a mid-block refresh — new
+		// transactions, same block being built — so the miner gets an immediately
+		// active job and no prev-hash, which it already has and which would say
+		// nothing new.
+		newBlock := ch.ActivatePrevHash(tmpl.PrevHash)
+
 		if ch.IsExtended() {
-			if err := s.sendExtendedJobToChannel(ch, tmpl); err != nil {
+			if err := s.sendExtendedJobToChannel(ch, tmpl, newBlock); err != nil {
 				s.logf("[sv2] session %s ch=%d: sendExtendedJob error: %v", s.id, ch.ID(), err)
 				continue
 			}
-		} else if err := s.sendJobToChannel(ch, tmpl); err != nil {
+		} else if err := s.sendJobToChannel(ch, tmpl, newBlock); err != nil {
 			s.logf("[sv2] session %s ch=%d: sendJob error: %v", s.id, ch.ID(), err)
 			continue
 		}
-		if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
-			s.logf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
+
+		if newBlock {
+			if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
+				s.logf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
+			}
 		}
 	}
 	// A successful job broadcast proves the peer is alive; extend the read
@@ -944,14 +958,12 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 // dispatch but without rebuilding the coinbase (the template is unchanged).
 func (s *Session) sendJobForKeepalive(ch *Channel, tmpl *JobTemplate) error {
 	// Job before prev-hash — see UpdateTemplate.
+	// A keepalive re-sends work the miner already has, on the prev-hash it is
+	// already mining: an active job, and no prev-hash to repeat.
 	if ch.IsExtended() {
-		if err := s.sendExtendedJobToChannel(ch, tmpl); err != nil {
-			return err
-		}
-	} else if err := s.sendJobToChannel(ch, tmpl); err != nil {
-		return err
+		return s.sendExtendedJobToChannel(ch, tmpl, false)
 	}
-	return s.sendPrevHashToChannel(ch, tmpl)
+	return s.sendJobToChannel(ch, tmpl, false)
 }
 
 // channelMerkleRoot computes the final 32-byte merkle root for a channel's
@@ -994,11 +1006,11 @@ func extendedChannelMerkleRoot(ch *Channel, tmpl *JobTemplate, minerExtranonce [
 // but sends the raw coinbase halves + merkle path (NewExtendedMiningJob)
 // instead of a precomputed merkle root (NewMiningJob), since extended
 // clients assemble their own coinbase.
-func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error {
+func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate, future bool) error {
 	ch.SetCurrentJob(tmpl.JobID)
 
 	if _, hasPending := ch.PendingDiff(); hasPending {
-		shouldFlush := !ch.VarDiffOnNewBlock() || !tmpl.IsFutureJob
+		shouldFlush := !ch.VarDiffOnNewBlock() || !future
 		if shouldFlush {
 			targetBytes, newDiff, flushed := ch.FlushPendingDiff()
 			if flushed {
@@ -1031,7 +1043,7 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error
 	payload, err := EncodeNewExtendedMiningJob(
 		ch.ID(),
 		tmpl.JobID,
-		!tmpl.IsFutureJob,
+		!future, // minNtimeSet: a staged job carries no min_ntime
 		tmpl.NTime,
 		tmpl.Version,
 		true, // versionRollingAllowed — NerdQAxe++ and SV2 devices expect this
@@ -1071,17 +1083,17 @@ func (s *Session) sendPrevHashToChannel(ch *Channel, tmpl *JobTemplate) error {
 // the miner's first shares on this job are already at the correct target.
 //
 // When VarDiffOnNewBlock is true (the BCH default), the flush only happens
-// on clean/active jobs (tmpl.IsFutureJob==false), not on pre-staged future
+// on clean/active jobs (future==false), not on pre-staged future
 // jobs, to avoid flushing before the block boundary where it would be
 // meaningless.
-func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
+func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate, future bool) error {
 	ch.SetCurrentJob(tmpl.JobID)
 
 	// Flush pending vardiff before sending the job, but only when appropriate:
 	// - VarDiffOnNewBlock=false: always flush immediately (V1's "mid-block" mode)
 	// - VarDiffOnNewBlock=true: only flush on active/clean jobs (new block boundary)
 	if _, hasPending := ch.PendingDiff(); hasPending {
-		shouldFlush := !ch.VarDiffOnNewBlock() || !tmpl.IsFutureJob
+		shouldFlush := !ch.VarDiffOnNewBlock() || !future
 		if shouldFlush {
 			targetBytes, newDiff, flushed := ch.FlushPendingDiff()
 			if flushed {
@@ -1102,12 +1114,12 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 
 	// minNtimeSet=false: per spec, the FIRST NewMiningJob after a channel
 	// opens (or any future-staged job sent before its matching
-	// SetNewPrevHash) must have min_ntime unset. tmpl.IsFutureJob already
+	// SetNewPrevHash) must have min_ntime unset. The caller's future flag
 	// tracks this distinction from the engine side.
 	payload := EncodeNewMiningJob(
 		ch.ID(),
 		tmpl.JobID,
-		!tmpl.IsFutureJob, // minNtimeSet: true once this job is actually active
+		!future, // minNtimeSet: a staged job carries no min_ntime
 		tmpl.NTime,
 		tmpl.Version,
 		merkleRoot,
