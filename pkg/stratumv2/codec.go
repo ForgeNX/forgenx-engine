@@ -62,6 +62,13 @@ const (
 	// ExtensionTypeMining is the extension_type for the Mining Protocol.
 	ExtensionTypeMining uint16 = 0x0000
 
+	// ChannelMsgBit is the extension_type's high bit, set on frames addressed to a
+	// specific mining channel rather than to the connection as a whole. Strict
+	// clients (Braiins OS+) look the message type up in a different table depending
+	// on it and reject channel messages sent without it; more permissive firmware
+	// (Bitaxe, NerdQAxe++) ignores it, which is why it went unnoticed.
+	ChannelMsgBit uint16 = 0x8000
+
 	// sv2FrameChunkSize and encryptedFrameHeaderSize per framing-sv2/src/lib.rs.
 	sv2FrameChunkSize        = 65535
 	encryptedFrameHeaderSize = frameHeaderLen + aeadMACLen    // 22
@@ -98,6 +105,15 @@ type Codec struct {
 	writeMu sync.Mutex
 }
 
+// WriteChannelFrame writes a frame addressed to a mining channel, setting the
+// channel bit in the extension type. Use it for any message carrying a channel_id
+// that operates on an already-open channel — jobs, prev-hash, target, and share
+// responses. Connection-level messages (SetupConnection, and the channel-open
+// responses that establish a channel rather than address one) use WriteFrame.
+func (c *Codec) WriteChannelFrame(msgType uint8, payload []byte) error {
+	return c.WriteFrame(ExtensionTypeMining|ChannelMsgBit, msgType, payload)
+}
+
 // NewCodec wraps conn in a SV2 frame codec with the given transport-phase
 // ciphers. send/recv come from PerformSV2ServerHandshake's return value.
 func NewCodec(conn net.Conn, send, recv *sv2TransportCipher) *Codec {
@@ -124,7 +140,9 @@ func (c *Codec) ReadFrame() (*Frame, error) {
 		return nil, fmt.Errorf("sv2 decrypted header: expected %d bytes, got %d", frameHeaderLen, len(hdr))
 	}
 
-	extType := binary.LittleEndian.Uint16(hdr[0:2])
+	// Mask off the channel bit: it tells us how the peer addressed the frame, not
+	// which extension it belongs to, and dispatch keys on the message type alone.
+	extType := binary.LittleEndian.Uint16(hdr[0:2]) &^ ChannelMsgBit
 	msgType := hdr[2]
 	payLen := uint32(hdr[3]) | uint32(hdr[4])<<8 | uint32(hdr[5])<<16
 

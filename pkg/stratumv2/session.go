@@ -501,10 +501,11 @@ func (s *Session) handleOpenChannel(payload []byte) error {
 	} else {
 		initTmpl := *tmpl // copy so we don't mutate the cached template
 		initTmpl.IsFutureJob = false
-		if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
-			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
-		} else if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
+		// Job first, then the prev-hash that activates it — see UpdateTemplate.
+		if err := s.sendJobToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial job send failed: %v", s.id, err)
+		} else if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
+			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
 		} else {
 			s.logf("[sv2] session %s: initial job sent successfully", s.id)
 			s.templateMu.Lock()
@@ -591,10 +592,11 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 	} else {
 		initTmpl := *tmpl
 		initTmpl.IsFutureJob = false
-		if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
-			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
-		} else if err := s.sendExtendedJobToChannel(ch, &initTmpl); err != nil {
+		// Job first, then the prev-hash that activates it — see UpdateTemplate.
+		if err := s.sendExtendedJobToChannel(ch, &initTmpl); err != nil {
 			s.logf("[sv2] session %s: initial extended job send failed: %v", s.id, err)
+		} else if err := s.sendPrevHashToChannel(ch, &initTmpl); err != nil {
+			s.logf("[sv2] session %s: initial prevhash send failed: %v", s.id, err)
 		} else {
 			s.logf("[sv2] session %s: initial extended job sent successfully", s.id)
 			s.templateMu.Lock()
@@ -619,7 +621,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 	if !ok {
 		// Channel doesn't exist — send error and continue.
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "unknown-channel")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 	}
 
 	// Validate job ID.
@@ -640,7 +642,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 			s.onStale(ch.UserIdentity())
 		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 	}
 
 processShare:
@@ -656,7 +658,7 @@ processShare:
 			s.onStale(ch.UserIdentity())
 		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 	}
 
 	// Validate against THIS channel's fixed merkle root — Standard Channels
@@ -702,7 +704,7 @@ processShare:
 				s.onRejected(ch.UserIdentity())
 			}
 			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
-			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+			return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 		}
 	}
 
@@ -722,7 +724,7 @@ processShare:
 	}
 
 	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
-	return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesSuccess, resp)
+	return s.codec.WriteChannelFrame(MsgSubmitSharesSuccess, resp)
 }
 
 // handleSubmitSharesExtended processes a SubmitSharesExtended message.
@@ -741,7 +743,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 	s.mu.RUnlock()
 	if !ok {
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "unknown-channel")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 	}
 
 	if !ch.IsJobValid(share.JobID) {
@@ -759,7 +761,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 			s.onStale(ch.UserIdentity())
 		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 	}
 
 processExtendedShare:
@@ -774,7 +776,7 @@ processExtendedShare:
 			s.onStale(ch.UserIdentity())
 		}
 		resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "stale-share")
-		return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+		return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 	}
 
 	// Extended channels: fold the miner's OWN extranonce2 into the coinbase
@@ -818,7 +820,7 @@ processExtendedShare:
 				s.onRejected(ch.UserIdentity())
 			}
 			resp, _ := EncodeSubmitSharesError(share.ChannelID, share.SequenceNum, "low-difficulty")
-			return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesError, resp)
+			return s.codec.WriteChannelFrame(MsgSubmitSharesError, resp)
 		}
 	}
 
@@ -843,7 +845,7 @@ processExtendedShare:
 	}
 
 	resp := EncodeSubmitSharesSuccess(share.ChannelID, lastSeq, accepted, sumDiff)
-	return s.codec.WriteFrame(ExtensionTypeMining, MsgSubmitSharesSuccess, resp)
+	return s.codec.WriteChannelFrame(MsgSubmitSharesSuccess, resp)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -911,18 +913,22 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 			}
 		}
 
-		// SetNewPrevHash first, then NewMiningJob (or NewExtendedMiningJob
-		// for extended channels).
-		if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
-			s.logf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
-			continue
-		}
+		// The job goes first, then the SetNewPrevHash that activates it: the
+		// prev-hash names a job_id, so a client that validates the reference
+		// rejects it outright when the job has not been sent yet ("job ID N not
+		// found" on Braiins OS+). Permissive firmware accepts either order, which
+		// is why the reverse went unnoticed.
 		if ch.IsExtended() {
 			if err := s.sendExtendedJobToChannel(ch, tmpl); err != nil {
 				s.logf("[sv2] session %s ch=%d: sendExtendedJob error: %v", s.id, ch.ID(), err)
+				continue
 			}
 		} else if err := s.sendJobToChannel(ch, tmpl); err != nil {
 			s.logf("[sv2] session %s ch=%d: sendJob error: %v", s.id, ch.ID(), err)
+			continue
+		}
+		if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
+			s.logf("[sv2] session %s ch=%d: sendPrevHash error: %v", s.id, ch.ID(), err)
 		}
 	}
 	// A successful job broadcast proves the peer is alive; extend the read
@@ -937,13 +943,15 @@ func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
 // keepaliveLoop to keep a quiet connection warm. Mirrors UpdateTemplate's per-channel
 // dispatch but without rebuilding the coinbase (the template is unchanged).
 func (s *Session) sendJobForKeepalive(ch *Channel, tmpl *JobTemplate) error {
-	if err := s.sendPrevHashToChannel(ch, tmpl); err != nil {
+	// Job before prev-hash — see UpdateTemplate.
+	if ch.IsExtended() {
+		if err := s.sendExtendedJobToChannel(ch, tmpl); err != nil {
+			return err
+		}
+	} else if err := s.sendJobToChannel(ch, tmpl); err != nil {
 		return err
 	}
-	if ch.IsExtended() {
-		return s.sendExtendedJobToChannel(ch, tmpl)
-	}
-	return s.sendJobToChannel(ch, tmpl)
+	return s.sendPrevHashToChannel(ch, tmpl)
 }
 
 // channelMerkleRoot computes the final 32-byte merkle root for a channel's
@@ -998,7 +1006,7 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error
 				if err != nil {
 					return fmt.Errorf("encode SetTarget: %w", err)
 				}
-				if err := s.codec.WriteFrame(ExtensionTypeMining, MsgSetTarget, setTargetPayload); err != nil {
+				if err := s.codec.WriteChannelFrame(MsgSetTarget, setTargetPayload); err != nil {
 					return fmt.Errorf("send SetTarget: %w", err)
 				}
 				s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty updated to %.0f (sent with new job)", s.id, ch.ID(), ch.UserIdentity(), newDiff)
@@ -1034,7 +1042,7 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate) error
 	if err != nil {
 		return fmt.Errorf("encode NewExtendedMiningJob: %w", err)
 	}
-	return s.codec.WriteFrame(ExtensionTypeMining, MsgNewExtendedMiningJob, payload)
+	return s.codec.WriteChannelFrame(MsgNewExtendedMiningJob, payload)
 }
 
 // sendPrevHashToChannel sends SetNewPrevHash to a single channel.
@@ -1046,7 +1054,7 @@ func (s *Session) sendPrevHashToChannel(ch *Channel, tmpl *JobTemplate) error {
 		tmpl.NTime,
 		tmpl.NBits,
 	)
-	return s.codec.WriteFrame(ExtensionTypeMining, MsgSetNewPrevHash, payload)
+	return s.codec.WriteChannelFrame(MsgSetNewPrevHash, payload)
 }
 
 // sendJobToChannel sends NewMiningJob to a single channel and records the job ID.
@@ -1081,7 +1089,7 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 				if err != nil {
 					return fmt.Errorf("encode SetTarget: %w", err)
 				}
-				if err := s.codec.WriteFrame(ExtensionTypeMining, MsgSetTarget, setTargetPayload); err != nil {
+				if err := s.codec.WriteChannelFrame(MsgSetTarget, setTargetPayload); err != nil {
 					return fmt.Errorf("send SetTarget: %w", err)
 				}
 				s.logf("[sv2] session %s ch=%d: %s VARDIFF: Difficulty updated to %.0f (sent with new job)", s.id, ch.ID(), ch.UserIdentity(), newDiff)
@@ -1104,7 +1112,7 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate) error {
 		tmpl.Version,
 		merkleRoot,
 	)
-	return s.codec.WriteFrame(ExtensionTypeMining, MsgNewMiningJob, payload)
+	return s.codec.WriteChannelFrame(MsgNewMiningJob, payload)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
