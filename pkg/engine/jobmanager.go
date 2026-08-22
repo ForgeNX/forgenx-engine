@@ -118,15 +118,20 @@ func NewJobManager(cfg JobManagerConfig) *JobManager {
 	}
 
 	jm := &JobManager{
-		coin:             cfg.Coin,
-		rpcClient:        cfg.RPCClient,
-		address:          cfg.Address,
-		network:          cfg.Network,
-		coinbaseText:     cfg.CoinbaseText,
-		extraNonce1Size:  en1Size,
-		extraNonce2Size:  en2Size,
-		pollInterval:     cfg.PollInterval,
-		jobs:             make(map[string]*JobData),
+		coin:            cfg.Coin,
+		rpcClient:       cfg.RPCClient,
+		address:         cfg.Address,
+		network:         cfg.Network,
+		coinbaseText:    cfg.CoinbaseText,
+		extraNonce1Size: en1Size,
+		extraNonce2Size: en2Size,
+		pollInterval:    cfg.PollInterval,
+		jobs:            make(map[string]*JobData),
+		// Seeded from the clock so job IDs do not repeat across restarts — see
+		// stratumv2.NewServer for why reuse is worse than it looks: a share for a
+		// pre-restart job finds the reissued ID, is validated against the wrong
+		// template, and is rejected as low-difficulty instead of stale.
+		jobCounter:       uint64(time.Now().Unix()),
 		maxJobHistory:    20, // keep in sync with stratumv2.maxTemplateHistory
 		soloMode:         cfg.SoloMode,
 		donationScript:   cfg.DonationScript,

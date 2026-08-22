@@ -208,6 +208,13 @@ func NewServer(cfg Config) (*Server, error) {
 		cfg:      cfg,
 		sessions: make(map[string]*Session),
 		quit:     make(chan struct{}),
+		// Seed from the clock so job IDs do not repeat across restarts. Starting
+		// again from zero means a miner that reconnects still holding a pre-restart
+		// job submits against an ID the new server has already reissued for
+		// different work: the lookup succeeds, the share is validated against the
+		// wrong template, and it is rejected as low-difficulty with shareDiff=0
+		// rather than recognised as the stale share it is.
+		jobCounter: uint32(time.Now().Unix()),
 	}, nil
 }
 
