@@ -978,12 +978,13 @@ func (s *Session) sendJobForKeepalive(ch *Channel, tmpl *JobTemplate) error {
 // number, which both contradicts the spec and would have produced a
 // DIFFERENT merkle root per share — meaning the job sent to the miner and
 // the root used to validate its shares could never have matched.
+// tmpl must be the per-job copy stored by sendJobToChannel, which already holds
+// the channel's resolved coinbase. Reading ch.OwnCoinbase() here instead would
+// use whatever coinbase the channel holds NOW, not the one this job was built
+// with — so a share for an earlier job would be validated against a later job's
+// coinbase.
 func channelMerkleRoot(ch *Channel, tmpl *JobTemplate) [32]byte {
-	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
-	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
-		coinb1, coinb2 = ownCb1, ownCb2
-	}
-	coinbaseTxHash := HashCoinbaseTx(coinb1, ch.Extranonce1Bytes(), nil, coinb2)
+	coinbaseTxHash := HashCoinbaseTx(tmpl.Coinbase1, ch.Extranonce1Bytes(), nil, tmpl.Coinbase2)
 	return ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
 }
 
@@ -1110,7 +1111,24 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate, future bool) 
 		// else: will flush on next clean job (VarDiffOnNewBlock=true, future job)
 	}
 
-	merkleRoot := channelMerkleRoot(ch, tmpl)
+	// Resolve the channel's coinbase into a per-job copy, as the extended path
+	// already does. The override lives on the Channel and is overwritten on every
+	// template, so a share arriving for an earlier job would otherwise be validated
+	// against a later job's coinbase — the merkle root would not match what the
+	// miner mined, and the share is rejected with shareDiff=0. Storing it per job
+	// also gives block submission the exact coinbase the share was validated with.
+	coinb1, coinb2 := tmpl.Coinbase1, tmpl.Coinbase2
+	if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+		coinb1, coinb2 = ownCb1, ownCb2
+	}
+	tmplCopy := *tmpl
+	tmplCopy.Coinbase1 = coinb1
+	tmplCopy.Coinbase2 = coinb2
+	s.templateMu.Lock()
+	s.templates[tmpl.JobID] = &tmplCopy
+	s.templateMu.Unlock()
+
+	merkleRoot := channelMerkleRoot(ch, &tmplCopy)
 
 	// minNtimeSet=false: per spec, the FIRST NewMiningJob after a channel
 	// opens (or any future-staged job sent before its matching

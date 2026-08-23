@@ -829,19 +829,12 @@ func submitSV2Block(
 	//   coinbase into the stored template, and extendedChannelMerkleRoot hashes
 	//   tmpl.Coinbase1/2 directly. Use them as they are.
 	//
-	//   Standard channels — nothing writes a resolved template; channelMerkleRoot
-	//   applies the channel's OwnCoinbase() override at validation time. Without
-	//   the same override here the block is built from the generic template
-	//   coinbase while its header commits to the channel's, so the body does not
-	//   match the merkle root and the node rejects the whole block with "Block
-	//   decode failed". Every SV2 block found on a standard channel was lost this
-	//   way; V1 was unaffected because it submits from the job's own template.
+	//   Standard channels — sendJobToChannel does the same, so the coinbase here is
+	//   the one channelMerkleRoot validated against. Before that, submission read
+	//   the generic template coinbase while the header committed to the channel's,
+	//   and every block found on a standard channel was rejected with "Block decode
+	//   failed".
 	coinb1, coinb2 := job.Coinbase1, job.Coinbase2
-	if !ch.IsExtended() {
-		if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
-			coinb1, coinb2 = ownCb1, ownCb2
-		}
-	}
 
 	// Diagnostic: two blocks have been lost to "Block decode failed" with a
 	// coinbase whose second half was absent, while the share that found them
