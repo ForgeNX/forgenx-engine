@@ -326,7 +326,7 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			"chain":                  chain.Chain,
 			"blocks":                 chain.Blocks,
 			"headers":                chain.Headers,
-			"sync_pct":               syncPct(progress),
+			"sync_pct":               syncPct(progress, chain.Blocks == chain.Headers),
 			"synced":                 chain.Blocks == chain.Headers,
 			"initial_block_download": chain.InitialBlockDownload,
 			"best_block_hash":        chain.BestBlockHash,
@@ -394,7 +394,7 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 		"chain":                  chain.Chain,
 		"blocks":                 chain.Blocks,
 		"headers":                chain.Headers,
-		"sync_pct":               syncPct(chain.VerificationProgress),
+		"sync_pct":               syncPct(chain.VerificationProgress, chain.Blocks == chain.Headers),
 		"synced":                 chain.Blocks == chain.Headers,
 		"pruned":                 chain.Pruned,
 		"prune_height":           chain.PruneHeight,
@@ -453,8 +453,13 @@ func round2(f float64) float64 {
 // the UI claim a sync is complete while the pool is still gated on the node
 // catching up — the contradiction that hid a fleet mining nine blocks behind the
 // tip after a restart.
-func syncPct(progress float64) float64 {
-	if progress >= 1 {
+func syncPct(progress float64, synced bool) float64 {
+	// A caught-up node reports 100 regardless of what VerificationProgress says:
+	// Bitcoin-family nodes approach 1.0 asymptotically and rarely reach it exactly,
+	// so keying the display on progress alone leaves a fully synced node stuck at
+	// 99.99 forever. Everything short of caught-up truncates, never rounds, so
+	// 0.999998 shows as 99.99 rather than claiming a sync that has not finished.
+	if synced {
 		return 100
 	}
 	return math.Floor(progress*10000) / 100
