@@ -1039,6 +1039,11 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate, futur
 	s.templateMu.Lock()
 	s.templates[tmpl.JobID] = &tmplCopy
 	s.templateMu.Unlock()
+	// Paired with the block-assembly log in coinrunner: if a lost block shows a
+	// shorter coinbase than what was stored here for the same job, something
+	// replaced the resolved copy between validation and submission.
+	s.logf("[sv2] session %s ch=%d: stored resolved template job=%d coinb1=%dB coinb2=%dB",
+		s.id, ch.ID(), tmpl.JobID, len(coinb1), len(coinb2))
 
 	payload, err := EncodeNewExtendedMiningJob(
 		ch.ID(),

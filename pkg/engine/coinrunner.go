@@ -822,12 +822,34 @@ func submitSV2Block(
 	result *stratumv2.ShareResult,
 	symbol string,
 ) {
-	// Use job.Coinbase1/2 directly — these ARE the channel-specific coinbase
-	// set in sendExtendedJobToChannel, and are EXACTLY what validation hashed
-	// via extendedChannelMerkleRoot(). Applying an OwnCoinbase() override here
-	// (as an earlier version did) risks diverging from the validated merkle
-	// root, producing a block whose body doesn't match its header.
+	// Assemble from the SAME coinbase the share was validated against, which
+	// differs by channel type:
+	//
+	//   Extended channels — sendExtendedJobToChannel writes the channel-specific
+	//   coinbase into the stored template, and extendedChannelMerkleRoot hashes
+	//   tmpl.Coinbase1/2 directly. Use them as they are.
+	//
+	//   Standard channels — nothing writes a resolved template; channelMerkleRoot
+	//   applies the channel's OwnCoinbase() override at validation time. Without
+	//   the same override here the block is built from the generic template
+	//   coinbase while its header commits to the channel's, so the body does not
+	//   match the merkle root and the node rejects the whole block with "Block
+	//   decode failed". Every SV2 block found on a standard channel was lost this
+	//   way; V1 was unaffected because it submits from the job's own template.
 	coinb1, coinb2 := job.Coinbase1, job.Coinbase2
+	if !ch.IsExtended() {
+		if ownCb1, ownCb2, ok := ch.OwnCoinbase(); ok {
+			coinb1, coinb2 = ownCb1, ownCb2
+		}
+	}
+
+	// Diagnostic: two blocks have been lost to "Block decode failed" with a
+	// coinbase whose second half was absent, while the share that found them
+	// validated correctly against the same template. Log what submission actually
+	// sees so the next occurrence is not another inference.
+	runner.logger.Info("[%s] SV2 block assembly: job=%d extended=%t coinb1=%dB coinb2=%dB en1=%dB en2=%dB branch=%d",
+		symbol, job.JobID, ch.IsExtended(), len(coinb1), len(coinb2),
+		len(ch.Extranonce1Bytes()), len(extranonce), len(job.MerkleBranch))
 
 	// Reconstruct the EXACT coinbase the miner hashed:
 	//   Coinbase1 + Extranonce1 + minerExtranonce2 + Coinbase2
