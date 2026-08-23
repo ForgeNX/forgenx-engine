@@ -3,6 +3,7 @@ package engine
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,6 +136,12 @@ func loadCoinConfigWithRetry(path string) (*config.CoinConfig, error) {
 }
 
 // configSignature computes a SHA256 hash of all meaningful pool config fields,
+// maxBlocksBehind is how far a node may trail its own headers and still be
+// considered ready to mine on. One or two blocks is ordinary propagation lag and
+// clears within seconds; more than that means the node is genuinely catching up
+// and any work built on its tip is likely already stale.
+const maxBlocksBehind = 2
+
 // excluding runtime-only fields written by the entrypoint (ibd_complete, node_online, enabled).
 func configSignature(cfg *config.CoinConfig) [32]byte {
 	type sig struct {
@@ -183,21 +190,38 @@ func (e *Engine) handleCoinConfig(symbol string, cfg *config.CoinConfig, donatio
 	}
 
 	// Update sync progress
+	// Show progress truncated, not rounded: a node at 0.999998 is NOT finished, and
+	// displaying it as 100% while the pool is still gated makes the UI contradict
+	// itself. Only a node that is actually caught up reports 1.
 	progress := chain.VerificationProgress
-	if progress > 0.999 {
+	if chain.Blocks >= chain.Headers && !chain.InitialBlockDownload {
 		progress = 1
+	} else if progress >= 1 {
+		progress = 0.9999
 	}
 	e.stats.SetSyncProgress(symbol, progress)
 
-	if chain.InitialBlockDownload {
+	// IBD alone is not enough. A node that finished its initial sync long ago
+	// reports InitialBlockDownload=false the moment it restarts, while it still has
+	// to validate whatever blocks it missed — so the pool would start and hand out
+	// work built on a tip the network has already moved past. Any block found in
+	// that window is wasted. Treat a node materially behind its own headers as
+	// still syncing. A gap of one or two is normal during propagation and clears in
+	// seconds, so only a sustained gap counts.
+	behind := chain.Headers - chain.Blocks
+	if chain.InitialBlockDownload || behind > maxBlocksBehind {
+		reason := "IBD"
+		if !chain.InitialBlockDownload {
+			reason = fmt.Sprintf("%d blocks behind headers", behind)
+		}
 		e.runnersMu.RLock()
 		_, exists := e.runners[symbol]
 		e.runnersMu.RUnlock()
 		if exists {
-			e.logger.Info("[%s] node syncing (IBD) — stopping pool", symbol)
+			e.logger.Info("[%s] node syncing (%s) — stopping pool", symbol, reason)
 			e.StopCoin(symbol)
 		} else {
-			e.logger.Info("[%s] node syncing (IBD) — pool not started", symbol)
+			e.logger.Info("[%s] node syncing (%s) — pool not started", symbol, reason)
 		}
 		return
 	}

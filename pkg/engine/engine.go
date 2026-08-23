@@ -326,7 +326,7 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 			"chain":                  chain.Chain,
 			"blocks":                 chain.Blocks,
 			"headers":                chain.Headers,
-			"sync_pct":               round2(progress * 100),
+			"sync_pct":               syncPct(progress),
 			"synced":                 chain.Blocks == chain.Headers,
 			"initial_block_download": chain.InitialBlockDownload,
 			"best_block_hash":        chain.BestBlockHash,
@@ -394,7 +394,7 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 		"chain":                  chain.Chain,
 		"blocks":                 chain.Blocks,
 		"headers":                chain.Headers,
-		"sync_pct":               round2(chain.VerificationProgress * 100),
+		"sync_pct":               syncPct(chain.VerificationProgress),
 		"synced":                 chain.Blocks == chain.Headers,
 		"pruned":                 chain.Pruned,
 		"prune_height":           chain.PruneHeight,
@@ -446,6 +446,18 @@ func (e *Engine) GetNodeStatus(symbol string) (map[string]interface{}, bool) {
 
 func round2(f float64) float64 {
 	return math.Round(f*100) / 100
+}
+
+// syncPct converts verification progress to a percentage, truncated rather than
+// rounded. A node at 0.999998 is not finished, and rounding it to 100.00 makes
+// the UI claim a sync is complete while the pool is still gated on the node
+// catching up — the contradiction that hid a fleet mining nine blocks behind the
+// tip after a restart.
+func syncPct(progress float64) float64 {
+	if progress >= 1 {
+		return 100
+	}
+	return math.Floor(progress*10000) / 100
 }
 
 // GetDonationAddress returns the donation address for a coin symbol and network
