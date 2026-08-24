@@ -588,6 +588,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 			NTimeHex:          evt.JobData.Job.NTime,
 			Height:            uint32(evt.Template.Height),
 			CleanJobs:         evt.JobData.Job.CleanJobs,
+			ExtraNonce2Size:   jobMgr.ExtraNonce2Size(),
 		}
 		tmpl, err := stratumv2.BuildTemplateFromV1Job(src)
 		if err != nil {
@@ -664,6 +665,7 @@ func (cr *CoinRunner) Start() error {
 					NTimeHex:          evt.JobData.Job.NTime,
 					Height:            uint32(evt.Template.Height),
 					CleanJobs:         true,
+					ExtraNonce2Size:   cr.jobMgr.ExtraNonce2Size(),
 				}
 				if sv2Tmpl, err := stratumv2.BuildTemplateFromV1Job(src); err == nil {
 					sv2Tmpl.SourceTemplate = evt.Template
@@ -851,6 +853,15 @@ func submitSV2Block(
 	// the node rejects with "Block decode failed". Must match the coinbase
 	// used by extendedChannelMerkleRoot()/HashCoinbaseTx() during validation.
 	en1 := ch.Extranonce1Bytes()
+
+	// Standard channels supply no extranonce2, but the coinbase reserved space for
+	// one and the scriptSig length counts it. Pad with zeros so the assembled
+	// transaction matches its declared length — and matches what channelMerkleRoot
+	// hashed when the share was validated. Extended channels arrive with the miner's
+	// own extranonce2 and need no padding.
+	if len(extranonce) == 0 && job.ExtraNonce2Size > 0 {
+		extranonce = make([]byte, job.ExtraNonce2Size)
+	}
 	coinbaseTx := make([]byte, 0, len(coinb1)+len(en1)+len(extranonce)+len(coinb2))
 	coinbaseTx = append(coinbaseTx, coinb1...)
 	coinbaseTx = append(coinbaseTx, en1...)

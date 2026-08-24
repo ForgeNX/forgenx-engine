@@ -79,6 +79,12 @@ type JobTemplate struct {
 	NBits        uint32
 	NTime        uint32 // current time at template creation; miners may use ≥ this
 	Height       uint32
+
+	// ExtraNonce2Size is how many bytes the coinbase's scriptSig reserved for a
+	// miner extranonce2. Standard channels have no extranonce2 of their own, but the
+	// space still has to be filled or the transaction is short of its declared
+	// scriptSig length.
+	ExtraNonce2Size int
 	// IsFutureJob is vestigial: whether a job is staged is now decided per channel
 	// at send time (Channel.ActivatePrevHash) and passed explicitly, since the same
 	// template can be staged for one channel and immediate for another.
@@ -984,7 +990,13 @@ func (s *Session) sendJobForKeepalive(ch *Channel, tmpl *JobTemplate) error {
 // with — so a share for an earlier job would be validated against a later job's
 // coinbase.
 func channelMerkleRoot(ch *Channel, tmpl *JobTemplate) [32]byte {
-	coinbaseTxHash := HashCoinbaseTx(tmpl.Coinbase1, ch.Extranonce1Bytes(), nil, tmpl.Coinbase2)
+	// Standard channels have no extranonce2 of their own, but the coinbase's
+	// scriptSig length was built reserving space for one. Passing nil leaves the
+	// transaction short of its own declared length — the node reads the sequence
+	// field as scriptSig, everything after is misaligned, and the block is rejected
+	// with "Block decode failed". Zero-fill the reserved space so the coinbase
+	// matches what it claims to be. Submission pads identically.
+	coinbaseTxHash := HashCoinbaseTx(tmpl.Coinbase1, ch.Extranonce1Bytes(), make([]byte, tmpl.ExtraNonce2Size), tmpl.Coinbase2)
 	return ComputeMerkleRoot(coinbaseTxHash, tmpl.MerkleBranch)
 }
 

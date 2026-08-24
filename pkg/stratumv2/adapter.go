@@ -57,6 +57,13 @@ type V1JobSource struct {
 	NTimeHex          string   // JobData.Job.NTime, 8 hex chars
 	Height            uint32   // template.Height
 	CleanJobs         bool     // JobData.Job.CleanJobs — true on new block tip
+
+	// ExtraNonce2Size is the number of bytes the V1 coinbase reserved for a miner's
+	// extranonce2. The scriptSig length in Coinb1Hex already accounts for it, so a
+	// coinbase assembled without those bytes is short by exactly this many and the
+	// node cannot decode it. Extended channels fill the space with the miner's own
+	// extranonce2; standard channels have none and must pad it.
+	ExtraNonce2Size int
 }
 
 // BuildTemplateFromV1Job converts a V1JobSource into a stratumv2.JobTemplate.
@@ -100,15 +107,16 @@ func BuildTemplateFromV1Job(src V1JobSource) (*JobTemplate, error) {
 	}
 
 	return &JobTemplate{
-		PrevHash:     prevHash,
-		Coinbase1:    coinbase1,
-		Coinbase2:    coinbase2,
-		MerkleBranch: branch,
-		Version:      version,
-		NBits:        nBits,
-		NTime:        nTime,
-		Height:       src.Height,
-		IsFutureJob:  false,
+		PrevHash:        prevHash,
+		Coinbase1:       coinbase1,
+		Coinbase2:       coinbase2,
+		MerkleBranch:    branch,
+		Version:         version,
+		NBits:           nBits,
+		NTime:           nTime,
+		Height:          src.Height,
+		IsFutureJob:     false,
+		ExtraNonce2Size: src.ExtraNonce2Size,
 	}, nil
 }
 
