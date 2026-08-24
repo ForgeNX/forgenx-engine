@@ -28,12 +28,12 @@ const (
 	// sent in OpenStandardMiningChannel.Success.
 	Extranonce1Size uint16 = 4
 
-	// Extranonce2Size is currently unused: Standard Channels have NO
-	// extranonce2 component at all (see channelMerkleRoot's doc comment in
-	// session.go for the spec citation) — the channel's full extranonce IS
-	// extranonce_prefix. This constant is kept for documentation purposes
-	// and in case Extended Channel support is added later (where extranonce2
-	// genuinely does exist, miner-rolled, per share).
+	// Extranonce2Size is unused. The real extranonce2 size comes from the coin's
+	// extranonce_size config via the coinbase the job manager builds, and is
+	// carried on JobTemplate.ExtraNonce2Size — a hardcoded constant here would
+	// contradict it. Standard channels have no extranonce2 of their own at the
+	// protocol level, but the coinbase still reserves the space and both
+	// validation and block assembly zero-fill it.
 	Extranonce2Size uint16 = 4
 
 	// DefaultPoolDifficulty is the starting pool difficulty assigned to new channels.
@@ -95,9 +95,14 @@ type Channel struct {
 	// being built — so the miner needs the job but not another prev-hash it
 	// already has. Only a change means staging a future job and activating it.
 	activePrevHash [32]byte
-	// staleJobIDs tracks the last N job IDs so we can detect stale shares.
-	// SV2 spec says servers MUST accept shares for at least the last job.
-	staleJobIDs [2]uint32
+	// staleJobIDs tracks recently superseded job IDs so a share that was already
+	// in flight when new work arrived is still accepted. The spec requires at
+	// least the last job; two was far tighter than the 20 templates the session
+	// retains, so on a fast chain a miner submitting a few seconds late was
+	// rejected as stale while its template was still perfectly available. Sized to
+	// stay within maxTemplateHistory — a job ID accepted here whose template has
+	// been evicted is rejected anyway, just with a less accurate reason.
+	staleJobIDs [8]uint32
 
 	// Solo-mode per-channel coinbase override. When set (non-nil), the
 	// channel's own coinbase1/coinbase2 are used instead of the shared
@@ -185,16 +190,10 @@ func newChannel(
 	return ch, nil
 }
 
-// maxExtranonce2Size caps how much extranonce2 space we grant an extended
-// channel, regardless of what it requests. Kept small and fixed for now
-// (minimal/option-1 implementation — one NerdQAxe++, not a multi-miner
-// extended-channel pool with per-miner nonce-space partitioning).
-const maxExtranonce2Size uint16 = 6
-
 // newExtendedChannel allocates a new extended-channel Channel. Mirrors
-// newChannel, but records isExtended + the granted extranonce2Size (clamped
-// to maxExtranonce2Size, and to at least 1 byte so the miner has SOME
-// rolling room even if it asked for 0).
+// newChannel, but records isExtended and grants the extranonce2 space the
+// coinbase reserved — see the body for why the miner's request cannot simply be
+// honoured.
 func newExtendedChannel(
 	sessionID string,
 	userIdentity string,
@@ -203,17 +202,29 @@ func newExtendedChannel(
 	vardiffOnNewBlock bool,
 	startDiff float64,
 	requestedExtranonceSize uint16,
+	reservedExtranonce2Size int,
 ) (*Channel, error) {
 	ch, err := newChannel(sessionID, userIdentity, extranoncePool, vardiffCfg, vardiffOnNewBlock, startDiff)
 	if err != nil {
 		return nil, err
 	}
 	ch.isExtended = true
-	granted := requestedExtranonceSize
-	if granted == 0 || granted > maxExtranonce2Size {
-		granted = maxExtranonce2Size
+	// Grant exactly the space the coinbase reserved, not what the miner asked for.
+	// BuildCoinbaseParts sizes the scriptSig to hold extranonce1 + extranonce2 and
+	// splits coinb1/coinb2 around that gap, so an extranonce2 of any other length
+	// produces a coinbase that does not match its own declared scriptSig length —
+	// shares still validate (both sides hash the same wrong thing) but every block
+	// found is rejected as undecodable. Granting more than requested is allowed by
+	// the spec; granting less is not, which is why a miner needing more than the
+	// coinbase reserves is refused rather than quietly short-changed.
+	if reservedExtranonce2Size <= 0 {
+		return nil, fmt.Errorf("sv2 newExtendedChannel: coinbase reserves no extranonce2 space")
 	}
-	ch.extranonce2Size = granted
+	if requestedExtranonceSize > uint16(reservedExtranonce2Size) {
+		return nil, fmt.Errorf("sv2 newExtendedChannel: miner requires %d extranonce2 bytes, coinbase reserves %d",
+			requestedExtranonceSize, reservedExtranonce2Size)
+	}
+	ch.extranonce2Size = uint16(reservedExtranonce2Size)
 	return ch, nil
 }
 
@@ -324,7 +335,7 @@ func (c *Channel) SetPoolDifficulty(diff float64) []byte {
 func (c *Channel) SetCurrentJob(jobID uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.staleJobIDs[1] = c.staleJobIDs[0]
+	copy(c.staleJobIDs[1:], c.staleJobIDs[:len(c.staleJobIDs)-1])
 	c.staleJobIDs[0] = c.currentJobID
 	c.currentJobID = jobID
 }
@@ -348,9 +359,15 @@ func (c *Channel) ActivatePrevHash(ph [32]byte) bool {
 func (c *Channel) IsJobValid(jobID uint32) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return jobID == c.currentJobID ||
-		jobID == c.staleJobIDs[0] ||
-		jobID == c.staleJobIDs[1]
+	if jobID == c.currentJobID {
+		return true
+	}
+	for _, id := range c.staleJobIDs {
+		if id != 0 && id == jobID {
+			return true
+		}
+	}
+	return false
 }
 
 // RecordShare records a validated share, and — if vardiff is enabled —

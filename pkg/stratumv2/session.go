@@ -553,7 +553,15 @@ func (s *Session) handleOpenExtendedChannel(payload []byte) error {
 	if s.startDiffFunc != nil {
 		startD2 = s.startDiffFunc(req.UserIdentity)
 	}
-	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, startD2, req.MinExtranonceSize)
+	// The coinbase reserves a fixed amount of extranonce2 space (from the coin's
+	// extranonce_size), and the channel must be granted exactly that much.
+	reservedEn2 := 0
+	if s.srv != nil {
+		if t := s.srv.LatestTemplate(); t != nil {
+			reservedEn2 = t.ExtraNonce2Size
+		}
+	}
+	ch, err := newExtendedChannel(s.id, req.UserIdentity, globalExtranoncePool, s.vardiffCfg, s.vardiffOnNewBlock, startD2, req.MinExtranonceSize, reservedEn2)
 	if err != nil {
 		resp, _ := EncodeOpenExtendedMiningChannelError(req.RequestID, "internal-error")
 		_ = s.codec.WriteFrame(ExtensionTypeMining, MsgOpenStandardMiningChannelError, resp)
