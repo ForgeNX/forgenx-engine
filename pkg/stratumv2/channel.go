@@ -116,8 +116,12 @@ type Channel struct {
 	ownCoinbase2 []byte
 
 	// Share sequence tracking (for SubmitSharesSuccess cumulative acks).
-	lastAckedSeq     uint32
-	pendingSharesAcc uint64 // accumulated share difficulty since last ack
+	// haveAcked distinguishes "no share acked yet" from "last acked sequence 0":
+	// SV2 does not require a miner to start its sequence numbers at zero, and
+	// subtracting an unset lastAckedSeq from a first sequence of, say, 1000 would
+	// claim a thousand shares were accepted.
+	lastAckedSeq uint32
+	haveAcked    bool
 
 	// Statistics
 	sharesAccepted uint64
@@ -404,16 +408,18 @@ func (c *Channel) RecordShare(seqNum uint32, diff float64, networkDiff float64, 
 	}
 	c.totalDiff += diff
 
-	// Cumulative ack: acknowledge everything up to seqNum.
-	accepted := seqNum - c.lastAckedSeq
+	// Cumulative ack: acknowledge everything up to seqNum. The first share on a
+	// channel acknowledges itself alone, whatever sequence number it carries.
+	accepted := uint32(1)
+	if c.haveAcked && seqNum > c.lastAckedSeq {
+		accepted = seqNum - c.lastAckedSeq
+	}
 	c.lastAckedSeq = seqNum
+	c.haveAcked = true
 
 	// SV2 SubmitSharesSuccess.new_shares_sum is the integer difficulty sum
 	// scaled to the share difficulty units. We use uint64 truncation here.
-	diffInt := uint64(diff)
-	c.pendingSharesAcc += diffInt
-	sumDiff := c.pendingSharesAcc
-	c.pendingSharesAcc = 0
+	sumDiff := uint64(diff)
 
 	hasPending := c.pendingDiff > 0
 	vd := c.vardiff

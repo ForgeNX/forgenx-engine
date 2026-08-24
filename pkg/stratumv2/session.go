@@ -117,8 +117,12 @@ type Session struct {
 	// Job template history keyed by JobID — mirrors V1 JobManager job map.
 	// Allows shares to find their template even after newer jobs broadcast.
 	templateMu sync.RWMutex
-	templates  map[uint32]*JobTemplate
-	lastJobID  uint32
+	// templates[jobID][channelID] — a job's resolved template differs per channel,
+	// because each channel's solo-mode coinbase pays its own worker. Keying by job
+	// alone let whichever channel sent last overwrite the others, so a share from
+	// one channel could be validated against another's coinbase.
+	templates map[uint32]map[uint32]*JobTemplate
+	lastJobID uint32
 
 	// Callback to the engine when a share / block solution is found.
 	onShare              shareSubmitCallback
@@ -238,7 +242,7 @@ func newSession(
 		onShare:                  onShare,
 		onStale:                  onStale,
 		onRejected:               onRejected,
-		templates:                make(map[uint32]*JobTemplate),
+		templates:                make(map[uint32]map[uint32]*JobTemplate),
 		coinbaseBuilder:          coinbaseBuilder,
 		vardiffCfg:               vardiffCfg,
 		vardiffOnNewBlock:        vardiffOnNewBlock,
@@ -289,9 +293,9 @@ func (s *Session) keepaliveLoop() {
 			return
 		case <-ticker.C:
 			s.templateMu.RLock()
-			tmpl := s.templates[s.lastJobID]
+			byChannel := s.templates[s.lastJobID]
 			s.templateMu.RUnlock()
-			if tmpl == nil {
+			if len(byChannel) == 0 {
 				continue // no job yet; nothing to refresh
 			}
 			s.mu.RLock()
@@ -304,6 +308,10 @@ func (s *Session) keepaliveLoop() {
 			for _, ch := range channels {
 				if ch.IsClosed() {
 					continue
+				}
+				tmpl := byChannel[ch.ID()]
+				if tmpl == nil {
+					continue // this channel has no template for the latest job
 				}
 				if err := s.sendJobForKeepalive(ch, tmpl); err != nil {
 					// Send failed → peer is genuinely unreachable. Let the read
@@ -667,7 +675,7 @@ func (s *Session) handleSubmitShares(payload []byte) error {
 processShare:
 	// Look up the template for this specific job ID.
 	s.templateMu.RLock()
-	tmpl := s.templates[share.JobID]
+	tmpl := s.templates[share.JobID][share.ChannelID]
 	s.templateMu.RUnlock()
 
 	if tmpl == nil {
@@ -785,7 +793,7 @@ func (s *Session) handleSubmitSharesExtended(payload []byte) error {
 
 processExtendedShare:
 	s.templateMu.RLock()
-	tmpl := s.templates[share.JobID]
+	tmpl := s.templates[share.JobID][share.ChannelID]
 	s.templateMu.RUnlock()
 
 	if tmpl == nil {
@@ -888,8 +896,12 @@ const maxTemplateHistory = 20 // keep in sync with engine.JobManager maxJobHisto
 // UpdateTemplate stores the latest block template and broadcasts new work to
 // all open channels on this session.
 func (s *Session) UpdateTemplate(tmpl *JobTemplate) {
+	// No template is stored here: a template only becomes meaningful once resolved
+	// against a particular channel's coinbase, which the per-channel sends below
+	// do. Storing the unresolved one under the job ID would be an entry nothing
+	// reads — and, before this map was keyed by channel, was what a later send
+	// overwrote or was overwritten by.
 	s.templateMu.Lock()
-	s.templates[tmpl.JobID] = tmpl
 	s.lastJobID = tmpl.JobID
 	if len(s.templates) > maxTemplateHistory {
 		var oldestID uint32
@@ -1058,7 +1070,10 @@ func (s *Session) sendExtendedJobToChannel(ch *Channel, tmpl *JobTemplate, futur
 	tmplCopy.Coinbase1 = coinb1
 	tmplCopy.Coinbase2 = coinb2
 	s.templateMu.Lock()
-	s.templates[tmpl.JobID] = &tmplCopy
+	if s.templates[tmpl.JobID] == nil {
+		s.templates[tmpl.JobID] = make(map[uint32]*JobTemplate)
+	}
+	s.templates[tmpl.JobID][ch.ID()] = &tmplCopy
 	s.templateMu.Unlock()
 
 	payload, err := EncodeNewExtendedMiningJob(
@@ -1145,7 +1160,10 @@ func (s *Session) sendJobToChannel(ch *Channel, tmpl *JobTemplate, future bool) 
 	tmplCopy.Coinbase1 = coinb1
 	tmplCopy.Coinbase2 = coinb2
 	s.templateMu.Lock()
-	s.templates[tmpl.JobID] = &tmplCopy
+	if s.templates[tmpl.JobID] == nil {
+		s.templates[tmpl.JobID] = make(map[uint32]*JobTemplate)
+	}
+	s.templates[tmpl.JobID][ch.ID()] = &tmplCopy
 	s.templateMu.Unlock()
 
 	merkleRoot := channelMerkleRoot(ch, &tmplCopy)
