@@ -842,10 +842,6 @@ func submitSV2Block(
 	// coinbase whose second half was absent, while the share that found them
 	// validated correctly against the same template. Log what submission actually
 	// sees so the next occurrence is not another inference.
-	runner.logger.Info("[%s] SV2 block assembly: job=%d extended=%t coinb1=%dB coinb2=%dB en1=%dB en2=%dB branch=%d",
-		symbol, job.JobID, ch.IsExtended(), len(coinb1), len(coinb2),
-		len(ch.Extranonce1Bytes()), len(extranonce), len(job.MerkleBranch))
-
 	// Reconstruct the EXACT coinbase the miner hashed:
 	//   Coinbase1 + Extranonce1 + minerExtranonce2 + Coinbase2
 	// Extended-channel miners roll their own extranonce2 (passed in as
@@ -862,6 +858,14 @@ func submitSV2Block(
 	if len(extranonce) == 0 && job.ExtraNonce2Size > 0 {
 		extranonce = make([]byte, job.ExtraNonce2Size)
 	}
+
+	// Logged after padding so en2 reports the bytes actually spliced, not the zero
+	// a standard channel arrives with. The first successful standard-channel block
+	// logged en2=0B purely because this sat above the padding.
+	runner.logger.Info("[%s] SV2 block assembly: job=%d extended=%t coinb1=%dB coinb2=%dB en1=%dB en2=%dB branch=%d",
+		symbol, job.JobID, ch.IsExtended(), len(coinb1), len(coinb2),
+		len(ch.Extranonce1Bytes()), len(extranonce), len(job.MerkleBranch))
+
 	coinbaseTx := make([]byte, 0, len(coinb1)+len(en1)+len(extranonce)+len(coinb2))
 	coinbaseTx = append(coinbaseTx, coinb1...)
 	coinbaseTx = append(coinbaseTx, en1...)
