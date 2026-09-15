@@ -87,7 +87,16 @@ type CoinRunner struct {
 	bestRatioTime      time.Time
 	bestRatioWorker    string
 	lastNetDiff        float64 // most recent job's network difficulty (protected by sharesMu)
+
+	// stopSelf asks the engine to stop this coin. Set by the engine after
+	// construction, since the runner has no reference back to it. Used when the node
+	// stops producing templates: nothing else notices a node that dies without its
+	// config being rewritten, because the config watcher is fsnotify-driven.
+	stopSelf func()
 }
+
+// SetStopSelf installs the callback the runner uses to ask the engine to stop it.
+func (cr *CoinRunner) SetStopSelf(f func()) { cr.stopSelf = f }
 
 // NewCoinRunner creates and wires up all components for a single coin.
 func (r *CoinRunner) SetStore(s workerDiffStore) {
@@ -627,6 +636,16 @@ func (cr *CoinRunner) Start() error {
 	}
 
 	// Start job manager (fetches first template and begins polling)
+	// A node that stops producing templates leaves miners grinding on a chain tip
+	// that has moved on. Stop the coin so they disconnect and fail over; the engine
+	// restarts it once the node is usable again.
+	cr.jobMgr.SetTemplateStallHandler(func() {
+		if cr.stopSelf != nil {
+			// In a goroutine: this runs on the poll loop that StopCoin shuts down.
+			go cr.stopSelf()
+		}
+	})
+
 	if err := cr.jobMgr.Start(); err != nil {
 		cr.server.Stop()
 		return fmt.Errorf("%s: starting job manager: %w", cr.symbol, err)

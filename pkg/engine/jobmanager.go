@@ -60,8 +60,17 @@ type JobManager struct {
 	lastCleanJobAt   time.Time
 	lastBroadcastTip string
 	jobCounter       uint64
-	maxJobHistory    int
-	mu               sync.RWMutex
+
+	// onTemplateStall, if set, is called once when the node has failed to produce a
+	// template for maxTemplateFailures consecutive polls. The engine uses it to stop
+	// the coin, so miners disconnect and fail over rather than grinding on a
+	// template whose chain tip has moved on. Nothing else notices a node that dies
+	// without its config being rewritten: the config watcher is fsnotify-driven, so
+	// a crashed or unreachable node can leave the pool serving stale work
+	// indefinitely.
+	onTemplateStall func()
+	maxJobHistory   int
+	mu              sync.RWMutex
 
 	// Solo mode
 	soloMode       bool
@@ -217,6 +226,12 @@ func (jm *JobManager) ExtraNonce1Size() int {
 	return jm.extraNonce1Size
 }
 
+// SetTemplateStallHandler installs the callback invoked when template refreshes
+// have failed for long enough that the coin should stop serving work.
+func (jm *JobManager) SetTemplateStallHandler(f func()) {
+	jm.onTemplateStall = f
+}
+
 // ExtraNonce2Size returns the extranonce2 byte size.
 func (jm *JobManager) ExtraNonce2Size() int {
 	return jm.extraNonce2Size
@@ -242,10 +257,17 @@ func (jm *JobManager) donationOutputs(template *noderpc.BlockTemplate) []coinbas
 	return outputs
 }
 
+// maxTemplateFailures is how many consecutive failed template polls mean the node
+// is genuinely unusable rather than briefly slow. At the default poll interval
+// this is under a minute — long enough to ride out a hiccup, short enough that a
+// fleet is not left mining a dead chain tip for minutes.
+const maxTemplateFailures = 3
+
 func (jm *JobManager) pollLoop() {
 	defer jm.wg.Done()
 	ticker := time.NewTicker(jm.pollInterval)
 	defer ticker.Stop()
+	consecutiveFailures := 0
 
 	for {
 		select {
@@ -254,6 +276,14 @@ func (jm *JobManager) pollLoop() {
 		case <-ticker.C:
 			if err := jm.refreshTemplate(false); err != nil {
 				jm.logger.Error("template refresh: %v", err)
+				consecutiveFailures++
+				if consecutiveFailures == maxTemplateFailures && jm.onTemplateStall != nil {
+					jm.logger.Error("no template for %d consecutive polls — the node is not usable; stopping the pool so miners fail over",
+						consecutiveFailures)
+					jm.onTemplateStall()
+				}
+			} else {
+				consecutiveFailures = 0
 			}
 		}
 	}

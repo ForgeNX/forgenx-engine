@@ -80,6 +80,8 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 		if e.store != nil {
 			runner.SetStore(e.store)
 		}
+		sym := symbol
+		runner.SetStopSelf(func() { e.StopCoin(sym) })
 		e.runners[symbol] = runner
 	}
 
@@ -216,6 +218,7 @@ func (e *Engine) StartCoin(symbol string, coinCfg *config.CoinConfig, donation c
 	if e.store != nil {
 		runner.SetStore(e.store)
 	}
+	runner.SetStopSelf(func() { e.StopCoin(symbol) })
 	if err := runner.Start(); err != nil {
 		return err
 	}
