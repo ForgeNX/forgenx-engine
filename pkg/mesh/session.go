@@ -32,7 +32,12 @@ type Session struct {
 	// config, because list position was the only notion of priority.
 	home          *Backend
 	supportsXnSub bool
-	closed        bool
+
+	// bonded is every backend this session holds, in configured order. Kept here so
+	// a reassignment arriving from the API can find the target coin — the relay
+	// goroutine's locals are not reachable from outside it.
+	bonded []*Backend
+	closed bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -107,6 +112,18 @@ func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.c
 
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// setBonded records the backends this session was bonded to.
+func (s *Session) setBonded(b []*Backend) { s.mu.Lock(); s.bonded = b; s.mu.Unlock() }
+
+// bondedBackends returns a copy of this session's backends.
+func (s *Session) bondedBackends() []*Backend {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Backend, len(s.bonded))
+	copy(out, s.bonded)
+	return out
+}
 
 // setHome records the coin this session should return to when it is available.
 func (s *Session) setHome(b *Backend) { s.mu.Lock(); s.home = b; s.mu.Unlock() }

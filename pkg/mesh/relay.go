@@ -147,6 +147,7 @@ func symbolOf(b *Backend) string {
 }
 
 func (m *Mesh) runMiner(s *Session, backends []*Backend) {
+	s.setBonded(backends)
 	defer s.Close()
 	defer func() {
 		for _, b := range backends {
@@ -282,6 +283,8 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 				worker = params[0]
 			}
 			s.setWorker(worker)
+			m.registerLive(workerSuffix(worker), s)
+			defer m.unregisterLive(workerSuffix(worker), s)
 
 			// A miner the user has assigned to a coin starts on that coin rather than
 			// whichever the bond order picked. Resolved here because authorize is the

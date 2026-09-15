@@ -34,6 +34,12 @@ type CoinAPI struct {
 	portStatusFunc  PortStatusFunc
 	stats           statsResetter
 
+	// meshReassign moves a connected mesh miner onto a coin straight away, so an
+	// assignment made from the UI does not sit inert until the miner happens to
+	// reconnect. nil when the mesh is disabled — the assignment is still saved and
+	// takes effect on the miner's next connect.
+	meshReassign func(worker, symbol string) (int, error)
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -220,6 +226,85 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, data)
+}
+
+// SetMeshReassign installs the callback used to move a connected miner between
+// coins when its assignment changes.
+func (c *CoinAPI) SetMeshReassign(f func(worker, symbol string) (int, error)) {
+	c.meshReassign = f
+}
+
+// ── Nexus Mesh assignments ────────────────────────────────────────────────────
+//
+// A mesh miner with no assignment mines whatever the mesh default puts first, so
+// it is productive from the moment it connects. Assigning it records where it
+// belongs and, if it is connected, moves it there immediately — otherwise the
+// assignment applies when it next connects.
+
+// HandleMeshAssignments returns every stored assignment, keyed by worker name.
+func (c *CoinAPI) HandleMeshAssignments(w http.ResponseWriter, r *http.Request) {
+	out, err := c.store.ListMeshAssignments()
+	if err != nil {
+		writeError(w, 500, "could not read assignments")
+		return
+	}
+	if out == nil {
+		out = map[string]string{}
+	}
+	writeJSON(w, map[string]interface{}{"assignments": out})
+}
+
+// HandleMeshAssign records a worker's allocation and applies it to the live
+// session if there is one.
+func (c *CoinAPI) HandleMeshAssign(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Worker     string `json:"worker"`
+		Allocation string `json:"allocation"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Worker == "" || body.Allocation == "" {
+		writeError(w, 400, "worker and allocation are required")
+		return
+	}
+	if err := c.store.SetMeshAssignment(body.Worker, body.Allocation); err != nil {
+		writeError(w, 500, "could not save assignment")
+		return
+	}
+
+	// Applying to the running session is best-effort: the assignment is saved
+	// either way, so a miner that is offline picks it up when it reconnects.
+	applied := false
+	note := "saved; applies when the miner next connects"
+	if c.meshReassign != nil {
+		symbol := body.Allocation
+		if i := strings.IndexAny(symbol, ":,"); i >= 0 {
+			symbol = symbol[:i]
+		}
+		moved, err := c.meshReassign(body.Worker, strings.ToUpper(symbol))
+		switch {
+		case err != nil:
+			note = err.Error()
+		case moved > 0:
+			applied, note = true, "applied"
+		}
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "applied": applied, "note": note})
+}
+
+// HandleMeshUnassign clears a worker's assignment, returning it to the mesh
+// default. The miner stays where it is until it reconnects.
+func (c *CoinAPI) HandleMeshUnassign(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Worker string `json:"worker"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Worker == "" {
+		writeError(w, 400, "worker is required")
+		return
+	}
+	if err := c.store.DeleteMeshAssignment(body.Worker); err != nil {
+		writeError(w, 500, "could not clear assignment")
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "note": "cleared; the miner keeps its current coin until it reconnects"})
 }
 
 // ── /api/apps/{coin}/workers ──────────────────────────────────────────────────
@@ -784,6 +869,9 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/donation-address/", c.HandleDonationAddress)
 	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
+	mux.HandleFunc("/api/mesh/assignments", c.HandleMeshAssignments)
+	mux.HandleFunc("/api/mesh/assign", c.HandleMeshAssign)
+	mux.HandleFunc("/api/mesh/unassign", c.HandleMeshUnassign)
 
 	// Coin app routes — matched by prefix, coin ID extracted from path
 	mux.HandleFunc("/api/apps/", func(w http.ResponseWriter, r *http.Request) {

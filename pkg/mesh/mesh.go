@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,10 +62,21 @@ type Mesh struct {
 	logger   *logging.Logger
 	listener net.Listener
 	sessSeq  atomic.Uint64
+
+	// live tracks sessions by worker-name suffix so an assignment made from the UI
+	// takes effect on the miner that is connected now, rather than only when it
+	// next reconnects. A worker can briefly have more than one session during a
+	// reconnect, so each name maps to a set.
+	liveMu sync.Mutex
+	live   map[string]map[*Session]struct{}
 }
 
 func New(opts Options) *Mesh {
-	return &Mesh{opts: opts, logger: logging.New(logging.ModuleNexus)}
+	return &Mesh{
+		opts:   opts,
+		logger: logging.New(logging.ModuleNexus),
+		live:   make(map[string]map[*Session]struct{}),
+	}
 }
 
 func (m *Mesh) Start() error {
@@ -168,6 +181,82 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 // connects beforehand simply uses the default until it next reconnects.
 func (m *Mesh) SetAssignmentLookup(f func(worker string) ([]Weight, bool)) {
 	m.opts.Assignment = f
+}
+
+// registerLive records a session under its worker name so a reassignment can find
+// it while it is connected.
+func (m *Mesh) registerLive(worker string, s *Session) {
+	if worker == "" {
+		return
+	}
+	m.liveMu.Lock()
+	defer m.liveMu.Unlock()
+	if m.live[worker] == nil {
+		m.live[worker] = make(map[*Session]struct{})
+	}
+	m.live[worker][s] = struct{}{}
+}
+
+// unregisterLive drops a session from the registry when it closes.
+func (m *Mesh) unregisterLive(worker string, s *Session) {
+	if worker == "" {
+		return
+	}
+	m.liveMu.Lock()
+	defer m.liveMu.Unlock()
+	if set := m.live[worker]; set != nil {
+		delete(set, s)
+		if len(set) == 0 {
+			delete(m.live, worker)
+		}
+	}
+}
+
+// ReassignWorker moves a connected miner to a coin immediately, rather than
+// waiting for it to reconnect and re-read its stored assignment. The caller is
+// expected to have persisted the assignment first: this only moves what is
+// already running, and reports whether it found anything to move so the UI can
+// say "applied now" rather than "will apply when the miner reconnects".
+//
+// A worker can hold more than one session briefly during a reconnect, so every
+// session under that name is moved.
+func (m *Mesh) ReassignWorker(worker, symbol string) (moved int, err error) {
+	m.liveMu.Lock()
+	sessions := make([]*Session, 0, 2)
+	for s := range m.live[worker] {
+		sessions = append(sessions, s)
+	}
+	m.liveMu.Unlock()
+
+	if len(sessions) == 0 {
+		return 0, nil // not connected; the stored assignment applies on its next connect
+	}
+
+	for _, s := range sessions {
+		var target *Backend
+		for _, b := range s.bondedBackends() {
+			if strings.EqualFold(b.Symbol, symbol) {
+				target = b
+				break
+			}
+		}
+		if target == nil {
+			return moved, fmt.Errorf("worker %s is not bonded to %s", worker, symbol)
+		}
+		s.setHome(target)
+		if target == s.activeBackend() {
+			moved++
+			continue
+		}
+		if !target.Alive() {
+			// Home is set, so the failback loop brings it across once the coin is
+			// serving again. Not an error — just not immediate.
+			continue
+		}
+		m.switchActive(s, target)
+		moved++
+	}
+	return moved, nil
 }
 
 func (m *Mesh) Stop() {
