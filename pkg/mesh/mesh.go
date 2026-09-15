@@ -25,6 +25,22 @@ type Options struct {
 	Coins []string
 
 	Resolve Resolver // resolves coin symbol -> endpoint
+
+	// Assignment returns how a named worker's hashrate should be allocated, and
+	// whether the user has assigned it at all. A miner with no assignment mines
+	// whatever Coins puts first, so it is productive from the moment it connects
+	// rather than parked waiting to be assigned — a parked miner's watchdog would
+	// drop it. Looked up at authorize, not at bond, because that is when the worker
+	// name is known. Set after construction via SetAssignmentLookup, since the
+	// store it reads from is created after the mesh starts.
+	Assignment func(worker string) ([]Weight, bool)
+}
+
+// Weight is one coin's share of a miner's time. A single entry at 100 means the
+// miner stays on that coin; several mean it rotates between them.
+type Weight struct {
+	Coin    string
+	Percent float64
 }
 
 // primaryCoin returns the first configured coin, for logging before any session
@@ -145,6 +161,13 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	m.logger.Info("[nexus] %s: miner bonded to %v", id, symbols)
 
 	m.runMiner(s, backends)
+}
+
+// SetAssignmentLookup installs the per-worker allocation lookup. Safe to call
+// after Start: assignments are only read when a miner authorizes, so a miner that
+// connects beforehand simply uses the default until it next reconnects.
+func (m *Mesh) SetAssignmentLookup(f func(worker string) ([]Weight, bool)) {
+	m.opts.Assignment = f
 }
 
 func (m *Mesh) Stop() {

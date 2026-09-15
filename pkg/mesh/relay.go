@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,17 @@ type rpcMsg struct {
 // that a flapping coin does not bounce the miner between chains, short enough that
 // a coin finishing its sync is picked up promptly.
 const failbackInterval = 30 * time.Second
+
+// workerSuffix strips the payout-address prefix a miner authorizes with, leaving
+// the name that identifies the hardware. The same machine authorizes as
+// <dgb-address>.Ellevix002 on one coin and <bch-address>.Ellevix002 on another, so
+// only the suffix is stable enough to key an assignment on.
+func workerSuffix(worker string) string {
+	if i := strings.LastIndex(worker, "."); i >= 0 {
+		return worker[i+1:]
+	}
+	return worker
+}
 
 // firstAlive returns the highest-priority live backend, skipping one. Priority is
 // the order coins were configured in.
@@ -43,6 +55,16 @@ func (m *Mesh) failbackLoop(s *Session, backends []*Backend) {
 		func() {
 			cur := s.activeBackend()
 			if cur == nil {
+				return
+			}
+			// A miner with an assigned coin belongs there whenever it is up; one
+			// without falls back to configured order. Comparing against list
+			// position alone would undo an assignment on the next tick.
+			if home := s.homeBackend(); home != nil {
+				if home != cur && home.Alive() {
+					m.logger.Info("[nexus] %s: %s is available again; returning from %s", s.id, home.Symbol, cur.Symbol)
+					m.switchActive(s, home)
+				}
 				return
 			}
 			for _, b := range backends {
@@ -253,7 +275,6 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			}
 
 		case "mining.authorize":
-			b := s.activeBackend()
 			var params []string
 			_ = json.Unmarshal(msg.Params, &params)
 			worker := ""
@@ -261,6 +282,42 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 				worker = params[0]
 			}
 			s.setWorker(worker)
+
+			// A miner the user has assigned to a coin starts on that coin rather than
+			// whichever the bond order picked. Resolved here because authorize is the
+			// first point the worker name is known — bonding happens before the miner
+			// says who it is. An assignment naming a coin that is down is left alone:
+			// the miner mines what is available and the failback loop moves it across
+			// when its coin returns.
+			if m.opts.Assignment != nil && worker != "" {
+				if weights, ok := m.opts.Assignment(workerSuffix(worker)); ok && len(weights) > 0 {
+					sym := weights[0].Coin
+					for _, ab := range backends {
+						if !strings.EqualFold(ab.Symbol, sym) {
+							continue
+						}
+						if ab == s.activeBackend() {
+							s.setHome(ab)
+							break
+						}
+						if !ab.Alive() {
+							// Home is recorded even though we cannot go there yet: the
+							// reconnect loop will bring the coin back and the failback
+							// ticker will move the miner across without it reconnecting.
+							s.setHome(ab)
+							m.logger.Info("[nexus] %s: %s assigned to %s, which is down; starting on %s until it returns",
+								s.id, worker, ab.Symbol, symbolOf(s.activeBackend()))
+							break
+						}
+						m.logger.Info("[nexus] %s: %s assigned to %s; starting there", s.id, worker, ab.Symbol)
+						s.setActive(ab)
+						s.setHome(ab)
+						break
+					}
+				}
+			}
+
+			b := s.activeBackend()
 
 			// Authorize every bonded backend using the MINER's own worker name, so each
 			// coin tracks a stable identity across reconnects. Warm coins must be

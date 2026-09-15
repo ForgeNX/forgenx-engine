@@ -20,9 +20,17 @@ type Session struct {
 	reader *bufio.Reader
 	logger *logging.Logger
 
-	mu            sync.Mutex
-	worker        string
-	active        *Backend
+	mu     sync.Mutex
+	worker string
+	active *Backend
+
+	// home is the coin this miner belongs on when everything is available — its
+	// assigned coin if the user set one, otherwise the first in the configured
+	// order. Failback returns it here. Without this, an assignment was undone
+	// within a ticker interval: the miner would start on its assigned coin and the
+	// failback loop would immediately pull it back to whatever came first in the
+	// config, because list position was the only notion of priority.
+	home          *Backend
 	supportsXnSub bool
 	closed        bool
 
@@ -99,6 +107,16 @@ func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.c
 
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// setHome records the coin this session should return to when it is available.
+func (s *Session) setHome(b *Backend) { s.mu.Lock(); s.home = b; s.mu.Unlock() }
+
+// homeBackend returns the session's home coin, or nil if none was set.
+func (s *Session) homeBackend() *Backend {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.home
+}
 
 // supportsExtranonceSub reports whether the miner asked for extranonce updates.
 // Only such miners can be moved between coins without reconnecting: the coins hand

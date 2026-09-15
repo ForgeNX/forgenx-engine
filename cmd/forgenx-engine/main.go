@@ -62,20 +62,28 @@ func applyMeshEnv(m *config.MeshConfig) {
 		}
 	}
 	if v := os.Getenv("MESH_DEFAULT_ALLOCATION"); v != "" {
-		var out []config.MeshWeight
-		for _, pair := range strings.Split(v, ",") {
-			parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			pct, err := strconv.ParseFloat(parts[1], 64)
-			if err != nil {
-				continue
-			}
-			out = append(out, config.MeshWeight{Coin: strings.ToUpper(parts[0]), Percent: pct})
-		}
-		m.DefaultAllocation = out
+		m.DefaultAllocation = parseAllocation(v)
 	}
+}
+
+// parseAllocation reads "DGB:50,BCH:50" into weights. Used for both the mesh-wide
+// default and each miner's stored assignment, so the two can never drift in how
+// they are interpreted. Malformed pairs are skipped rather than failing the whole
+// string — a bad character in one entry should not silently unassign a miner.
+func parseAllocation(v string) []config.MeshWeight {
+	var out []config.MeshWeight
+	for _, pair := range strings.Split(v, ",") {
+		parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		pct, err := strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, config.MeshWeight{Coin: strings.ToUpper(parts[0]), Percent: pct})
+	}
+	return out
 }
 
 func main() {
@@ -136,6 +144,10 @@ func main() {
 	eng.WatchCoins(engine.CoinsDir, cfg.Donation)
 	eng.StartNodeRetryLoop(engine.CoinsDir, cfg.Donation)
 
+	// Declared out here so the per-miner assignment lookup can be attached once the
+	// store exists, further down. nil when the mesh is disabled.
+	var nexusMesh *mesh.Mesh
+
 	// Nexus Mesh — opt-in. Enabled via environment (MESH_ENABLED=true), because
 	// this deployment has no top-level config.json (config.Load returns defaults;
 	// coins load from /pool/coins). Env is how the compose injects mesh settings.
@@ -165,7 +177,7 @@ func main() {
 			}
 			return "127.0.0.1", ep.V1Port, ep.Payout, ep.V1Running, true
 		}
-		nexusMesh := mesh.New(mesh.Options{
+		nexusMesh = mesh.New(mesh.Options{
 			Port:    cfg.Mesh.Port,
 			Coins:   coins,
 			Resolve: resolve,
@@ -194,6 +206,27 @@ func main() {
 	} else {
 		coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
 		coinAPI.SetStats(stats)
+
+		// Per-miner allocation, now that the store exists. The mesh is already
+		// listening; assignments are read at authorize, so a miner that connected in
+		// between mines the default until it next reconnects.
+		if nexusMesh != nil {
+			nexusMesh.SetAssignmentLookup(func(worker string) ([]mesh.Weight, bool) {
+				alloc, found := store.GetMeshAssignment(worker)
+				if !found {
+					return nil, false
+				}
+				parsed := parseAllocation(alloc)
+				if len(parsed) == 0 {
+					return nil, false
+				}
+				out := make([]mesh.Weight, 0, len(parsed))
+				for _, w := range parsed {
+					out = append(out, mesh.Weight{Coin: w.Coin, Percent: w.Percent})
+				}
+				return out, true
+			})
+		}
 		coinAPI.SetEngineVersion(version, buildDate)
 		eng.SetStore(store)
 

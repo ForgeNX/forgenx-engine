@@ -69,6 +69,15 @@ func (s *Store) init() error {
 			shares_offset INTEGER DEFAULT 0, invalid_shares_offset INTEGER DEFAULT 0,
 			last_difficulty REAL DEFAULT 0,
 			PRIMARY KEY (coin_symbol, worker_name))`,
+		// Which coin (or weighted split) the user has assigned a mesh miner to. Keyed
+		// on the worker-name suffix, not the full authorize string, because the same
+		// machine authorizes with a different payout prefix on each coin. Lives here
+		// rather than in its own store so there is one database layer, even though
+		// mesh assignment is not a coin-API concern.
+		`CREATE TABLE IF NOT EXISTS mesh_assignments (
+			worker TEXT PRIMARY KEY,
+			allocation TEXT NOT NULL,
+			updated_at TEXT NOT NULL)`,
 	}
 	// Migrate: add last_difficulty column if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE pool_counters ADD COLUMN session_start INTEGER DEFAULT 0`)
@@ -675,6 +684,58 @@ func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric st
 		result[i] = lastVal
 	}
 	return result
+}
+
+// GetMeshAssignment returns the allocation string assigned to a mesh worker — a
+// single coin ("DGB:100") or a weighted split ("DGB:50,BCH:50") — and whether one
+// exists. A worker with no assignment mines the mesh default.
+func (s *Store) GetMeshAssignment(worker string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var alloc string
+	err := s.db.QueryRow(`SELECT allocation FROM mesh_assignments WHERE worker = ?`, worker).Scan(&alloc)
+	if err != nil || alloc == "" {
+		return "", false
+	}
+	return alloc, true
+}
+
+// SetMeshAssignment records the allocation for a worker, replacing any existing one.
+func (s *Store) SetMeshAssignment(worker, allocation string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(
+		`INSERT INTO mesh_assignments (worker, allocation, updated_at) VALUES (?, ?, ?)
+		 ON CONFLICT(worker) DO UPDATE SET allocation = excluded.allocation, updated_at = excluded.updated_at`,
+		worker, allocation, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+// DeleteMeshAssignment clears a worker's assignment, returning it to the mesh default.
+func (s *Store) DeleteMeshAssignment(worker string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM mesh_assignments WHERE worker = ?`, worker)
+	return err
+}
+
+// ListMeshAssignments returns every assignment, keyed by worker.
+func (s *Store) ListMeshAssignments() (map[string]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT worker, allocation FROM mesh_assignments`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var w, a string
+		if err := rows.Scan(&w, &a); err == nil {
+			out[w] = a
+		}
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) Close() error { return s.db.Close() }
