@@ -161,6 +161,10 @@ func (e *Engine) StartNodeRetryLoop(dir string, donation config.DonationConfig) 
 				// Pool not running — try loading config and starting
 				cfg, err := loadCoinConfig(filepath.Join(dir, file.Name()))
 				if err != nil {
+					// Log it: a config that will not parse keeps its coin stopped on every
+					// pass, and silence here meant a single quoted number took a pool
+					// offline for the best part of an hour with nothing to explain why.
+					e.logger.Warn("[%s] config will not load, pool stays down: %v", symbol, err)
 					continue
 				}
 				e.handleCoinConfig(symbol, cfg, donation)
