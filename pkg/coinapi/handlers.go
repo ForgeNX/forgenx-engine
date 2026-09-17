@@ -40,6 +40,11 @@ type CoinAPI struct {
 	// takes effect on the miner's next connect.
 	meshReassign func(worker, symbol string) (int, error)
 
+	// meshActiveCoins reports which coin each mesh worker is actually mining. Used
+	// to mark a worker standby on the coins it is bonded to but not currently
+	// working, so a per-coin list does not show the same miner as mining everywhere.
+	meshActiveCoins func() map[string]string
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -228,6 +233,11 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetMeshActiveCoins installs the callback reporting each mesh worker's active coin.
+func (c *CoinAPI) SetMeshActiveCoins(f func() map[string]string) {
+	c.meshActiveCoins = f
+}
+
 // SetMeshReassign installs the callback used to move a connected miner between
 // coins when its assignment changes.
 func (c *CoinAPI) SetMeshReassign(f func(worker, symbol string) (int, error)) {
@@ -322,6 +332,14 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 	workerInfos := c.store.GetWorkerBestDiffs(symbol)
 	var workers []map[string]interface{}
 
+	// A mesh miner is authorized on every coin it is bonded to, so it appears in
+	// each coin's list even though only one is receiving its work. Mark the others
+	// standby rather than showing the same machine as mining everywhere at once.
+	var meshActive map[string]string
+	if c.meshActiveCoins != nil {
+		meshActive = c.meshActiveCoins()
+	}
+
 	for _, mRaw := range coinMiners {
 		m, ok := mRaw.(map[string]interface{})
 		if !ok {
@@ -329,6 +347,13 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 		}
 
 		workerName := getString(m, "worker_name")
+		// A session that has subscribed but not yet authorized has no name, no
+		// hashrate and nothing to display. Mesh backends pass through that state on
+		// every connect, and an orphaned one lingers in the coin's session list with
+		// an empty name — noise in every worker table.
+		if strings.TrimSpace(workerName) == "" {
+			continue
+		}
 		sessionBest := getFloat(m, "best_difficulty_session")
 		if sessionBest == 0 {
 			sessionBest = getFloat(m, "best_difficulty")
@@ -398,9 +423,24 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 			lastShare = ""
 		}
 
+		// Keyed on the suffix: the same machine authorizes as <coin-address>.Name, so
+		// only the part after the last dot identifies the hardware across coins.
+		standby, activeCoin := false, ""
+		if len(meshActive) > 0 {
+			suffix := workerName
+			if i := strings.LastIndex(workerName, "."); i >= 0 {
+				suffix = workerName[i+1:]
+			}
+			if coin, known := meshActive[suffix]; known && !strings.EqualFold(coin, symbol) {
+				standby, activeCoin = true, coin
+			}
+		}
+
 		workers = append(workers, map[string]interface{}{
 			"name":                   workerName,
 			"online":                 true,
+			"standby":                standby,
+			"active_coin":            activeCoin,
 			"hashrate":               getFloat(m, "hashrate_5m"),
 			"hashrate_15m":           getFloat(m, "hashrate_15m"),
 			"hashrate_5m":            getFloat(m, "hashrate_5m"),

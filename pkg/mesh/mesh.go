@@ -212,6 +212,35 @@ func (m *Mesh) unregisterLive(worker string, s *Session) {
 	}
 }
 
+// ActiveCoins reports which coin each connected mesh worker is actually mining,
+// keyed by worker name. A bonded miner is authorized on every one of its coins —
+// warm backends have to be, or the coin never sends them the jobs a switch needs
+// to replay — so every coin's stratum server sees it as a connected session. Only
+// this says which of those sessions is receiving work, which is what a per-coin
+// worker list needs in order not to show the same miner as mining everywhere.
+func (m *Mesh) ActiveCoins() map[string]string {
+	m.liveMu.Lock()
+	sessions := make(map[string][]*Session, len(m.live))
+	for worker, set := range m.live {
+		for s := range set {
+			sessions[worker] = append(sessions[worker], s)
+		}
+	}
+	m.liveMu.Unlock()
+
+	out := make(map[string]string, len(sessions))
+	for worker, list := range sessions {
+		// A worker briefly holds more than one session while reconnecting. The last
+		// one to have been given an active backend is the one doing the work.
+		for _, s := range list {
+			if b := s.activeBackend(); b != nil {
+				out[worker] = b.Symbol
+			}
+		}
+	}
+	return out
+}
+
 // ReassignWorker moves a connected miner to a coin immediately, rather than
 // waiting for it to reconnect and re-read its stored assignment. The caller is
 // expected to have persisted the assignment first: this only moves what is
