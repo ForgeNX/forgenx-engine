@@ -686,6 +686,24 @@ func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric st
 	return result
 }
 
+// The mesh default is stored as a single row in mesh_assignments under a reserved
+// worker name. A separate table would be tidier, but this avoids a migration for
+// one value, and the name cannot collide: a worker suffix comes from a miner's
+// authorize string and can never contain a space.
+const meshDefaultKey = "\x00 mesh default"
+
+// GetMeshDefault returns the coin the user chose for miners with no assignment
+// of their own, and whether one has been set. Unset means the mesh falls back to
+// its configured order.
+func (s *Store) GetMeshDefault() (string, bool) {
+	return s.GetMeshAssignment(meshDefaultKey)
+}
+
+// SetMeshDefault records the coin unassigned miners should bond to first.
+func (s *Store) SetMeshDefault(allocation string) error {
+	return s.SetMeshAssignment(meshDefaultKey, allocation)
+}
+
 // GetMeshAssignment returns the allocation string assigned to a mesh worker — a
 // single coin ("DGB:100") or a weighted split ("DGB:50,BCH:50") — and whether one
 // exists. A worker with no assignment mines the mesh default.
@@ -732,6 +750,9 @@ func (s *Store) ListMeshAssignments() (map[string]string, error) {
 	for rows.Next() {
 		var w, a string
 		if err := rows.Scan(&w, &a); err == nil {
+			if w == meshDefaultKey {
+				continue // the mesh default, not a worker
+			}
 			out[w] = a
 		}
 	}

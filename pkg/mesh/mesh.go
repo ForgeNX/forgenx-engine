@@ -36,6 +36,12 @@ type Options struct {
 	// name is known. Set after construction via SetAssignmentLookup, since the
 	// store it reads from is created after the mesh starts.
 	Assignment func(worker string) ([]Weight, bool)
+
+	// Default returns the coin a miner with no assignment of its own should bond
+	// first, and whether the user has chosen one. Without it the mesh falls back to
+	// the order the coins were configured in, which is an installation detail rather
+	// than a choice anyone made.
+	Default func() (symbol string, ok bool)
 }
 
 // Weight is one coin's share of a miner's time. A single entry at 100 means the
@@ -116,8 +122,31 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	// forwarding them) so rotation can switch to them without a handshake. A coin
 	// that is missing, stopped, or unconfigured is skipped rather than failing the
 	// whole session — one unavailable coin must not cost the miner its bond.
+	// The user's default goes first; the rest follow in configured order as
+	// failover. Only the head of the list changes, so a coin dying still falls
+	// through to the next one regardless of what the default is.
+	coins := m.opts.Coins
+	if m.opts.Default != nil {
+		if def, ok := m.opts.Default(); ok && def != "" {
+			ordered := make([]string, 0, len(coins))
+			for _, c := range coins {
+				if strings.EqualFold(c, def) {
+					ordered = append(ordered, c)
+				}
+			}
+			for _, c := range coins {
+				if !strings.EqualFold(c, def) {
+					ordered = append(ordered, c)
+				}
+			}
+			if len(ordered) == len(coins) {
+				coins = ordered
+			}
+		}
+	}
+
 	var backends []*Backend
-	for _, symbol := range m.opts.Coins {
+	for _, symbol := range coins {
 		host, port, payout, running, ok := m.opts.Resolve(symbol)
 		// A coin the resolver cannot describe yet is still bonded, dead. "Not found"
 		// here usually means its runner has not started — the node is syncing, or the
@@ -187,6 +216,11 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 
 	m.runMiner(s, backends)
 }
+
+// SetDefaultLookup installs the lookup for the user's chosen default coin. Set
+// after construction for the same reason as the assignment lookup: the store it
+// reads from is created after the mesh starts.
+func (m *Mesh) SetDefaultLookup(f func() (string, bool)) { m.opts.Default = f }
 
 // SetAssignmentLookup installs the per-worker allocation lookup. Safe to call
 // after Start: assignments are only read when a miner authorizes, so a miner that

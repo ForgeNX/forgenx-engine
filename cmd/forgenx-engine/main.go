@@ -228,6 +228,17 @@ func main() {
 			})
 			coinAPI.SetMeshReassign(nexusMesh.ReassignWorker)
 			coinAPI.SetMeshActiveCoins(nexusMesh.ActiveCoins)
+			nexusMesh.SetDefaultLookup(func() (string, bool) {
+				alloc, ok := store.GetMeshDefault()
+				if !ok {
+					return "", false
+				}
+				parsed := parseAllocation(alloc)
+				if len(parsed) == 0 {
+					return "", false
+				}
+				return parsed[0].Coin, true
+			})
 			coinAPI.SetMeshInfo(func() (bool, int, []string) {
 				return nexusMesh.Enabled(), nexusMesh.Port(), nexusMesh.Coins()
 			})

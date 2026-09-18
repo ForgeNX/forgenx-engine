@@ -260,6 +260,29 @@ func (c *CoinAPI) SetMeshReassign(f func(worker, symbol string) (int, error)) {
 // belongs and, if it is connected, moves it there immediately — otherwise the
 // assignment applies when it next connects.
 
+// HandleMeshDefault sets the coin miners with no assignment of their own bond
+// first. Miners already connected are left where they are: changing a default is
+// not a instruction to relocate running hardware, and anyone who wants that can
+// assign the miner explicitly.
+func (c *CoinAPI) HandleMeshDefault(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Coin string `json:"coin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Coin == "" {
+		writeError(w, 400, "coin is required")
+		return
+	}
+	if err := c.store.SetMeshDefault(strings.ToUpper(body.Coin) + ":100"); err != nil {
+		writeError(w, 500, "could not save the default")
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":   true,
+		"coin": strings.ToUpper(body.Coin),
+		"note": "new and reconnecting miners will start here",
+	})
+}
+
 // HandleMeshStatus describes the mesh in one call: whether it is running, where
 // miners should point, the coins available to assign to, and every connected
 // worker with the coin it is actually mining and the assignment it holds. Without
@@ -281,6 +304,14 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		coins = []string{}
 	}
 	out["enabled"], out["port"], out["coins"] = enabled, port, coins
+	if def, ok := c.store.GetMeshDefault(); ok {
+		if i := strings.IndexAny(def, ":,"); i >= 0 {
+			def = def[:i]
+		}
+		out["default_coin"] = def
+	} else {
+		out["default_coin"] = ""
+	}
 
 	assignments, _ := c.store.ListMeshAssignments()
 	active := map[string]string{}
@@ -978,6 +1009,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
 	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
+	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/assignments", c.HandleMeshAssignments)
 	mux.HandleFunc("/api/mesh/assign", c.HandleMeshAssign)
 	mux.HandleFunc("/api/mesh/unassign", c.HandleMeshUnassign)
