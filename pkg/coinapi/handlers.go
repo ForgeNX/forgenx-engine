@@ -45,6 +45,12 @@ type CoinAPI struct {
 	// working, so a per-coin list does not show the same miner as mining everywhere.
 	meshActiveCoins func() map[string]string
 
+	// meshInfo describes the mesh itself — whether it is listening, on which port,
+	// and the coins it is configured to bond. The Nexus panel needs the coin list to
+	// offer anywhere to assign a miner to, and a coin absent from it can never be
+	// assigned however healthy it is. nil when the mesh is disabled.
+	meshInfo func() (enabled bool, port int, coins []string)
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -233,6 +239,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetMeshInfo installs the callback describing the mesh's own configuration.
+func (c *CoinAPI) SetMeshInfo(f func() (bool, int, []string)) { c.meshInfo = f }
+
 // SetMeshActiveCoins installs the callback reporting each mesh worker's active coin.
 func (c *CoinAPI) SetMeshActiveCoins(f func() map[string]string) {
 	c.meshActiveCoins = f
@@ -250,6 +259,65 @@ func (c *CoinAPI) SetMeshReassign(f func(worker, symbol string) (int, error)) {
 // it is productive from the moment it connects. Assigning it records where it
 // belongs and, if it is connected, moves it there immediately — otherwise the
 // assignment applies when it next connects.
+
+// HandleMeshStatus describes the mesh in one call: whether it is running, where
+// miners should point, the coins available to assign to, and every connected
+// worker with the coin it is actually mining and the assignment it holds. Without
+// this the UI would have to infer which workers are meshed by cross-referencing
+// the standby flag across each coin's worker list.
+func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
+	out := map[string]interface{}{
+		"enabled": false,
+		"port":    0,
+		"coins":   []string{},
+		"miners":  []interface{}{},
+	}
+	if c.meshInfo == nil {
+		writeJSON(w, out)
+		return
+	}
+	enabled, port, coins := c.meshInfo()
+	if coins == nil {
+		coins = []string{}
+	}
+	out["enabled"], out["port"], out["coins"] = enabled, port, coins
+
+	assignments, _ := c.store.ListMeshAssignments()
+	active := map[string]string{}
+	if c.meshActiveCoins != nil {
+		active = c.meshActiveCoins()
+	}
+
+	// Every connected worker, plus any that is assigned but not currently
+	// connected — the user set that assignment and should still see it.
+	seen := map[string]bool{}
+	miners := []interface{}{}
+	for worker, coin := range active {
+		alloc, assigned := assignments[worker]
+		miners = append(miners, map[string]interface{}{
+			"worker":      worker,
+			"active_coin": coin,
+			"assignment":  alloc,
+			"assigned":    assigned,
+			"connected":   true,
+		})
+		seen[worker] = true
+	}
+	for worker, alloc := range assignments {
+		if seen[worker] {
+			continue
+		}
+		miners = append(miners, map[string]interface{}{
+			"worker":      worker,
+			"active_coin": "",
+			"assignment":  alloc,
+			"assigned":    true,
+			"connected":   false,
+		})
+	}
+	out["miners"] = miners
+	writeJSON(w, out)
+}
 
 // HandleMeshAssignments returns every stored assignment, keyed by worker name.
 func (c *CoinAPI) HandleMeshAssignments(w http.ResponseWriter, r *http.Request) {
@@ -909,6 +977,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/donation-address/", c.HandleDonationAddress)
 	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
+	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
 	mux.HandleFunc("/api/mesh/assignments", c.HandleMeshAssignments)
 	mux.HandleFunc("/api/mesh/assign", c.HandleMeshAssign)
 	mux.HandleFunc("/api/mesh/unassign", c.HandleMeshUnassign)

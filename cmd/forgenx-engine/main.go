@@ -228,6 +228,9 @@ func main() {
 			})
 			coinAPI.SetMeshReassign(nexusMesh.ReassignWorker)
 			coinAPI.SetMeshActiveCoins(nexusMesh.ActiveCoins)
+			coinAPI.SetMeshInfo(func() (bool, int, []string) {
+				return nexusMesh.Enabled(), nexusMesh.Port(), nexusMesh.Coins()
+			})
 		}
 		coinAPI.SetEngineVersion(version, buildDate)
 		eng.SetStore(store)

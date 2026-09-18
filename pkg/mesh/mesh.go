@@ -119,9 +119,18 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	var backends []*Backend
 	for _, symbol := range m.opts.Coins {
 		host, port, payout, running, ok := m.opts.Resolve(symbol)
+		// A coin the resolver cannot describe yet is still bonded, dead. "Not found"
+		// here usually means its runner has not started — the node is syncing, or the
+		// app was restarted — rather than that the coin does not exist, and in that
+		// case skipping left the miner on a fallback with nothing watching for the
+		// coin's return. The reconnect loop re-resolves on every attempt, so it picks
+		// up the address and payout once the runner appears.
+		//
+		// A coin genuinely absent from the engine never resolves, so it retries
+		// quietly forever. That is the cost of not being able to tell the two apart.
 		if !ok {
-			m.logger.Warn("[nexus] %s: coin %s not found; skipping", id, symbol)
-			continue
+			m.logger.Info("[nexus] %s: coin %s not resolvable yet; bonding dead and watching", id, symbol)
+			host, port, payout, running = "", 0, "", false
 		}
 		// A coin that is configured but not currently serving is bonded dead rather
 		// than skipped: its reconnect loop re-resolves and dials until it comes back,
@@ -131,7 +140,10 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 		if !running {
 			m.logger.Info("[nexus] %s: coin %s not serving yet; bonding dead and watching", id, symbol)
 		}
-		if payout == "" {
+		// Only a coin that resolved but has no payout is a misconfiguration worth
+		// skipping; an unresolvable one has no payout yet by definition and gets it
+		// from the resolver when its runner starts.
+		if ok && payout == "" {
 			m.logger.Warn("[nexus] %s: coin %s has no payout configured; skipping", id, symbol)
 			continue
 		}
@@ -145,7 +157,7 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 			}
 			return fmt.Sprintf("%s:%d", h, p), pay, run
 		})
-		if !running {
+		if !running || !ok {
 			b.markDead()
 		} else if err := b.Connect(); err != nil {
 			// Same treatment as a coin that is not serving: the endpoint is known, the
@@ -211,6 +223,22 @@ func (m *Mesh) unregisterLive(worker string, s *Session) {
 		}
 	}
 }
+
+// Coins returns the coins the mesh is configured to bond, in priority order. The
+// UI needs this to offer somewhere to assign a miner to: a coin absent from here
+// can never be assigned, however healthy it is.
+func (m *Mesh) Coins() []string {
+	out := make([]string, len(m.opts.Coins))
+	copy(out, m.opts.Coins)
+	return out
+}
+
+// Enabled reports whether the mesh is listening at all, so the UI can say so
+// rather than showing an empty panel.
+func (m *Mesh) Enabled() bool { return m != nil && m.listener != nil }
+
+// Port is the miner-facing listen port, shown to the user as where to point a rig.
+func (m *Mesh) Port() int { return m.opts.Port }
 
 // ActiveCoins reports which coin each connected mesh worker is actually mining,
 // keyed by worker name. A bonded miner is authorized on every one of its coins —
