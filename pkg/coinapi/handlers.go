@@ -51,6 +51,11 @@ type CoinAPI struct {
 	// assigned however healthy it is. nil when the mesh is disabled.
 	meshInfo func() (enabled bool, port int, coins []string)
 
+	// meshMinerFacts reports each meshed worker's own address and client string.
+	// The coin behind the relay sees only the relay's connection, so without this a
+	// meshed miner displays as 127.0.0.1 with no hardware.
+	meshMinerFacts func() map[string][2]string
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -239,6 +244,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetMeshMinerFacts installs the per-worker address and client-string lookup.
+func (c *CoinAPI) SetMeshMinerFacts(f func() map[string][2]string) { c.meshMinerFacts = f }
+
 // SetMeshInfo installs the callback describing the mesh's own configuration.
 func (c *CoinAPI) SetMeshInfo(f func() (bool, int, []string)) { c.meshInfo = f }
 
@@ -367,18 +375,79 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		active = c.meshActiveCoins()
 	}
 
+	// The panel wants each miner's address, hardware and hashrate alongside its
+	// routing, and those live in the engine's per-coin session data rather than in
+	// the mesh. Fetching the active coin's list here keeps the panel to one call
+	// instead of making it cross-reference every coin to find one worker.
+	type minerFacts struct {
+		ip, device string
+		hashrate   float64
+	}
+	facts := map[string]minerFacts{}
+	if minersData, err := c.fetchEngineJSON("/miners"); err == nil {
+		if byCoin, ok := minersData["miners"].(map[string]interface{}); ok {
+			for _, raw := range byCoin {
+				list, _ := raw.([]interface{})
+				for _, mRaw := range list {
+					m, ok := mRaw.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					name := getString(m, "worker_name")
+					suffix := name
+					if i := strings.LastIndex(name, "."); i >= 0 {
+						suffix = name[i+1:]
+					}
+					if suffix == "" {
+						continue
+					}
+					addr := getString(m, "remote_addr")
+					if i := strings.LastIndex(addr, ":"); i >= 0 {
+						addr = addr[:i]
+					}
+					vendor := getString(m, "vendor")
+					if vendor != "" {
+						vendor = strings.ToUpper(vendor[:1]) + vendor[1:]
+					}
+					// A meshed worker appears under every coin it is bonded to; the one
+					// carrying hashrate is the session actually doing the work.
+					if prev, seen := facts[suffix]; seen && prev.hashrate >= getFloat(m, "hashrate_15m") {
+						continue
+					}
+					facts[suffix] = minerFacts{ip: addr, device: vendor, hashrate: getFloat(m, "hashrate_15m")}
+				}
+			}
+		}
+	}
+
 	// Every connected worker, plus any that is assigned but not currently
 	// connected — the user set that assignment and should still see it.
 	seen := map[string]bool{}
 	miners := []interface{}{}
 	for worker, coin := range active {
 		alloc, assigned := assignments[worker]
+		f := facts[worker]
+		// The mesh knows the miner's real address and client string; the coin only
+		// knows the relay's. Prefer the mesh's view where it has one.
+		if c.meshMinerFacts != nil {
+			if mf, ok := c.meshMinerFacts()[worker]; ok {
+				if mf[0] != "" {
+					f.ip = mf[0]
+				}
+				if mf[1] != "" {
+					f.device = mf[1]
+				}
+			}
+		}
 		miners = append(miners, map[string]interface{}{
-			"worker":      worker,
-			"active_coin": coin,
-			"assignment":  alloc,
-			"assigned":    assigned,
-			"connected":   true,
+			"worker":       worker,
+			"active_coin":  coin,
+			"assignment":   alloc,
+			"assigned":     assigned,
+			"connected":    true,
+			"ip":           f.ip,
+			"device":       f.device,
+			"hashrate_15m": f.hashrate,
 		})
 		seen[worker] = true
 	}
@@ -387,11 +456,14 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		miners = append(miners, map[string]interface{}{
-			"worker":      worker,
-			"active_coin": "",
-			"assignment":  alloc,
-			"assigned":    true,
-			"connected":   false,
+			"worker":       worker,
+			"active_coin":  "",
+			"assignment":   alloc,
+			"assigned":     true,
+			"connected":    false,
+			"ip":           "",
+			"device":       "",
+			"hashrate_15m": 0,
 		})
 	}
 	out["miners"] = miners

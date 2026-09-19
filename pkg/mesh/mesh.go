@@ -288,6 +288,30 @@ func (m *Mesh) Enabled() bool { return m != nil && m.listener != nil }
 // Port is the miner-facing listen port, shown to the user as where to point a rig.
 func (m *Mesh) Port() int { return m.opts.Port }
 
+// MinerFacts returns each connected worker's own address and client string,
+// keyed by worker name. The coin behind the relay sees only the relay's
+// connection, so a meshed miner would otherwise display as 127.0.0.1 with no
+// hardware — the relay's view rather than the miner's.
+func (m *Mesh) MinerFacts() map[string][2]string {
+	m.liveMu.Lock()
+	sessions := make(map[string][]*Session, len(m.live))
+	for worker, set := range m.live {
+		for s := range set {
+			sessions[worker] = append(sessions[worker], s)
+		}
+	}
+	m.liveMu.Unlock()
+
+	out := make(map[string][2]string, len(sessions))
+	for worker, list := range sessions {
+		for _, s := range list {
+			addr, vendor := s.Facts()
+			out[worker] = [2]string{addr, vendor}
+		}
+	}
+	return out
+}
+
 // ActiveCoins reports which coin each connected mesh worker is actually mining,
 // keyed by worker name. A bonded miner is authorized on every one of its coins —
 // warm backends have to be, or the coin never sends them the jobs a switch needs

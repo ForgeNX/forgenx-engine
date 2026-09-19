@@ -354,6 +354,12 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			})
 
 		case "mining.subscribe":
+			// The first param is the miner's client string (e.g. "bitaxe/2.9.0").
+			// The coin never sees it, since the relay answers subscribe itself.
+			var subParams []string
+			if err := json.Unmarshal(msg.Params, &subParams); err == nil && len(subParams) > 0 {
+				s.setVendor(subParams[0])
+			}
 			b := s.activeBackend()
 			en1, en2sz := b.Extranonce()
 			resp := map[string]interface{}{

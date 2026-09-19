@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +44,14 @@ type Session struct {
 	// it should be — so failback must leave it alone or the two fight, each undoing
 	// the other within a ticker interval.
 	rotation []Weight
-	closed   bool
+
+	// The miner's own address and the client string it subscribed with. The coin
+	// behind the relay sees only the relay's connection, so these are the only place
+	// the real values exist — without them a meshed miner shows as 127.0.0.1 with no
+	// hardware, which is the relay's view rather than anything useful.
+	remoteAddr string
+	vendor     string
+	closed     bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -68,7 +76,16 @@ type jobRef struct {
 const maxTrackedJobs = 512
 
 func NewSession(id string, conn net.Conn, logger *logging.Logger) *Session {
-	return &Session{id: id, conn: conn, reader: bufio.NewReader(conn), logger: logger}
+	// The miner's address, captured here because the coin behind the relay only
+	// ever sees the relay's own connection.
+	addr := ""
+	if conn != nil && conn.RemoteAddr() != nil {
+		addr = conn.RemoteAddr().String()
+		if i := strings.LastIndex(addr, ":"); i >= 0 {
+			addr = addr[:i]
+		}
+	}
+	return &Session{id: id, conn: conn, reader: bufio.NewReader(conn), logger: logger, remoteAddr: addr}
 }
 
 func (s *Session) SendRaw(line []byte) error {
@@ -118,6 +135,16 @@ func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.c
 
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// setVendor records the client string the miner subscribed with.
+func (s *Session) setVendor(v string) { s.mu.Lock(); s.vendor = v; s.mu.Unlock() }
+
+// Facts returns the miner's own address and client string, for display.
+func (s *Session) Facts() (remoteAddr, vendor string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.remoteAddr, s.vendor
+}
 
 // setRotation records a miner's weighted split. Empty means it does not rotate.
 func (s *Session) setRotation(w []Weight) { s.mu.Lock(); s.rotation = w; s.mu.Unlock() }

@@ -248,6 +248,7 @@ func main() {
 			})
 			coinAPI.SetMeshReassign(nexusMesh.ReassignWorker)
 			coinAPI.SetMeshActiveCoins(nexusMesh.ActiveCoins)
+			coinAPI.SetMeshMinerFacts(nexusMesh.MinerFacts)
 			nexusMesh.SetDefaultLookup(func() ([]string, bool) {
 				alloc, ok := store.GetMeshDefault()
 				if !ok {
