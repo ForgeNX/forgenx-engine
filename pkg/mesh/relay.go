@@ -22,6 +22,16 @@ type rpcMsg struct {
 // a coin finishing its sync is picked up promptly.
 const failbackInterval = 30 * time.Second
 
+// w0Percent returns a coin's weight from a split, or zero if it is not in it.
+func w0Percent(weights []Weight, symbol string) float64 {
+	for _, w := range weights {
+		if strings.EqualFold(w.Coin, symbol) {
+			return w.Percent
+		}
+	}
+	return 0
+}
+
 // describeWeights renders a split for logging, e.g. "DGB 70% / BCH 30%".
 func describeWeights(w []Weight) string {
 	parts := make([]string, 0, len(w))
@@ -53,11 +63,21 @@ func firstAlive(backends []*Backend, skip *Backend) *Backend {
 	return nil
 }
 
-// maxDeferredSwitch bounds how long a move waits for its target's next job. A
-// coin between blocks with no mid-block refresh can be quiet for minutes, and a
-// miner should not sit off its allocation that long — past this, switching
-// mid-job and losing the work in flight is the lesser cost.
-const maxDeferredSwitch = 90 * time.Second
+// deferredSwitchShare is how much of a coin's own slice a pending move may spend
+// waiting for that coin's next job, before giving up and switching mid-job.
+//
+// A fixed bound was the wrong shape. A coin that only sends a job when it finds a
+// block can be quiet for ten minutes, so ninety seconds meant almost every move
+// to such a coin timed out and switched mid-job anyway — which is the thing
+// deferring exists to avoid. Waiting proportionally lets a long cycle wait a long
+// time and keeps a short one responsive.
+//
+// Missing part of a slice costs little: the percentages are a preference about
+// payout mix, not a guarantee, and the loop computes position from elapsed time
+// so a late switch does not push later ones out. Losing every share in flight
+// does cost something. The bound is only there so a coin that stops producing
+// jobs while still looking alive cannot strand a miner indefinitely.
+const deferredSwitchShare = 0.5
 
 // rotateLoop moves a miner between coins on the schedule the user set. Rather
 // than "switch every N", it works out where the miner should be from elapsed time
@@ -128,9 +148,14 @@ func (m *Mesh) rotateLoop(s *Session, backends []*Backend, cycle time.Duration) 
 			// been quiet long enough that waiting costs more than switching
 			// mid-job would.
 			if target, waiting := s.pendingSwitch(); target == b {
-				if waiting > maxDeferredSwitch {
-					m.logger.Info("[nexus] %s: %s quiet for %s; rotating %s -> %s anyway",
-						s.id, b.Symbol, waiting.Round(time.Second), symbolOf(cur), b.Symbol)
+				// This coin's own slice, halved: how long it may wait for a job
+				// before the wait costs more than the mid-job switch would.
+				share := w0Percent(weights, b.Symbol) / total
+				limit := time.Duration(float64(cycle) * share * deferredSwitchShare)
+				if waiting > limit {
+					m.logger.Info("[nexus] %s: %s quiet for %s (limit %s); rotating %s -> %s anyway",
+						s.id, b.Symbol, waiting.Round(time.Second), limit.Round(time.Second),
+						symbolOf(cur), b.Symbol)
 					m.switchTo(s, b, nil)
 				}
 				break

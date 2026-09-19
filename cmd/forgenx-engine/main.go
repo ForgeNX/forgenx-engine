@@ -67,13 +67,16 @@ func applyMeshEnv(m *config.MeshConfig) {
 	}
 }
 
-// Rotation cycle bounds. Below fifteen minutes a miner spends too much of each
-// slice on partial work for the split to mean much; above six hours a "rotating"
-// miner looks stuck on one coin for most of a day.
+// Rotation cycle bounds. Every switch costs whatever work is in flight when a
+// coin cannot be waited on for a clean job boundary, so switching rarely is worth
+// more than switching precisely: a split is a preference about payout mix, and a
+// day's cadence serves that as well as an hour's with a fraction of the
+// disturbance. Below an hour the switching starts to cost more than the split is
+// worth; a day is as long as a "rotating" miner can look like one.
 const (
-	minRotateCycle     = 15 * time.Minute
-	maxRotateCycle     = 6 * time.Hour
-	defaultRotateCycle = 1 * time.Hour
+	minRotateCycle     = 1 * time.Hour
+	maxRotateCycle     = 24 * time.Hour
+	defaultRotateCycle = 6 * time.Hour
 )
 
 func clampRotateCycle(d time.Duration) time.Duration {
