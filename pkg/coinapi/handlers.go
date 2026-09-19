@@ -504,9 +504,24 @@ func (c *CoinAPI) HandleMeshAssign(w http.ResponseWriter, r *http.Request) {
 	applied := false
 	note := "saved; applies when the miner next connects"
 	if c.meshReassign != nil {
-		symbol := body.Allocation
-		if i := strings.IndexAny(symbol, ":,"); i >= 0 {
-			symbol = symbol[:i]
+		// Move the miner to the coin carrying the largest share, not whichever
+		// happens to be listed first: an allocation written in mesh order can name
+		// a coin at 0% before the one at 100%, and moving there would park the
+		// miner on a coin its own allocation gives nothing to.
+		symbol := ""
+		best := -1.0
+		for _, pair := range strings.Split(body.Allocation, ",") {
+			parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			pct, err := strconv.ParseFloat(parts[1], 64)
+			if err != nil {
+				continue
+			}
+			if pct > best {
+				best, symbol = pct, parts[0]
+			}
 		}
 		moved, err := c.meshReassign(body.Worker, strings.ToUpper(symbol))
 		switch {
