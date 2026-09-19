@@ -51,7 +51,17 @@ type Session struct {
 	// hardware, which is the relay's view rather than anything useful.
 	remoteAddr string
 	vendor     string
-	closed     bool
+
+	// pending is a switch waiting for its target's next job. Moving a miner
+	// mid-job gives it a new difficulty while work computed at the old one is
+	// still in flight, and the coin it lands on rejects all of it — badly so
+	// between coins of very different difficulty. Deferring until the target
+	// sends its own job means the miner abandons the old one exactly as it would
+	// on a new block. pendingSince bounds the wait: a quiet coin must not hold a
+	// miner off its allocation indefinitely.
+	pending      *Backend
+	pendingSince time.Time
+	closed       bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -135,6 +145,25 @@ func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.c
 
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// setPending records a switch waiting for the target's next job, or clears it
+// when passed nil.
+func (s *Session) setPending(b *Backend) {
+	s.mu.Lock()
+	s.pending = b
+	s.pendingSince = time.Now()
+	s.mu.Unlock()
+}
+
+// pendingSwitch returns the deferred target and how long it has been waiting.
+func (s *Session) pendingSwitch() (*Backend, time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending == nil {
+		return nil, 0
+	}
+	return s.pending, time.Since(s.pendingSince)
+}
 
 // setVendor records the client string the miner subscribed with.
 func (s *Session) setVendor(v string) { s.mu.Lock(); s.vendor = v; s.mu.Unlock() }

@@ -74,6 +74,14 @@ type Backend struct {
 
 	onMessage func(line []byte)
 
+	// onWarmNotify fires when a backend the miner is NOT currently mining receives
+	// a job. It is how a deferred switch lands on a real job boundary: moving a
+	// miner mid-job hands it a new difficulty while it still has work in flight at
+	// the old one, and every share from that work is rejected by the coin it
+	// arrives at. Waiting for the target's own next job means the miner abandons
+	// the old one exactly as it would on a new block, losing nothing.
+	onWarmNotify func(line []byte)
+
 	// onDead, if set, is called once when Run() exits. The relay uses it to tear
 	// down the miner session when the ACTIVE backend dies, so the miner reconnects
 	// and re-bonds instead of sitting on a connection that will never send another
@@ -290,8 +298,12 @@ func (b *Backend) Run() {
 		b.mu.Lock()
 		live := b.live
 		b.mu.Unlock()
-		if live && b.onMessage != nil {
-			b.onMessage(line)
+		if live {
+			if b.onMessage != nil {
+				b.onMessage(line)
+			}
+		} else if msg.Method == "mining.notify" && b.onWarmNotify != nil {
+			b.onWarmNotify(line)
 		}
 	}
 }
@@ -452,6 +464,14 @@ func (b *Backend) GoLive() (setDiff, notify []byte) {
 	defer b.mu.Unlock()
 	b.live = true
 	return b.lastSetDifficulty, b.lastNotify
+}
+
+// SetWarmNotifyHandler installs the callback for jobs arriving on a backend the
+// miner is not currently mining.
+func (b *Backend) SetWarmNotifyHandler(f func(line []byte)) {
+	b.mu.Lock()
+	b.onWarmNotify = f
+	b.mu.Unlock()
 }
 
 // SendRaw writes a raw JSON line to the coin backend.

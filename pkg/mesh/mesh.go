@@ -288,6 +288,31 @@ func (m *Mesh) Enabled() bool { return m != nil && m.listener != nil }
 // Port is the miner-facing listen port, shown to the user as where to point a rig.
 func (m *Mesh) Port() int { return m.opts.Port }
 
+// PendingSwitches reports, per worker, the coin it is waiting to move to. A
+// deferred switch does not take effect until the target sends a job, so without
+// this the UI would say a reassignment had applied while the miner was still
+// visibly on its old coin.
+func (m *Mesh) PendingSwitches() map[string]string {
+	m.liveMu.Lock()
+	sessions := make(map[string][]*Session, len(m.live))
+	for worker, set := range m.live {
+		for s := range set {
+			sessions[worker] = append(sessions[worker], s)
+		}
+	}
+	m.liveMu.Unlock()
+
+	out := map[string]string{}
+	for worker, list := range sessions {
+		for _, s := range list {
+			if target, _ := s.pendingSwitch(); target != nil {
+				out[worker] = target.Symbol
+			}
+		}
+	}
+	return out
+}
+
 // MinerFacts returns each connected worker's own address and client string,
 // keyed by worker name. The coin behind the relay sees only the relay's
 // connection, so a meshed miner would otherwise display as 127.0.0.1 with no
@@ -349,7 +374,22 @@ func (m *Mesh) ActiveCoins() map[string]string {
 //
 // A worker can hold more than one session briefly during a reconnect, so every
 // session under that name is moved.
-func (m *Mesh) ReassignWorker(worker, symbol string) (moved int, err error) {
+func (m *Mesh) ReassignWorker(worker string, weights []Weight) (moved int, err error) {
+	if len(weights) == 0 {
+		return 0, nil
+	}
+	// Where to put the miner now: the coin carrying the largest share. For a
+	// pinned miner that is its only coin; for a rotating one it is where the
+	// cycle starts, and the rotation loop takes over from there.
+	symbol := weights[0].Coin
+	best := weights[0].Percent
+	for _, w := range weights[1:] {
+		if w.Percent > best {
+			best, symbol = w.Percent, w.Coin
+		}
+	}
+	rotating := len(weights) > 1
+
 	m.liveMu.Lock()
 	sessions := make([]*Session, 0, 2)
 	for s := range m.live[worker] {
@@ -372,7 +412,17 @@ func (m *Mesh) ReassignWorker(worker, symbol string) (moved int, err error) {
 		if target == nil {
 			return moved, fmt.Errorf("worker %s is not bonded to %s", worker, symbol)
 		}
-		s.setHome(target)
+		// Rotation and home are mutually exclusive: a rotating miner's schedule
+		// decides where it belongs, so it must have no home for failback to defer
+		// to, and a pinned miner must have no rotation weights left over or the
+		// rotation loop would keep moving it after it was pinned.
+		if rotating {
+			s.setRotation(weights)
+			s.setHome(nil)
+		} else {
+			s.setRotation(nil)
+			s.setHome(target)
+		}
 		if target == s.activeBackend() {
 			moved++
 			continue
@@ -382,7 +432,10 @@ func (m *Mesh) ReassignWorker(worker, symbol string) (moved int, err error) {
 			// serving again. Not an error — just not immediate.
 			continue
 		}
-		m.switchActive(s, target)
+		// Deferred for the same reason rotation is: the miner keeps earning on its
+		// current coin until the target sends a job, then abandons that work on a
+		// real boundary rather than mid-job with a new difficulty already applied.
+		m.switchDeferred(s, target)
 		moved++
 	}
 	return moved, nil

@@ -38,7 +38,7 @@ type CoinAPI struct {
 	// assignment made from the UI does not sit inert until the miner happens to
 	// reconnect. nil when the mesh is disabled — the assignment is still saved and
 	// takes effect on the miner's next connect.
-	meshReassign func(worker, symbol string) (int, error)
+	meshReassign func(worker string, weights [][2]interface{}) (int, error)
 
 	// meshActiveCoins reports which coin each mesh worker is actually mining. Used
 	// to mark a worker standby on the coins it is bonded to but not currently
@@ -55,6 +55,10 @@ type CoinAPI struct {
 	// The coin behind the relay sees only the relay's connection, so without this a
 	// meshed miner displays as 127.0.0.1 with no hardware.
 	meshMinerFacts func() map[string][2]string
+
+	// meshPending reports which coin each worker is waiting to move to, so the UI
+	// can say a switch is coming rather than claiming it has happened.
+	meshPending func() map[string]string
 
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
@@ -244,6 +248,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetMeshPending installs the pending-switch lookup.
+func (c *CoinAPI) SetMeshPending(f func() map[string]string) { c.meshPending = f }
+
 // SetMeshMinerFacts installs the per-worker address and client-string lookup.
 func (c *CoinAPI) SetMeshMinerFacts(f func() map[string][2]string) { c.meshMinerFacts = f }
 
@@ -257,7 +264,7 @@ func (c *CoinAPI) SetMeshActiveCoins(f func() map[string]string) {
 
 // SetMeshReassign installs the callback used to move a connected miner between
 // coins when its assignment changes.
-func (c *CoinAPI) SetMeshReassign(f func(worker, symbol string) (int, error)) {
+func (c *CoinAPI) SetMeshReassign(f func(worker string, weights [][2]interface{}) (int, error)) {
 	c.meshReassign = f
 }
 
@@ -422,6 +429,11 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Every connected worker, plus any that is assigned but not currently
 	// connected — the user set that assignment and should still see it.
+	pending := map[string]string{}
+	if c.meshPending != nil {
+		pending = c.meshPending()
+	}
+
 	seen := map[string]bool{}
 	miners := []interface{}{}
 	for worker, coin := range active {
@@ -448,6 +460,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"ip":           f.ip,
 			"device":       f.device,
 			"hashrate_15m": f.hashrate,
+			"pending_coin": pending[worker],
 		})
 		seen[worker] = true
 	}
@@ -464,6 +477,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"ip":           "",
 			"device":       "",
 			"hashrate_15m": 0,
+			"pending_coin": "",
 		})
 	}
 	out["miners"] = miners
@@ -504,12 +518,9 @@ func (c *CoinAPI) HandleMeshAssign(w http.ResponseWriter, r *http.Request) {
 	applied := false
 	note := "saved; applies when the miner next connects"
 	if c.meshReassign != nil {
-		// Move the miner to the coin carrying the largest share, not whichever
-		// happens to be listed first: an allocation written in mesh order can name
-		// a coin at 0% before the one at 100%, and moving there would park the
-		// miner on a coin its own allocation gives nothing to.
-		symbol := ""
-		best := -1.0
+		// Hand over the whole split: the mesh needs it to tell a miner pinned to one
+		// node from one rotating across several, and to pick where to put it now.
+		weights := [][2]interface{}{}
 		for _, pair := range strings.Split(body.Allocation, ",") {
 			parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
 			if len(parts) != 2 {
@@ -519,11 +530,9 @@ func (c *CoinAPI) HandleMeshAssign(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			if pct > best {
-				best, symbol = pct, parts[0]
-			}
+			weights = append(weights, [2]interface{}{strings.ToUpper(parts[0]), pct})
 		}
-		moved, err := c.meshReassign(body.Worker, strings.ToUpper(symbol))
+		moved, err := c.meshReassign(body.Worker, weights)
 		switch {
 		case err != nil:
 			note = err.Error()

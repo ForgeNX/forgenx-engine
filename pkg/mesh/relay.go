@@ -53,6 +53,12 @@ func firstAlive(backends []*Backend, skip *Backend) *Backend {
 	return nil
 }
 
+// maxDeferredSwitch bounds how long a move waits for its target's next job. A
+// coin between blocks with no mid-block refresh can be quiet for minutes, and a
+// miner should not sit off its allocation that long — past this, switching
+// mid-job and losing the work in flight is the lesser cost.
+const maxDeferredSwitch = 90 * time.Second
+
 // rotateLoop moves a miner between coins on the schedule the user set. Rather
 // than "switch every N", it works out where the miner should be from elapsed time
 // within the cycle and corrects if it is elsewhere — so a miner that failed over
@@ -118,8 +124,18 @@ func (m *Mesh) rotateLoop(s *Session, backends []*Backend, cycle time.Duration) 
 				// rather than idle on a dead coin to honour a schedule.
 				break
 			}
-			m.logger.Info("[nexus] %s: rotating %s -> %s", s.id, symbolOf(cur), b.Symbol)
-			m.switchActive(s, b)
+			// Already waiting on this coin's next job: let it land, unless it has
+			// been quiet long enough that waiting costs more than switching
+			// mid-job would.
+			if target, waiting := s.pendingSwitch(); target == b {
+				if waiting > maxDeferredSwitch {
+					m.logger.Info("[nexus] %s: %s quiet for %s; rotating %s -> %s anyway",
+						s.id, b.Symbol, waiting.Round(time.Second), symbolOf(cur), b.Symbol)
+					m.switchTo(s, b, nil)
+				}
+				break
+			}
+			m.switchDeferred(s, b)
 			break
 		}
 	}
@@ -184,11 +200,36 @@ func (m *Mesh) failbackLoop(s *Session, backends []*Backend) {
 // extranonce, which the coin would reject. Those sessions are closed instead so the
 // miner reconnects and re-bonds cleanly — a few seconds of lost work, but no stream
 // of rejects.
+// switchActive moves a miner now, replaying the target's cached job. Right for
+// failover, where the coin it is leaving has gone and there is no work worth
+// preserving.
 func (m *Mesh) switchActive(s *Session, target *Backend) {
+	m.switchTo(s, target, nil)
+}
+
+// switchDeferred asks for a move at the target's next job rather than
+// immediately. The miner keeps earning on its current coin meanwhile and
+// abandons that work on a real job boundary, so nothing in flight is wasted.
+// Used for rotation and for a user's reassignment, where a few seconds' delay
+// costs nothing and a mid-job move costs every share already computed.
+func (m *Mesh) switchDeferred(s *Session, target *Backend) {
 	prev := s.activeBackend()
 	if target == nil || target == prev || !target.Alive() {
 		return
 	}
+	s.setPending(target)
+	m.logger.Info("[nexus] %s: switching %s -> %s at its next job", s.id, symbolOf(prev), target.Symbol)
+}
+
+// switchTo performs the move. When notify is non-nil it is the target's own
+// freshly arrived job, which is what makes a deferred switch lossless; otherwise
+// the target's cached job is replayed.
+func (m *Mesh) switchTo(s *Session, target *Backend, notify []byte) {
+	prev := s.activeBackend()
+	if target == nil || target == prev || !target.Alive() {
+		return
+	}
+	s.setPending(nil)
 
 	if !s.supportsExtranonceSub() {
 		m.logger.Info("[nexus] %s: switching %s -> %s requires reconnect (no extranonce.subscribe)",
@@ -210,7 +251,10 @@ func (m *Mesh) switchActive(s *Session, target *Backend) {
 		return
 	}
 
-	setDiff, notify := target.GoLive()
+	setDiff, cached := target.GoLive()
+	if notify == nil {
+		notify = cached
+	}
 	if setDiff != nil {
 		s.SendRaw(setDiff)
 	}
@@ -307,6 +351,17 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	for _, b := range backends {
 		b := b
 		go b.Reconnect(s.isClosed)
+	}
+
+	// A warm backend's job is what a deferred switch waits for: when the target
+	// sends one, move on that job rather than replaying a cached one.
+	for _, wb := range backends {
+		b := wb
+		b.SetWarmNotifyHandler(func(line []byte) {
+			if target, _ := s.pendingSwitch(); target == b {
+				m.switchTo(s, b, line)
+			}
+		})
 	}
 
 	go m.failbackLoop(s, backends)

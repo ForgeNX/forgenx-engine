@@ -246,9 +246,18 @@ func main() {
 				}
 				return out, true
 			})
-			coinAPI.SetMeshReassign(nexusMesh.ReassignWorker)
+			coinAPI.SetMeshReassign(func(worker string, pairs [][2]interface{}) (int, error) {
+				weights := make([]mesh.Weight, 0, len(pairs))
+				for _, p := range pairs {
+					coin, _ := p[0].(string)
+					pct, _ := p[1].(float64)
+					weights = append(weights, mesh.Weight{Coin: coin, Percent: pct})
+				}
+				return nexusMesh.ReassignWorker(worker, weights)
+			})
 			coinAPI.SetMeshActiveCoins(nexusMesh.ActiveCoins)
 			coinAPI.SetMeshMinerFacts(nexusMesh.MinerFacts)
+			coinAPI.SetMeshPending(nexusMesh.PendingSwitches)
 			nexusMesh.SetDefaultLookup(func() ([]string, bool) {
 				alloc, ok := store.GetMeshDefault()
 				if !ok {
