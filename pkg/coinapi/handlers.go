@@ -266,20 +266,56 @@ func (c *CoinAPI) SetMeshReassign(f func(worker, symbol string) (int, error)) {
 // assign the miner explicitly.
 func (c *CoinAPI) HandleMeshDefault(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Coin string `json:"coin"`
+		Coins []string `json:"coins"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Coin == "" {
-		writeError(w, 400, "coin is required")
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Coins) == 0 {
+		writeError(w, 400, "coins is required")
 		return
 	}
-	if err := c.store.SetMeshDefault(strings.ToUpper(body.Coin) + ":100"); err != nil {
-		writeError(w, 500, "could not save the default")
+	// Stored as the same allocation string assignments use. The percentages are
+	// not read for ordering — only the sequence is — but keeping one format means
+	// weighted rotation can reuse this row unchanged.
+	parts := make([]string, 0, len(body.Coins))
+	for _, c := range body.Coins {
+		if c = strings.TrimSpace(strings.ToUpper(c)); c != "" {
+			parts = append(parts, c+":0")
+		}
+	}
+	if len(parts) == 0 {
+		writeError(w, 400, "coins is required")
+		return
+	}
+	parts[0] = strings.TrimSuffix(parts[0], ":0") + ":100"
+	if err := c.store.SetMeshDefault(strings.Join(parts, ",")); err != nil {
+		writeError(w, 500, "could not save the order")
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"ok":   true,
-		"coin": strings.ToUpper(body.Coin),
-		"note": "new and reconnecting miners will start here",
+		"ok":    true,
+		"coins": body.Coins,
+		"note":  "new and reconnecting miners will follow this order",
+	})
+}
+
+// HandleMeshInterval sets how long a full rotation cycle takes for miners split
+// across coins. Stored as a Go duration string; the engine clamps it to a sane
+// range when it reads it.
+func (c *CoinAPI) HandleMeshInterval(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Interval string `json:"interval"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Interval == "" {
+		writeError(w, 400, "interval is required")
+		return
+	}
+	if err := c.store.SetMeshInterval(body.Interval); err != nil {
+		writeError(w, 500, "could not save the interval")
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":       true,
+		"interval": body.Interval,
+		"note":     "applies at each miner's next rotation boundary",
 	})
 }
 
@@ -304,13 +340,25 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		coins = []string{}
 	}
 	out["enabled"], out["port"], out["coins"] = enabled, port, coins
+	// The order unassigned miners bond in: first is where they start, the rest are
+	// fallbacks in preference order.
+	order := []string{}
 	if def, ok := c.store.GetMeshDefault(); ok {
-		if i := strings.IndexAny(def, ":,"); i >= 0 {
-			def = def[:i]
+		for _, pair := range strings.Split(def, ",") {
+			sym := strings.TrimSpace(pair)
+			if i := strings.Index(sym, ":"); i >= 0 {
+				sym = sym[:i]
+			}
+			if sym != "" {
+				order = append(order, sym)
+			}
 		}
-		out["default_coin"] = def
+	}
+	out["default_order"] = order
+	if iv, ok := c.store.GetMeshInterval(); ok {
+		out["rotate_interval"] = iv
 	} else {
-		out["default_coin"] = ""
+		out["rotate_interval"] = ""
 	}
 
 	assignments, _ := c.store.ListMeshAssignments()
@@ -1010,6 +1058,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
 	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
+	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)
 	mux.HandleFunc("/api/mesh/assignments", c.HandleMeshAssignments)
 	mux.HandleFunc("/api/mesh/assign", c.HandleMeshAssign)
 	mux.HandleFunc("/api/mesh/unassign", c.HandleMeshUnassign)

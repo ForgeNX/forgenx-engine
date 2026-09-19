@@ -692,6 +692,21 @@ func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric st
 // authorize string and can never contain a space.
 const meshDefaultKey = "\x00 mesh default"
 
+// The rotation interval is mesh-wide, stored under its own reserved key for the
+// same reason as the default order: one value does not justify a table.
+const meshIntervalKey = "\x00 mesh interval"
+
+// GetMeshInterval returns how long a rotating miner spends on each cycle, as a
+// Go duration string, and whether one has been set.
+func (s *Store) GetMeshInterval() (string, bool) {
+	return s.GetMeshAssignment(meshIntervalKey)
+}
+
+// SetMeshInterval records the rotation cycle length.
+func (s *Store) SetMeshInterval(d string) error {
+	return s.SetMeshAssignment(meshIntervalKey, d)
+}
+
 // GetMeshDefault returns the coin the user chose for miners with no assignment
 // of their own, and whether one has been set. Unset means the mesh falls back to
 // its configured order.
@@ -750,8 +765,8 @@ func (s *Store) ListMeshAssignments() (map[string]string, error) {
 	for rows.Next() {
 		var w, a string
 		if err := rows.Scan(&w, &a); err == nil {
-			if w == meshDefaultKey {
-				continue // the mesh default, not a worker
+			if w == meshDefaultKey || w == meshIntervalKey {
+				continue // mesh-wide settings, not workers
 			}
 			out[w] = a
 		}

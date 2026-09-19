@@ -37,11 +37,20 @@ type Options struct {
 	// store it reads from is created after the mesh starts.
 	Assignment func(worker string) ([]Weight, bool)
 
-	// Default returns the coin a miner with no assignment of its own should bond
-	// first, and whether the user has chosen one. Without it the mesh falls back to
-	// the order the coins were configured in, which is an installation detail rather
-	// than a choice anyone made.
-	Default func() (symbol string, ok bool)
+	// Default returns the order a miner with no assignment of its own should bond
+	// its coins in: the first is where it starts, the rest are its fallbacks in
+	// preference order. Without it the mesh uses the order the coins were configured
+	// in, which is an installation detail rather than a choice anyone made.
+	//
+	// Coins the mesh knows about but the list omits keep their configured order
+	// behind the ones it names, so a coin added to the config later still works
+	// without anyone revisiting this setting.
+	Default func() (order []string, ok bool)
+
+	// RotateCycle is how long a full rotation takes for a miner split across coins.
+	// Each coin gets its share of this. Read per session rather than cached, so a
+	// change applies to miners already connected at their next boundary.
+	RotateCycle func() time.Duration
 }
 
 // Weight is one coin's share of a miner's time. A single entry at 100 means the
@@ -127,21 +136,23 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	// through to the next one regardless of what the default is.
 	coins := m.opts.Coins
 	if m.opts.Default != nil {
-		if def, ok := m.opts.Default(); ok && def != "" {
+		if pref, ok := m.opts.Default(); ok && len(pref) > 0 {
 			ordered := make([]string, 0, len(coins))
-			for _, c := range coins {
-				if strings.EqualFold(c, def) {
-					ordered = append(ordered, c)
+			taken := make(map[string]bool, len(coins))
+			for _, want := range pref {
+				for _, c := range coins {
+					if !taken[c] && strings.EqualFold(c, want) {
+						ordered = append(ordered, c)
+						taken[c] = true
+					}
 				}
 			}
 			for _, c := range coins {
-				if !strings.EqualFold(c, def) {
+				if !taken[c] {
 					ordered = append(ordered, c)
 				}
 			}
-			if len(ordered) == len(coins) {
-				coins = ordered
-			}
+			coins = ordered
 		}
 	}
 
@@ -217,10 +228,13 @@ func (m *Mesh) handleMiner(conn net.Conn) {
 	m.runMiner(s, backends)
 }
 
+// SetRotateCycleLookup installs the lookup for the rotation cycle length.
+func (m *Mesh) SetRotateCycleLookup(f func() time.Duration) { m.opts.RotateCycle = f }
+
 // SetDefaultLookup installs the lookup for the user's chosen default coin. Set
 // after construction for the same reason as the assignment lookup: the store it
 // reads from is created after the mesh starts.
-func (m *Mesh) SetDefaultLookup(f func() (string, bool)) { m.opts.Default = f }
+func (m *Mesh) SetDefaultLookup(f func() ([]string, bool)) { m.opts.Default = f }
 
 // SetAssignmentLookup installs the per-worker allocation lookup. Safe to call
 // after Start: assignments are only read when a miner authorizes, so a miner that

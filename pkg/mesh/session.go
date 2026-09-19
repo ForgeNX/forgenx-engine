@@ -37,7 +37,13 @@ type Session struct {
 	// a reassignment arriving from the API can find the target coin — the relay
 	// goroutine's locals are not reachable from outside it.
 	bonded []*Backend
-	closed bool
+
+	// rotation is the miner's weighted split across coins, when the user gave it
+	// more than one. A rotating miner has no home coin — the schedule decides where
+	// it should be — so failback must leave it alone or the two fight, each undoing
+	// the other within a ticker interval.
+	rotation []Weight
+	closed   bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -112,6 +118,21 @@ func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.c
 
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// setRotation records a miner's weighted split. Empty means it does not rotate.
+func (s *Session) setRotation(w []Weight) { s.mu.Lock(); s.rotation = w; s.mu.Unlock() }
+
+// rotationWeights returns the miner's split, or nil if it does not rotate.
+func (s *Session) rotationWeights() []Weight {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.rotation) == 0 {
+		return nil
+	}
+	out := make([]Weight, len(s.rotation))
+	copy(out, s.rotation)
+	return out
+}
 
 // setBonded records the backends this session was bonded to.
 func (s *Session) setBonded(b []*Backend) { s.mu.Lock(); s.bonded = b; s.mu.Unlock() }

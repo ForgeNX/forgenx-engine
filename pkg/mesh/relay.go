@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -20,6 +21,15 @@ type rpcMsg struct {
 // that a flapping coin does not bounce the miner between chains, short enough that
 // a coin finishing its sync is picked up promptly.
 const failbackInterval = 30 * time.Second
+
+// describeWeights renders a split for logging, e.g. "DGB 70% / BCH 30%".
+func describeWeights(w []Weight) string {
+	parts := make([]string, 0, len(w))
+	for _, x := range w {
+		parts = append(parts, fmt.Sprintf("%s %.0f%%", x.Coin, x.Percent))
+	}
+	return strings.Join(parts, " / ")
+}
 
 // workerSuffix strips the payout-address prefix a miner authorizes with, leaving
 // the name that identifies the hardware. The same machine authorizes as
@@ -43,6 +53,78 @@ func firstAlive(backends []*Backend, skip *Backend) *Backend {
 	return nil
 }
 
+// rotateLoop moves a miner between coins on the schedule the user set. Rather
+// than "switch every N", it works out where the miner should be from elapsed time
+// within the cycle and corrects if it is elsewhere — so a miner that failed over
+// to another coin during an outage rejoins its proper share when the coin
+// returns, instead of the schedule drifting by however long the outage lasted.
+//
+// Time-slicing splits a miner's expected blocks between coins rather than adding
+// to them; it is a way to be paid in more than one coin, not a way to find more.
+func (m *Mesh) rotateLoop(s *Session, backends []*Backend, cycle time.Duration) {
+	if cycle <= 0 {
+		return
+	}
+	// Check often enough to land near each boundary without spinning.
+	tick := cycle / 20
+	if tick < 5*time.Second {
+		tick = 5 * time.Second
+	}
+	t := time.NewTicker(tick)
+	defer t.Stop()
+
+	start := time.Now()
+	for range t.C {
+		if s.isClosed() {
+			return
+		}
+		weights := s.rotationWeights()
+		if len(weights) < 2 {
+			continue // no longer rotating
+		}
+
+		total := 0.0
+		for _, w := range weights {
+			total += w.Percent
+		}
+		if total <= 0 {
+			continue
+		}
+
+		// Where in the cycle are we, and whose slice is that?
+		elapsed := time.Since(start) % cycle
+		var acc time.Duration
+		want := weights[0].Coin
+		for _, w := range weights {
+			acc += time.Duration(float64(cycle) * (w.Percent / total))
+			if elapsed < acc {
+				want = w.Coin
+				break
+			}
+		}
+
+		cur := s.activeBackend()
+		m.logger.Debug("[nexus] %s: rotate tick elapsed=%s want=%s cur=%s",
+			s.id, elapsed.Round(time.Second), want, symbolOf(cur))
+		if cur != nil && strings.EqualFold(cur.Symbol, want) {
+			continue
+		}
+		for _, b := range backends {
+			if !strings.EqualFold(b.Symbol, want) {
+				continue
+			}
+			if !b.Alive() {
+				// Its turn, but the coin is down. Stay put and earn on something
+				// rather than idle on a dead coin to honour a schedule.
+				break
+			}
+			m.logger.Info("[nexus] %s: rotating %s -> %s", s.id, symbolOf(cur), b.Symbol)
+			m.switchActive(s, b)
+			break
+		}
+	}
+}
+
 // failbackLoop watches for a higher-priority coin becoming available again and
 // moves the miner back to it. Runs until the session closes.
 func (m *Mesh) failbackLoop(s *Session, backends []*Backend) {
@@ -57,6 +139,14 @@ func (m *Mesh) failbackLoop(s *Session, backends []*Backend) {
 			if cur == nil {
 				return
 			}
+			// A rotating miner has no home — its schedule decides where it should
+			// be — so failback leaves it entirely alone. Without this the two
+			// fight: rotation moves the miner on, failback drags it back, and
+			// neither wins for longer than a ticker interval.
+			if len(s.rotationWeights()) > 0 {
+				return
+			}
+
 			// A miner with an assigned coin belongs there whenever it is up; one
 			// without falls back to configured order. Comparing against list
 			// position alone would undo an assignment on the next tick.
@@ -220,6 +310,12 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	}
 
 	go m.failbackLoop(s, backends)
+	// Only does anything once the miner turns out to be rotating; the loop checks
+	// its weights each tick, so a miner assigned a split later starts rotating
+	// without reconnecting.
+	if m.opts.RotateCycle != nil {
+		go m.rotateLoop(s, backends, m.opts.RotateCycle())
+	}
 
 	// The active backend is looked up per message rather than captured: it changes
 	// when a coin dies or a higher-priority one comes back, and a stale capture
@@ -294,6 +390,14 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			// when its coin returns.
 			if m.opts.Assignment != nil && worker != "" {
 				if weights, ok := m.opts.Assignment(workerSuffix(worker)); ok && len(weights) > 0 {
+					// More than one weight means the user wants this miner's time split
+					// across coins. There is no single coin to call home in that case, so
+					// the rotation loop drives it and failback stays out of the way.
+					if len(weights) > 1 {
+						s.setRotation(weights)
+						m.logger.Info("[nexus] %s: %s rotating across %s", s.id, worker, describeWeights(weights))
+						goto rotationSet
+					}
 					sym := weights[0].Coin
 					for _, ab := range backends {
 						if !strings.EqualFold(ab.Symbol, sym) {
@@ -319,6 +423,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 					}
 				}
 			}
+		rotationSet:
 
 			b := s.activeBackend()
 

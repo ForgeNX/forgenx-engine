@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	// Import coin packages to trigger init() registration
 	_ "github.com/ForgeNX/forgenx-engine/pkg/coin"
@@ -64,6 +65,25 @@ func applyMeshEnv(m *config.MeshConfig) {
 	if v := os.Getenv("MESH_DEFAULT_ALLOCATION"); v != "" {
 		m.DefaultAllocation = parseAllocation(v)
 	}
+}
+
+// Rotation cycle bounds. Below fifteen minutes a miner spends too much of each
+// slice on partial work for the split to mean much; above six hours a "rotating"
+// miner looks stuck on one coin for most of a day.
+const (
+	minRotateCycle     = 15 * time.Minute
+	maxRotateCycle     = 6 * time.Hour
+	defaultRotateCycle = 1 * time.Hour
+)
+
+func clampRotateCycle(d time.Duration) time.Duration {
+	if d < minRotateCycle {
+		return minRotateCycle
+	}
+	if d > maxRotateCycle {
+		return maxRotateCycle
+	}
+	return d
 }
 
 // parseAllocation reads "DGB:50,BCH:50" into weights. Used for both the mesh-wide
@@ -228,16 +248,29 @@ func main() {
 			})
 			coinAPI.SetMeshReassign(nexusMesh.ReassignWorker)
 			coinAPI.SetMeshActiveCoins(nexusMesh.ActiveCoins)
-			nexusMesh.SetDefaultLookup(func() (string, bool) {
+			nexusMesh.SetDefaultLookup(func() ([]string, bool) {
 				alloc, ok := store.GetMeshDefault()
 				if !ok {
-					return "", false
+					return nil, false
 				}
 				parsed := parseAllocation(alloc)
 				if len(parsed) == 0 {
-					return "", false
+					return nil, false
 				}
-				return parsed[0].Coin, true
+				order := make([]string, 0, len(parsed))
+				for _, w := range parsed {
+					order = append(order, w.Coin)
+				}
+				return order, true
+			})
+			nexusMesh.SetRotateCycleLookup(func() time.Duration {
+				d := defaultRotateCycle
+				if v, ok := store.GetMeshInterval(); ok {
+					if parsed, err := time.ParseDuration(v); err == nil {
+						d = parsed
+					}
+				}
+				return clampRotateCycle(d)
 			})
 			coinAPI.SetMeshInfo(func() (bool, int, []string) {
 				return nexusMesh.Enabled(), nexusMesh.Port(), nexusMesh.Coins()
