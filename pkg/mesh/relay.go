@@ -297,6 +297,12 @@ func (m *Mesh) switchTo(s *Session, target *Backend, notify []byte) {
 		s.id, symbolOf(prev), target.Symbol, setDiff != nil, notify != nil)
 }
 
+// authorizeSettle is how long to let a coin's post-authorize difficulty messages
+// arrive before replaying one to the miner. Short enough not to delay the miner
+// noticeably, long enough to catch a restored difficulty sent immediately after
+// the base one.
+const authorizeSettle = 750 * time.Millisecond
+
 // symbolOf is nil-safe so switch logging works before a backend is bonded.
 func symbolOf(b *Backend) string {
 	if b == nil {
@@ -541,6 +547,16 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			// Flip the backend live and replay the current difficulty + latest job
 			// so the miner starts immediately — no race, no waiting for the coin's
 			// next template refresh.
+			// A coin sends its base difficulty on authorize and then, a moment
+			// later, the difficulty it remembered for this worker from its last
+			// session. Replaying the cache the instant the miner authorizes catches
+			// only the first of those, so the miner starts work at the base while
+			// the coin already expects the restored value — and every share from
+			// that work is rejected as low-difficulty. Waiting for the burst to
+			// settle costs a fraction of a second and means the miner is told the
+			// difficulty the coin is actually holding it to.
+			b.SettleDifficulty(authorizeSettle)
+
 			setDiff, notify := b.GoLive()
 			if setDiff != nil {
 				s.SendRaw(setDiff)

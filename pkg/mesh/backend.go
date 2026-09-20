@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -464,6 +465,24 @@ func (b *Backend) GoLive() (setDiff, notify []byte) {
 	defer b.mu.Unlock()
 	b.live = true
 	return b.lastSetDifficulty, b.lastNotify
+}
+
+// SettleDifficulty waits for the coin's difficulty to stop changing, up to the
+// given budget. A coin restoring a worker's remembered difficulty sends it just
+// after the base one, so reading the cache too early gets the wrong value.
+func (b *Backend) SettleDifficulty(budget time.Duration) {
+	deadline := time.Now().Add(budget)
+	var last []byte
+	for time.Now().Before(deadline) {
+		b.mu.Lock()
+		cur := b.lastSetDifficulty
+		b.mu.Unlock()
+		if last != nil && bytes.Equal(cur, last) {
+			return // unchanged over an interval; the burst is done
+		}
+		last = cur
+		time.Sleep(150 * time.Millisecond)
+	}
 }
 
 // SetWarmNotifyHandler installs the callback for jobs arriving on a backend the
