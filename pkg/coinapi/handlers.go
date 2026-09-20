@@ -393,7 +393,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	facts := map[string]minerFacts{}
 	if minersData, err := c.fetchEngineJSON("/miners"); err == nil {
 		if byCoin, ok := minersData["miners"].(map[string]interface{}); ok {
-			for _, raw := range byCoin {
+			for coinSym, raw := range byCoin {
 				list, _ := raw.([]interface{})
 				for _, mRaw := range list {
 					m, ok := mRaw.(map[string]interface{})
@@ -416,12 +416,19 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 					if vendor != "" {
 						vendor = strings.ToUpper(vendor[:1]) + vendor[1:]
 					}
-					// A meshed worker appears under every coin it is bonded to; the one
-					// carrying hashrate is the session actually doing the work.
-					if prev, seen := facts[suffix]; seen && prev.hashrate >= getFloat(m, "hashrate_15m") {
+					// A meshed worker appears under every coin it is bonded to, and each
+					// keeps its own rolling average. A coin the miner left ten minutes ago
+					// still reports whatever it was doing then, so taking the largest
+					// figure showed a stale number from the wrong coin. Prefer the coin
+					// the miner is actually on; fall back to any other only when the mesh
+					// cannot say which that is.
+					hr := getFloat(m, "hashrate_15m")
+					onThisCoin := strings.EqualFold(active[suffix], coinSym)
+					if prev, seen := facts[suffix]; seen && !onThisCoin {
+						_ = prev
 						continue
 					}
-					facts[suffix] = minerFacts{ip: addr, device: vendor, hashrate: getFloat(m, "hashrate_15m")}
+					facts[suffix] = minerFacts{ip: addr, device: vendor, hashrate: hr}
 				}
 			}
 		}
