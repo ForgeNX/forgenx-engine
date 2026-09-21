@@ -704,7 +704,7 @@ func (c *CoinAPI) HandleMeshAssign(w http.ResponseWriter, r *http.Request) {
 	note := "saved; applies when the miner next connects"
 	if body.Allocation == MeshAuto {
 		// The balancer places it, not the assignment itself.
-		note = "handed to the System Mesh; the balancer will place it"
+		note = "added to Fleet Balance; the balancer will place it"
 	}
 	if c.meshReassign != nil {
 		// Hand over the whole split: the mesh needs it to tell a miner pinned to one
