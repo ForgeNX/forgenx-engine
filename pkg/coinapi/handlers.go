@@ -368,6 +368,9 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 		"hashrate10_ths": reading.Hashrate10 / 1e12,
 		"model":          reading.Model,
 		"chip":           reading.Chip,
+		"asic_temp":      reading.ASICTemp,
+		"asic_temp_max":  reading.ASICTempMax,
+		"vr_temp":        reading.VRTemp,
 		"pool_user":      reading.PoolUser,
 		"hostname":       reading.Hostname,
 	})

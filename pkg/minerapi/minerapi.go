@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,13 +30,45 @@ import (
 
 // Reading is one answer from a miner.
 type Reading struct {
-	Driver     string  // which API answered
-	Hashrate   float64 // H/s, the most recent figure the miner gives
-	Hashrate10 float64 // H/s, a longer average where the miner offers one; else Hashrate
-	Model      string  // the product, e.g. "NerdQAxe++", "Bitaxe Gamma", "Avalon Nano3s"
-	Chip       string  // the ASIC, where the miner reports it, e.g. "BM1370"
-	PoolUser   string  // the username the miner authorizes with, for matching to a worker
-	Hostname   string
+	Driver      string  // which API answered
+	Hashrate    float64 // H/s, the most recent figure the miner gives
+	Hashrate10  float64 // H/s, a longer average where the miner offers one; else Hashrate
+	Model       string  // the product, e.g. "NerdQAxe++", "Bitaxe Gamma", "Avalon Nano3s"
+	Chip        string  // the ASIC, where the miner reports it, e.g. "BM1370"
+	PoolUser    string  // the username the miner authorizes with, for matching to a worker
+	Hostname    string
+	ASICTemp    float64 // °C, the hottest ASIC reading the miner offers; 0 when unknown
+	ASICTempMax float64 // °C, the hottest single chip, where the miner reports it separately from ASICTemp
+	VRTemp      float64 // °C, voltage regulator; 0 when the miner has no such sensor
+}
+
+// sensor treats the values firmwares use for "no sensor fitted" — zero, -1,
+// the Avalon's -273 — as unknown rather than a reading.
+func sensor(v float64) float64 {
+	if v <= 0 || v < -100 {
+		return 0
+	}
+	return v
+}
+
+// firstSensor returns the first value that is a real reading.
+func firstSensor(vals ...float64) float64 {
+	for _, v := range vals {
+		if v = sensor(v); v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func hottest(vals ...float64) float64 {
+	var m float64
+	for _, v := range vals {
+		if v = sensor(v); v > m {
+			m = v
+		}
+	}
+	return m
 }
 
 // Driver is one miner API family.
@@ -108,20 +141,30 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		return Reading{}, fmt.Errorf("axeos: HTTP %d", resp.StatusCode)
 	}
 	var info struct {
-		HashRate    float64 `json:"hashRate"`     // GH/s, instantaneous
-		HashRate1m  float64 `json:"hashRate_1m"`  // GH/s, newer firmware only
-		HashRate10m float64 `json:"hashRate_10m"` // GH/s, newer firmware only
-		ASICModel   string  `json:"ASICModel"`
-		ASICCount   int     `json:"asicCount"`
-		DeviceModel string  `json:"deviceModel"` // NerdQAxe and newer AxeOS builds
-		StratumUser string  `json:"stratumUser"`
-		Hostname    string  `json:"hostname"`
+		HashRate    float64   `json:"hashRate"`     // GH/s, instantaneous
+		HashRate1m  float64   `json:"hashRate_1m"`  // GH/s, newer firmware only
+		HashRate10m float64   `json:"hashRate_10m"` // GH/s, newer firmware only
+		ASICModel   string    `json:"ASICModel"`
+		ASICCount   int       `json:"asicCount"`
+		DeviceModel string    `json:"deviceModel"` // NerdQAxe and newer AxeOS builds
+		Temp        float64   `json:"temp"`
+		Temp2       float64   `json:"temp2"`
+		ASICTemps   []float64 `json:"asicTemps"` // per chip; NerdQAxe reports zeros
+		VRTemp      float64   `json:"vrTemp"`
+		VRTempInt   float64   `json:"vrTempInt"` // NerdQAxe's second regulator reading
+		StratumUser string    `json:"stratumUser"`
+		Hostname    string    `json:"hostname"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return Reading{}, fmt.Errorf("axeos: %w", err)
 	}
-	if info.HashRate <= 0 && info.HashRate10m <= 0 {
-		return Reading{}, fmt.Errorf("axeos: no hashrate in response")
+	// A miner reporting zero is still answering: an AxeOS miner that has just
+	// reconnected to its pool restarts its counters and reads zero for a short
+	// while. Its model, temperatures and pool user are still worth having, and
+	// whatever uses the reading falls back to measured hashrate until it recovers.
+	// Only a response that isn't AxeOS at all is treated as a failure.
+	if info.ASICModel == "" && info.Hostname == "" {
+		return Reading{}, fmt.Errorf("axeos: response does not look like AxeOS")
 	}
 	live := info.HashRate
 	if info.HashRate1m > 0 {
@@ -132,6 +175,12 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		Hashrate: live * 1e9,
 		Model:    axeosProduct(info.DeviceModel, info.ASICModel, info.ASICCount),
 		Chip:     info.ASICModel,
+		// Report what the miner's own dashboard shows — temp for the ASIC, vrTemp
+		// for the regulator — so the two never disagree. NerdQAxe also reports
+		// vrTempInt, the regulator chip's internal reading, which runs several
+		// degrees hotter; it is only used when vrTemp is absent.
+		ASICTemp: firstSensor(info.Temp, hottest(info.ASICTemps...), info.Temp2),
+		VRTemp:   firstSensor(info.VRTemp, info.VRTempInt),
 		PoolUser: info.StratumUser,
 		Hostname: info.Hostname,
 	}
@@ -279,7 +328,80 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 			}
 		}
 	}
+	x := cgExtended(ctx, host)
+	r.ASICTemp, r.ASICTempMax = x.avg, x.max
+	// An Avalon's own current speed is steady where the summary's 5-second
+	// figure is not: 6.61 TH/s against 13.4 at the same moment. Its GHSavg is
+	// an average since boot — sixteen days on one test unit — so the steady
+	// figure stays with the summary's 15-minute window.
+	if x.ghsSpd > 0 {
+		r.Hashrate = x.ghsSpd * 1e9
+	}
 	return r, nil
+}
+
+// bracketed matches the Key[value] pairs Avalon packs into one long string.
+var bracketed = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\[([^\]]*)\]`)
+
+// cgExtras is what the extended stats add to a CGMiner summary.
+type cgExtras struct {
+	avg, max float64 // ASIC temperatures, °C
+	ghsSpd   float64 // the miner's own current speed, GH/s, where it reports one
+}
+
+// cgExtended reads temperatures and, on Avalons, the current speed. Avalons pack
+// these into a Key[value] string in estats: TAvg and TMax across the whole
+// machine (MTavg/MTmax are per hash board, and become lists on multi-board
+// models), and GHSspd for current speed. Antminers report temp_chip style
+// fields in stats instead — that path is untested on real hardware.
+func cgExtended(ctx context.Context, host string) cgExtras {
+	var x cgExtras
+	if est, err := cgCommand(ctx, host, "estats"); err == nil {
+		list, _ := est["STATS"].([]interface{})
+		for _, e := range list {
+			em, _ := e.(map[string]interface{})
+			for _, v := range em {
+				str, ok := v.(string)
+				if !ok || !strings.Contains(str, "TMax[") {
+					continue
+				}
+				f := map[string]string{}
+				for _, m := range bracketed.FindAllStringSubmatch(str, -1) {
+					f[m[1]] = m[2]
+				}
+				x.avg = sensor(number(f["TAvg"]))
+				x.max = sensor(number(f["TMax"]))
+				x.ghsSpd = number(f["GHSspd"])
+				if x.avg == 0 {
+					x.avg = x.max
+				}
+				return x
+			}
+		}
+	}
+	if st, err := cgCommand(ctx, host, "stats"); err == nil {
+		list, _ := st["STATS"].([]interface{})
+		var temps []float64
+		for _, e := range list {
+			em, _ := e.(map[string]interface{})
+			for k, v := range em {
+				lk := strings.ToLower(k)
+				if !strings.HasPrefix(lk, "temp_chip") && !strings.HasPrefix(lk, "temp2_") {
+					continue
+				}
+				if str, ok := v.(string); ok {
+					for _, part := range strings.Split(str, "-") {
+						temps = append(temps, number(part))
+					}
+				} else {
+					temps = append(temps, number(v))
+				}
+			}
+		}
+		x.max = hottest(temps...)
+		x.avg = x.max
+	}
+	return x
 }
 
 // DefaultTimeout bounds a single probe, so an unreachable miner costs seconds
