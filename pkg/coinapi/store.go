@@ -713,7 +713,22 @@ func (s *Store) SetMeshInterval(d string) error {
 const (
 	meshNetworkKey    = "\x00 miner network"
 	meshIncludeNewKey = "\x00 include new"
+	meshSystemKey     = "\x00 system target"
 )
+
+// MeshAuto is the assignment value for a miner handed to the System Mesh: the
+// balancer decides which coin it mines, towards the System Mesh target.
+const MeshAuto = "AUTO"
+
+// GetMeshSystemTarget returns the System Mesh's split, e.g. "DGB:60,BCH:40".
+func (s *Store) GetMeshSystemTarget() (string, bool) {
+	return s.GetMeshAssignment(meshSystemKey)
+}
+
+// SetMeshSystemTarget records the System Mesh's split.
+func (s *Store) SetMeshSystemTarget(alloc string) error {
+	return s.SetMeshAssignment(meshSystemKey, alloc)
+}
 
 // GetMeshNetwork returns the LAN range the engine scans for miners: a network,
 // an address, or the first address of a range whose last is end.
@@ -806,7 +821,7 @@ func (s *Store) ListMeshAssignments() (map[string]string, error) {
 	for rows.Next() {
 		var w, a string
 		if err := rows.Scan(&w, &a); err == nil {
-			if w == meshDefaultKey || w == meshIntervalKey || w == meshNetworkKey || w == meshIncludeNewKey {
+			if w == meshDefaultKey || w == meshIntervalKey || w == meshNetworkKey || w == meshIncludeNewKey || w == meshSystemKey {
 				continue // mesh-wide settings, not workers
 			}
 			out[w] = a

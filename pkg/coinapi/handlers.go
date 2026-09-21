@@ -70,6 +70,10 @@ type CoinAPI struct {
 	// temperatures. nil until the engine starts it.
 	scanner *minerapi.Scanner
 
+	// meshRebalance asks the balancer for a round now, after the System Mesh
+	// target changes or a miner joins or leaves it.
+	meshRebalance func()
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -258,6 +262,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetMeshRebalance installs the balancer nudge.
+func (c *CoinAPI) SetMeshRebalance(f func()) { c.meshRebalance = f }
+
 // SetScanner installs the LAN miner scanner.
 func (c *CoinAPI) SetScanner(sc *minerapi.Scanner) { c.scanner = sc }
 
@@ -383,6 +390,29 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleMeshSystem reads (GET) or sets (POST {"target":"DGB:60,BCH:40"}) the
+// System Mesh split - the share of included miners' hashrate each coin gets.
+func (c *CoinAPI) HandleMeshSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var body struct {
+			Target string `json:"target"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Target) == "" {
+			writeError(w, 400, "target is required")
+			return
+		}
+		if err := c.store.SetMeshSystemTarget(strings.TrimSpace(body.Target)); err != nil {
+			writeError(w, 500, "could not save the target")
+			return
+		}
+		if c.meshRebalance != nil {
+			c.meshRebalance()
+		}
+	}
+	target, _ := c.store.GetMeshSystemTarget()
+	writeJSON(w, map[string]interface{}{"target": target})
+}
+
 // HandleMeshSettings reads (GET) or updates (POST) the mesh-wide settings: the
 // LAN range to scan for miners, and whether a newly connected miner joins the
 // System Mesh.
@@ -470,6 +500,11 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["default_order"] = order
+	if t, ok := c.store.GetMeshSystemTarget(); ok {
+		out["system_target"] = t
+	} else {
+		out["system_target"] = ""
+	}
 	if iv, ok := c.store.GetMeshInterval(); ok {
 		out["rotate_interval"] = iv
 	} else {
@@ -659,11 +694,18 @@ func (c *CoinAPI) HandleMeshAssign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "could not save assignment")
 		return
 	}
+	if c.meshRebalance != nil {
+		c.meshRebalance()
+	}
 
 	// Applying to the running session is best-effort: the assignment is saved
 	// either way, so a miner that is offline picks it up when it reconnects.
 	applied := false
 	note := "saved; applies when the miner next connects"
+	if body.Allocation == MeshAuto {
+		// The balancer places it, not the assignment itself.
+		note = "handed to the System Mesh; the balancer will place it"
+	}
 	if c.meshReassign != nil {
 		// Hand over the whole split: the mesh needs it to tell a miner pinned to one
 		// node from one rotating across several, and to pick where to put it now.
@@ -703,6 +745,9 @@ func (c *CoinAPI) HandleMeshUnassign(w http.ResponseWriter, r *http.Request) {
 	if err := c.store.DeleteMeshAssignment(body.Worker); err != nil {
 		writeError(w, 500, "could not clear assignment")
 		return
+	}
+	if c.meshRebalance != nil {
+		c.meshRebalance()
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "note": "cleared; the miner keeps its current coin until it reconnects"})
 }
@@ -1301,6 +1346,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
 	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
 	mux.HandleFunc("/api/mesh/settings", c.HandleMeshSettings)
+	mux.HandleFunc("/api/mesh/system", c.HandleMeshSystem)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

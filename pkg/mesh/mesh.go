@@ -84,13 +84,28 @@ type Mesh struct {
 	// reconnect, so each name maps to a set.
 	liveMu sync.Mutex
 	live   map[string]map[*Session]struct{}
+
+	// placement is where the balancer has put each miner in the System Mesh, by
+	// worker. A miner handed to the System Mesh but not yet placed follows the
+	// default order until the balancer decides.
+	placeMu   sync.Mutex
+	placement map[string]string
+	movedAt   map[string]time.Time
+
+	balTarget   func() ([]Weight, bool)
+	balIsAuto   func(worker string) bool
+	balHashrate func(worker string) float64
+	balNudge    chan struct{}
 }
 
 func New(opts Options) *Mesh {
 	return &Mesh{
-		opts:   opts,
-		logger: logging.New(logging.ModuleNexus),
-		live:   make(map[string]map[*Session]struct{}),
+		opts:      opts,
+		logger:    logging.New(logging.ModuleNexus),
+		live:      make(map[string]map[*Session]struct{}),
+		placement: make(map[string]string),
+		movedAt:   make(map[string]time.Time),
+		balNudge:  make(chan struct{}, 1),
 	}
 }
 
@@ -103,6 +118,7 @@ func (m *Mesh) Start() error {
 	m.listener = ln
 	m.logger.Info("[nexus] Mesh listening on %s (coins=%v)", addr, m.opts.Coins)
 	go m.acceptLoop()
+	go m.balanceLoop()
 	return nil
 }
 
@@ -310,6 +326,25 @@ func (m *Mesh) MeasuredHashrates() map[string][2]float64 {
 				out[worker] = [2]float64{hps, float64(n)}
 			}
 		}
+	}
+	return out
+}
+
+// Placement returns the coin the balancer has put a System Mesh miner on.
+func (m *Mesh) Placement(worker string) (string, bool) {
+	m.placeMu.Lock()
+	defer m.placeMu.Unlock()
+	c, ok := m.placement[worker]
+	return c, ok
+}
+
+// Placements returns every System Mesh placement, by worker.
+func (m *Mesh) Placements() map[string]string {
+	m.placeMu.Lock()
+	defer m.placeMu.Unlock()
+	out := make(map[string]string, len(m.placement))
+	for w, c := range m.placement {
+		out[w] = c
 	}
 	return out
 }

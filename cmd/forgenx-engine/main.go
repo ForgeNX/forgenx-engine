@@ -249,7 +249,19 @@ func main() {
 			nexusMesh.SetAssignmentLookup(func(worker string) ([]mesh.Weight, bool) {
 				alloc, found := store.GetMeshAssignment(worker)
 				if !found {
-					return nil, false
+					// A miner never placed by the user joins the System Mesh when
+					// include-new is on, so it is balanced from its first connect.
+					if !store.GetMeshIncludeNew() {
+						return nil, false
+					}
+					_ = store.SetMeshAssignment(worker, coinapi.MeshAuto)
+					alloc = coinapi.MeshAuto
+				}
+				if alloc == coinapi.MeshAuto {
+					if coin, ok := nexusMesh.Placement(worker); ok {
+						return []mesh.Weight{{Coin: coin, Percent: 100}}, true
+					}
+					return nil, false // not placed yet: default order until the balancer decides
 				}
 				parsed := parseAllocation(alloc)
 				if len(parsed) == 0 {
@@ -298,6 +310,35 @@ func main() {
 				}
 				return clampRotateCycle(d)
 			})
+			nexusMesh.SetBalancer(
+				func() ([]mesh.Weight, bool) {
+					t, ok := store.GetMeshSystemTarget()
+					if !ok {
+						return nil, false
+					}
+					var out []mesh.Weight
+					for _, w := range parseAllocation(t) {
+						out = append(out, mesh.Weight{Coin: w.Coin, Percent: w.Percent})
+					}
+					return out, len(out) > 0
+				},
+				func(worker string) bool {
+					a, ok := store.GetMeshAssignment(worker)
+					return ok && a == coinapi.MeshAuto
+				},
+				// A miner's own steady figure where the scanner has it; the relay's
+				// measurement once it rests on enough shares; otherwise unknown.
+				func(worker string) float64 {
+					if r, ok := scanner.Readings()[worker]; ok && r.Hashrate10 > 0 {
+						return r.Hashrate10
+					}
+					if mh, ok := nexusMesh.MeasuredHashrates()[worker]; ok && mh[1] >= 5 {
+						return mh[0]
+					}
+					return 0
+				},
+			)
+			coinAPI.SetMeshRebalance(nexusMesh.Rebalance)
 			coinAPI.SetMeshInfo(func() (bool, int, []string) {
 				return nexusMesh.Enabled(), nexusMesh.Port(), nexusMesh.Coins()
 			})
