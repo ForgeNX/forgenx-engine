@@ -467,6 +467,19 @@ func (b *Backend) GoLive() (setDiff, notify []byte) {
 	return b.lastSetDifficulty, b.lastNotify
 }
 
+// GoWarm marks a backend as no longer receiving the miner's work. It keeps
+// caching the coin's jobs and difficulty, but stops forwarding them — and, more
+// importantly, a job arriving on it now reaches the warm-job hook again. Without
+// this a backend stayed "live" for the life of the session once the miner had
+// visited it, so after the first round trip every coin looked live, no job ever
+// reached the hook, and every deferred switch waited out its timeout: 47 of 48
+// in one day.
+func (b *Backend) GoWarm() {
+	b.mu.Lock()
+	b.live = false
+	b.mu.Unlock()
+}
+
 // SettleDifficulty waits for the coin's difficulty to stop changing, up to the
 // given budget. A coin restoring a worker's remembered difficulty sends it just
 // after the base one, so reading the cache too early gets the wrong value.

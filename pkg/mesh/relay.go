@@ -255,6 +255,11 @@ func (m *Mesh) switchTo(s *Session, target *Backend, notify []byte) {
 		return
 	}
 	s.setPending(nil)
+	// The coin being left stops being live, so its next job reaches the warm-job
+	// hook if the miner is later waiting to come back to it.
+	if prev != nil {
+		prev.GoWarm()
+	}
 
 	if !s.supportsExtranonceSub() {
 		m.logger.Info("[nexus] %s: switching %s -> %s requires reconnect (no extranonce.subscribe)",
