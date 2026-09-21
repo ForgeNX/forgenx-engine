@@ -61,7 +61,13 @@ type Session struct {
 	// miner off its allocation indefinitely.
 	pending      *Backend
 	pendingSince time.Time
-	closed       bool
+
+	// shares is a rolling record of submitted work, for measuring the miner's
+	// hashrate at the relay. Unlike a coin's own average it follows the miner
+	// across switches, since every share passes through here whichever coin it
+	// is for.
+	shares []shareSample
+	closed bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -145,6 +151,53 @@ func (s *Session) isClosed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.c
 
 func (s *Session) setWorker(w string)   { s.mu.Lock(); s.worker = w; s.mu.Unlock() }
 func (s *Session) setActive(b *Backend) { s.mu.Lock(); s.active = b; s.mu.Unlock() }
+
+// shareSample is one submitted share: when, and at what difficulty.
+type shareSample struct {
+	at   time.Time
+	diff float64
+}
+
+// hashrateWindow is how far back the relay looks when measuring a miner.
+const hashrateWindow = 10 * time.Minute
+
+// recordShare notes a submitted share at the difficulty it was mined against.
+func (s *Session) recordShare(diff float64) {
+	if diff <= 0 {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shares = append(s.shares, shareSample{at: now, diff: diff})
+	cut := 0
+	for cut < len(s.shares) && now.Sub(s.shares[cut].at) > hashrateWindow {
+		cut++
+	}
+	s.shares = s.shares[cut:]
+}
+
+// MeasuredHashrate returns the miner's hashrate in H/s from the work it has
+// submitted, and how many shares that figure rests on. Every share of
+// difficulty D represents about D x 2^32 hashes. Early in a session the window
+// is short and the figure noisy — which is why a miner's own reported
+// hashrate is preferred whenever it can be read.
+func (s *Session) MeasuredHashrate() (hps float64, samples int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.shares) < 2 {
+		return 0, len(s.shares)
+	}
+	span := time.Since(s.shares[0].at)
+	if span < time.Minute {
+		span = time.Minute
+	}
+	var total float64
+	for _, x := range s.shares {
+		total += x.diff
+	}
+	return total * 4294967296 / span.Seconds(), len(s.shares)
+}
 
 // setPending records a switch waiting for the target's next job, or clears it
 // when passed nil.

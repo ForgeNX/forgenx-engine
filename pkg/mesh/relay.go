@@ -606,6 +606,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			if err := target.SendRaw(out); err != nil {
 				m.logger.Info("[nexus] %s submit forward FAILED: %v", s.id, err)
 			} else {
+				s.recordShare(target.Difficulty())
 				m.logger.Debug("[nexus] %s submit forwarded to %s: %s", s.id, target.Symbol, truncate(string(out), 160))
 			}
 

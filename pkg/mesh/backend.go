@@ -83,6 +83,11 @@ type Backend struct {
 	// the old one exactly as it would on a new block, losing nothing.
 	onWarmNotify func(line []byte)
 
+	// curDiff is the coin's current share difficulty for this session, parsed from
+	// its last set_difficulty. Used to weight each submitted share when the mesh
+	// measures a miner's hashrate itself.
+	curDiff float64
+
 	// onDead, if set, is called once when Run() exits. The relay uses it to tear
 	// down the miner session when the ACTIVE backend dies, so the miner reconnects
 	// and re-bonds instead of sitting on a connection that will never send another
@@ -273,8 +278,15 @@ func (b *Backend) Run() {
 		// Capture latest control state for replay.
 		switch msg.Method {
 		case "mining.set_difficulty":
+			var d struct {
+				Params []float64 `json:"params"`
+			}
+			_ = json.Unmarshal(line, &d)
 			b.mu.Lock()
 			b.lastSetDifficulty = append([]byte(nil), line...)
+			if len(d.Params) > 0 && d.Params[0] > 0 {
+				b.curDiff = d.Params[0]
+			}
 			b.mu.Unlock()
 		case "mining.notify":
 			b.mu.Lock()
@@ -465,6 +477,13 @@ func (b *Backend) GoLive() (setDiff, notify []byte) {
 	defer b.mu.Unlock()
 	b.live = true
 	return b.lastSetDifficulty, b.lastNotify
+}
+
+// Difficulty returns the coin's current share difficulty for this session.
+func (b *Backend) Difficulty() float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.curDiff
 }
 
 // GoWarm marks a backend as no longer receiving the miner's work. It keeps

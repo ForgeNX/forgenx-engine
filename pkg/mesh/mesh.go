@@ -288,6 +288,32 @@ func (m *Mesh) Enabled() bool { return m != nil && m.listener != nil }
 // Port is the miner-facing listen port, shown to the user as where to point a rig.
 func (m *Mesh) Port() int { return m.opts.Port }
 
+// MeasuredHashrates reports, per worker, the hashrate the relay has measured from
+// the work the miner submitted (H/s) and how many shares it rests on. It follows
+// the miner across coin switches, unlike each coin's own average, which keeps
+// reporting a stale figure after the miner has left.
+func (m *Mesh) MeasuredHashrates() map[string][2]float64 {
+	m.liveMu.Lock()
+	sessions := make(map[string][]*Session, len(m.live))
+	for worker, set := range m.live {
+		for s := range set {
+			sessions[worker] = append(sessions[worker], s)
+		}
+	}
+	m.liveMu.Unlock()
+
+	out := map[string][2]float64{}
+	for worker, list := range sessions {
+		for _, s := range list {
+			hps, n := s.MeasuredHashrate()
+			if prev, ok := out[worker]; !ok || float64(n) > prev[1] {
+				out[worker] = [2]float64{hps, float64(n)}
+			}
+		}
+	}
+	return out
+}
+
 // PendingSwitches reports, per worker, the coin it is waiting to move to. A
 // deferred switch does not take effect until the target sends a job, so without
 // this the UI would say a reassignment had applied while the miner was still

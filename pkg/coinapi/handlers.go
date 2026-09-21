@@ -60,6 +60,10 @@ type CoinAPI struct {
 	// can say a switch is coming rather than claiming it has happened.
 	meshPending func() map[string]string
 
+	// meshHashrates reports the hashrate the relay measured from each miner's own
+	// submitted work, [H/s, share count].
+	meshHashrates func() map[string][2]float64
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -247,6 +251,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, data)
 }
+
+// SetMeshHashrates installs the relay-measured hashrate lookup.
+func (c *CoinAPI) SetMeshHashrates(f func() map[string][2]float64) { c.meshHashrates = f }
 
 // SetMeshPending installs the pending-switch lookup.
 func (c *CoinAPI) SetMeshPending(f func() map[string]string) { c.meshPending = f }
@@ -441,11 +448,27 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		pending = c.meshPending()
 	}
 
+	// The relay's own measurement is preferred over any coin's average: it
+	// follows the miner across switches, where a coin's figure goes stale the
+	// moment the miner leaves and starts from nothing when it arrives. It needs
+	// a handful of shares before it means anything, so until then the coin's
+	// figure stands in.
+	measured := map[string][2]float64{}
+	if c.meshHashrates != nil {
+		measured = c.meshHashrates()
+	}
+	const minMeasuredShares = 5
+
 	seen := map[string]bool{}
 	miners := []interface{}{}
 	for worker, coin := range active {
 		alloc, assigned := assignments[worker]
 		f := facts[worker]
+		source := "coin"
+		if mh, ok := measured[worker]; ok && mh[1] >= minMeasuredShares {
+			f.hashrate = mh[0] / 1e12 // H/s to TH/s, the unit the coin figures use
+			source = "mesh"
+		}
 		// The mesh knows the miner's real address and client string; the coin only
 		// knows the relay's. Prefer the mesh's view where it has one.
 		if c.meshMinerFacts != nil {
@@ -459,15 +482,16 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		miners = append(miners, map[string]interface{}{
-			"worker":       worker,
-			"active_coin":  coin,
-			"assignment":   alloc,
-			"assigned":     assigned,
-			"connected":    true,
-			"ip":           f.ip,
-			"device":       f.device,
-			"hashrate_15m": f.hashrate,
-			"pending_coin": pending[worker],
+			"worker":          worker,
+			"active_coin":     coin,
+			"assignment":      alloc,
+			"assigned":        assigned,
+			"connected":       true,
+			"ip":              f.ip,
+			"device":          f.device,
+			"hashrate_15m":    f.hashrate,
+			"pending_coin":    pending[worker],
+			"hashrate_source": source,
 		})
 		seen[worker] = true
 	}
