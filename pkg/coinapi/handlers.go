@@ -1,12 +1,14 @@
 package coinapi
 
 import (
+	"context"
+
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ForgeNX/forgenx-engine/pkg/minerapi"
 	"io"
 	"net"
 	"net/http"
@@ -338,6 +340,36 @@ func (c *CoinAPI) HandleMeshInterval(w http.ResponseWriter, r *http.Request) {
 		"ok":       true,
 		"interval": body.Interval,
 		"note":     "applies at each miner's next rotation boundary",
+	})
+}
+
+// HandleMinerProbe asks a miner at ?host= for its own reading — hashrate, model,
+// pool username — over whichever management API it answers on. ?hint= may carry
+// its stratum subscribe string to try the likely family first. Used to verify the
+// drivers against real hardware before the mesh relies on them.
+func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
+	host := strings.TrimSpace(r.URL.Query().Get("host"))
+	if host == "" {
+		writeError(w, 400, "host is required")
+		return
+	}
+	// Probe bounds each driver itself; an outer cap here would cut the second
+	// driver off before it had its turn.
+	reading, err := minerapi.Probe(r.Context(), host, r.URL.Query().Get("hint"))
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "host": host, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":             true,
+		"host":           host,
+		"driver":         reading.Driver,
+		"hashrate_ths":   reading.Hashrate / 1e12,
+		"hashrate10_ths": reading.Hashrate10 / 1e12,
+		"model":          reading.Model,
+		"chip":           reading.Chip,
+		"pool_user":      reading.PoolUser,
+		"hostname":       reading.Hostname,
 	})
 }
 
@@ -1184,6 +1216,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
 	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
+	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)
 	mux.HandleFunc("/api/mesh/assignments", c.HandleMeshAssignments)
