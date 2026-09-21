@@ -66,6 +66,10 @@ type CoinAPI struct {
 	// submitted work, [H/s, share count].
 	meshHashrates func() map[string][2]float64
 
+	// scanner finds miners on the LAN and reads their own hashrate and
+	// temperatures. nil until the engine starts it.
+	scanner *minerapi.Scanner
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -254,6 +258,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetScanner installs the LAN miner scanner.
+func (c *CoinAPI) SetScanner(sc *minerapi.Scanner) { c.scanner = sc }
+
 // SetMeshHashrates installs the relay-measured hashrate lookup.
 func (c *CoinAPI) SetMeshHashrates(f func() map[string][2]float64) { c.meshHashrates = f }
 
@@ -376,6 +383,57 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleMeshSettings reads (GET) or updates (POST) the mesh-wide settings: the
+// LAN range to scan for miners, and whether a newly connected miner joins the
+// System Mesh.
+func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var body struct {
+			NetworkStart *string `json:"network_start"`
+			NetworkEnd   *string `json:"network_end"`
+			IncludeNew   *bool   `json:"include_new"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, 400, "invalid body")
+			return
+		}
+		if body.NetworkStart != nil {
+			end := ""
+			if body.NetworkEnd != nil {
+				end = *body.NetworkEnd
+			}
+			if _, err := minerapi.ParseRange(*body.NetworkStart, end); err != nil {
+				writeError(w, 400, err.Error())
+				return
+			}
+			if err := c.store.SetMeshNetwork(*body.NetworkStart, end); err != nil {
+				writeError(w, 500, "could not save the network")
+				return
+			}
+			if c.scanner != nil {
+				_ = c.scanner.SetRange(*body.NetworkStart, end)
+			}
+		}
+		if body.IncludeNew != nil {
+			if err := c.store.SetMeshIncludeNew(*body.IncludeNew); err != nil {
+				writeError(w, 500, "could not save the setting")
+				return
+			}
+		}
+	}
+	start, end := c.store.GetMeshNetwork()
+	found := 0
+	if c.scanner != nil {
+		found = len(c.scanner.Readings())
+	}
+	writeJSON(w, map[string]interface{}{
+		"network_start": start,
+		"network_end":   end,
+		"include_new":   c.store.GetMeshIncludeNew(),
+		"miners_found":  found,
+	})
+}
+
 // HandleMeshStatus describes the mesh in one call: whether it is running, where
 // miners should point, the coins available to assign to, and every connected
 // worker with the coin it is actually mining and the assignment it holds. Without
@@ -494,6 +552,14 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	const minMeasuredShares = 5
 
+	// A miner's own reading beats both of those: exact from its first second,
+	// where the relay's measurement needs a handful of shares and a coin's
+	// average goes stale. Used whenever the LAN scanner has found the miner.
+	readings := map[string]minerapi.Reading{}
+	if c.scanner != nil {
+		readings = c.scanner.Readings()
+	}
+
 	seen := map[string]bool{}
 	miners := []interface{}{}
 	for worker, coin := range active {
@@ -504,11 +570,21 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			f.hashrate = mh[0] / 1e12 // H/s to TH/s, the unit the coin figures use
 			source = "mesh"
 		}
+		rd, haveMiner := readings[worker]
+		if haveMiner && rd.Hashrate > 0 {
+			f.hashrate = rd.Hashrate / 1e12
+			source = "miner"
+		}
+		if haveMiner && rd.Host != "" {
+			f.ip = rd.Host // the real LAN address, not the NAT or relay address
+		}
 		// The mesh knows the miner's real address and client string; the coin only
 		// knows the relay's. Prefer the mesh's view where it has one.
 		if c.meshMinerFacts != nil {
 			if mf, ok := c.meshMinerFacts()[worker]; ok {
-				if mf[0] != "" {
+				// The scanner's address is the miner's real one; the session's is only
+				// the address it connected from, which behind NAT is the gateway.
+				if mf[0] != "" && !haveMiner {
 					f.ip = mf[0]
 				}
 				if mf[1] != "" {
@@ -527,6 +603,11 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"hashrate_15m":    f.hashrate,
 			"pending_coin":    pending[worker],
 			"hashrate_source": source,
+			"model":           rd.Model,
+			"chip":            rd.Chip,
+			"asic_temp":       rd.ASICTemp,
+			"asic_temp_max":   rd.ASICTempMax,
+			"vr_temp":         rd.VRTemp,
 		})
 		seen[worker] = true
 	}
@@ -1219,6 +1300,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/engine/logs", c.HandleEngineLogs)
 	mux.HandleFunc("/api/engine/info", c.HandleEngineInfo)
 	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
+	mux.HandleFunc("/api/mesh/settings", c.HandleMeshSettings)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

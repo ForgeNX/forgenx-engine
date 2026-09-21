@@ -28,6 +28,7 @@ import (
 	"github.com/ForgeNX/forgenx-engine/pkg/logging"
 	"github.com/ForgeNX/forgenx-engine/pkg/mesh"
 	"github.com/ForgeNX/forgenx-engine/pkg/metrics"
+	"github.com/ForgeNX/forgenx-engine/pkg/minerapi"
 )
 
 var (
@@ -229,6 +230,17 @@ func main() {
 	} else {
 		coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
 		coinAPI.SetStats(stats)
+
+		// Find miners on the LAN and read their own hashrate and temperatures.
+		// Runs whether or not the mesh is enabled: every miner benefits.
+		scanner := minerapi.NewScanner()
+		if st, en := store.GetMeshNetwork(); st != "" {
+			if err := scanner.SetRange(st, en); err != nil {
+				logger.Warn("miner network %q: %v", st, err)
+			}
+		}
+		go scanner.Run(nil)
+		coinAPI.SetScanner(scanner)
 
 		// Per-miner allocation, now that the store exists. The mesh is already
 		// listening; assignments are read at authorize, so a miner that connected in

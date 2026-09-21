@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -707,6 +709,45 @@ func (s *Store) SetMeshInterval(d string) error {
 	return s.SetMeshAssignment(meshIntervalKey, d)
 }
 
+// Mesh-wide settings kept under reserved keys, like the default order.
+const (
+	meshNetworkKey    = "\x00 miner network"
+	meshIncludeNewKey = "\x00 include new"
+)
+
+// GetMeshNetwork returns the LAN range the engine scans for miners: a network,
+// an address, or the first address of a range whose last is end.
+func (s *Store) GetMeshNetwork() (start, end string) {
+	v, ok := s.GetMeshAssignment(meshNetworkKey)
+	if !ok {
+		return "", ""
+	}
+	parts := strings.SplitN(v, "|", 2)
+	start = parts[0]
+	if len(parts) == 2 {
+		end = parts[1]
+	}
+	return start, end
+}
+
+// SetMeshNetwork records the LAN range to scan.
+func (s *Store) SetMeshNetwork(start, end string) error {
+	return s.SetMeshAssignment(meshNetworkKey, strings.TrimSpace(start)+"|"+strings.TrimSpace(end))
+}
+
+// GetMeshIncludeNew reports whether a newly connected miner joins the System
+// Mesh automatically. On by default: a new miner then joins the fleet balance
+// straight away rather than waiting to be told.
+func (s *Store) GetMeshIncludeNew() bool {
+	v, ok := s.GetMeshAssignment(meshIncludeNewKey)
+	return !ok || v != "false"
+}
+
+// SetMeshIncludeNew records whether new miners join the System Mesh.
+func (s *Store) SetMeshIncludeNew(v bool) error {
+	return s.SetMeshAssignment(meshIncludeNewKey, strconv.FormatBool(v))
+}
+
 // GetMeshDefault returns the coin the user chose for miners with no assignment
 // of their own, and whether one has been set. Unset means the mesh falls back to
 // its configured order.
@@ -765,7 +806,7 @@ func (s *Store) ListMeshAssignments() (map[string]string, error) {
 	for rows.Next() {
 		var w, a string
 		if err := rows.Scan(&w, &a); err == nil {
-			if w == meshDefaultKey || w == meshIntervalKey {
+			if w == meshDefaultKey || w == meshIntervalKey || w == meshNetworkKey || w == meshIncludeNewKey {
 				continue // mesh-wide settings, not workers
 			}
 			out[w] = a

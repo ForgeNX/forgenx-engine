@@ -31,6 +31,7 @@ import (
 // Reading is one answer from a miner.
 type Reading struct {
 	Driver      string  // which API answered
+	Host        string  // the address it answered on
 	Hashrate    float64 // H/s, the most recent figure the miner gives
 	Hashrate10  float64 // H/s, a longer average where the miner offers one; else Hashrate
 	Model       string  // the product, e.g. "NerdQAxe++", "Bitaxe Gamma", "Avalon Nano3s"
