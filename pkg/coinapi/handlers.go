@@ -636,6 +636,8 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	facts := map[string]minerFacts{}
 	bestShare := map[string]float64{} // highest session-best per worker, across coins
+	diffNow := map[string]float64{}   // difficulty on the coin each worker is mining
+	diffNext := map[string]float64{}  // a vardiff change waiting to go out with the next block
 	if minersData, err := c.fetchEngineJSON("/miners"); err == nil {
 		if byCoin, ok := minersData["miners"].(map[string]interface{}); ok {
 			for coinSym, raw := range byCoin {
@@ -672,6 +674,10 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 					// cannot say which that is.
 					hr := getFloat(m, "hashrate_15m")
 					onThisCoin := strings.EqualFold(active[suffix], coinSym)
+					if onThisCoin {
+						diffNow[suffix] = getFloat(m, "difficulty")
+						diffNext[suffix] = getFloat(m, "pending_difficulty")
+					}
 					if prev, seen := facts[suffix]; seen && !onThisCoin {
 						_ = prev
 						continue
@@ -755,6 +761,8 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"hashrate_15m":    f.hashrate,
 			"pending_coin":    pending[worker],
 			"hashrate_source": source,
+			"difficulty":      diffNow[worker],
+			"next_difficulty": diffNext[worker],
 			"shares_accepted": tallies[worker][0],
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],

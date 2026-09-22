@@ -656,6 +656,7 @@ func (s *Session) Info() SessionInfo {
 		WorkerName:         s.workerName,
 		RemoteAddr:         s.conn.RemoteAddr().String(),
 		Difficulty:         s.difficulty,
+		PendingDifficulty:  s.pendingDiff,
 		ConnectedAt:        s.connectedAt,
 		State:              fmt.Sprintf("%d", s.state),
 		Protocol:           "v1",
@@ -678,6 +679,7 @@ type SessionInfo struct {
 	WorkerName         string    `json:"worker_name"`
 	RemoteAddr         string    `json:"remote_addr"`
 	Difficulty         float64   `json:"difficulty"`
+	PendingDifficulty  float64   `json:"pending_difficulty"` // vardiff change decided but not yet sent; 0 when none
 	ConnectedAt        time.Time `json:"connected_at"`
 	State              string    `json:"state"`
 	SharesAccepted     uint64    `json:"shares_accepted"`
