@@ -70,22 +70,34 @@ func firstAlive(backends []*Backend, skip *Backend) *Backend {
 // cgminer treats a pool that silent as broken and reconnects.
 const minerKeepalive = 30 * time.Second
 
-// keepaliveLoop resends the active coin's current difficulty when the line to the
-// miner has been quiet. A repeated set_difficulty with the same value changes
-// nothing for the miner; a repeated job could, since some miners restart their
-// nonce range on any new job ID and submit duplicates.
+// keepaliveLoop keeps the line to a miner active on the same terms the engine
+// gives a directly connected miner: it follows the active coin's server-side
+// ping setting, checked on every tick, so a change in the coin app applies at
+// once and a miner rotating between coins follows whichever it is on. With ping
+// off the mesh stays silent too, as a direct miner's line would be.
+//
+// It resends the coin's current difficulty rather than a ping. A repeated
+// set_difficulty with the same value changes nothing for the miner, where a
+// repeated job could make some miners restart their nonce range.
 func (m *Mesh) keepaliveLoop(s *Session) {
-	t := time.NewTicker(10 * time.Second)
+	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for range t.C {
 		if s.isClosed() {
 			return
 		}
-		if s.sinceLastSent() < minerKeepalive {
-			continue
-		}
 		b := s.activeBackend()
 		if b == nil {
+			continue
+		}
+		enabled, every := true, minerKeepalive
+		m.placeMu.Lock()
+		lookup := m.keepaliveFor
+		m.placeMu.Unlock()
+		if lookup != nil {
+			enabled, every = lookup(b.Symbol)
+		}
+		if !enabled || every <= 0 || s.sinceLastSent() < every {
 			continue
 		}
 		if d := b.CachedDifficulty(); d != nil {

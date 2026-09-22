@@ -339,6 +339,7 @@ func main() {
 				},
 			)
 			coinAPI.SetMeshRebalance(nexusMesh.Rebalance)
+			nexusMesh.SetKeepalive(eng.PingSettings)
 			coinAPI.SetMeshInfo(func() (bool, int, []string) {
 				return nexusMesh.Enabled(), nexusMesh.Port(), nexusMesh.Coins()
 			})

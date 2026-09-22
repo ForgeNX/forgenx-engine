@@ -336,3 +336,10 @@ func (s *Server) generateExtraNonce1() string {
 	b := []byte{byte(seq >> 24), byte(seq >> 16), byte(seq >> 8), byte(seq)}
 	return hex.EncodeToString(b)
 }
+
+// PingSettings reports whether this server pings its miners, and how often.
+// Set once when the server is built; a settings change rebuilds the server, so
+// the answer is always current and needs no lock.
+func (s *Server) PingSettings() (bool, time.Duration) {
+	return s.pingEnabled, s.pingInterval
+}

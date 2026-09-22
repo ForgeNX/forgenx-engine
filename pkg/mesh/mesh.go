@@ -96,6 +96,9 @@ type Mesh struct {
 	balIsAuto   func(worker string) bool
 	balHashrate func(worker string) float64
 	balNudge    chan struct{}
+
+	// keepaliveFor reports the active coin's ping settings, for the keepalive.
+	keepaliveFor func(symbol string) (bool, time.Duration)
 }
 
 func New(opts Options) *Mesh {
@@ -506,4 +509,11 @@ func (m *Mesh) Stop() {
 	if m.listener != nil {
 		m.listener.Close()
 	}
+}
+
+// SetKeepalive installs the per-coin ping settings the keepalive follows.
+func (m *Mesh) SetKeepalive(f func(symbol string) (bool, time.Duration)) {
+	m.placeMu.Lock()
+	m.keepaliveFor = f
+	m.placeMu.Unlock()
 }

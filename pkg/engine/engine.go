@@ -675,3 +675,16 @@ func (e *Engine) GetCoinPortStatus(symbol string) (v1Running, v2Running bool) {
 	}
 	return runner.StratumRunning(), runner.SV2Running()
 }
+
+// PingSettings reports a coin's server-side ping setting, taken from the stratum
+// server doing the pinging, so miners reaching the coin through the mesh are kept
+// alive on exactly the terms a direct miner gets. A coin not running answers with
+// the engine default.
+func (e *Engine) PingSettings(symbol string) (bool, time.Duration) {
+	for sym, r := range e.snapshotRunners() {
+		if strings.EqualFold(sym, symbol) && r.server != nil {
+			return r.server.PingSettings()
+		}
+	}
+	return true, 30 * time.Second
+}
