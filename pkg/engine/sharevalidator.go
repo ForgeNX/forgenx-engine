@@ -238,7 +238,16 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 			}
 		}
 		if !accepted {
-			sv.logger.Info("share rejected: worker=%s required=%g actual=%g hash=%s", share.WorkerName, sessionDiff, actualDiff, blockHashHex)
+			// Everything needed to see why neither the job's own difficulty nor the grace
+			// window let this share through.
+			jobDiff, jobKnown := 0.0, false
+			if jd, ok := session.(interface{ JobDifficulty(string) (float64, bool) }); ok {
+				jobDiff, jobKnown = jd.JobDifficulty(share.JobID)
+			}
+			prevDiff, changedAt := session.GetPrevDifficulty()
+			sv.logger.Info("share rejected: worker=%s job=%s required=%g actual=%g jobDiff=%g jobKnown=%t prevDiff=%g changed=%s ago hash=%s",
+				share.WorkerName, share.JobID, sessionDiff, actualDiff, jobDiff, jobKnown, prevDiff,
+				time.Since(changedAt).Round(time.Second), blockHashHex)
 			sv.stats.RecordShare(sv.symbol, metrics.ShareInvalid, share.WorkerName, actualDiff)
 			return stratum.ErrLowDifficulty
 		}
