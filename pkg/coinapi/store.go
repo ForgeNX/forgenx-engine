@@ -716,6 +716,22 @@ const (
 	meshSystemKey     = "\x00 system target"
 )
 
+// meshSortKey keeps how the Nexus tab sorts its miner list, e.g. "hashrate:desc".
+const meshSortKey = "\x00 miner sort"
+
+// GetMeshMinerSort returns the saved miner sort, by name ascending by default.
+func (s *Store) GetMeshMinerSort() string {
+	if v, ok := s.GetMeshAssignment(meshSortKey); ok && v != "" {
+		return v
+	}
+	return "name:asc"
+}
+
+// SetMeshMinerSort records the miner sort.
+func (s *Store) SetMeshMinerSort(v string) error {
+	return s.SetMeshAssignment(meshSortKey, v)
+}
+
 // meshPinsPrefix keys the coins pinned in the allocator, per worker and for Fleet
 // Balance, so a pin holds across devices and reloads like every Nexus setting.
 const meshPinsPrefix = "\x00 pins "

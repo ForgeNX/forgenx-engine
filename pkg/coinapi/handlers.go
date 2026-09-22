@@ -488,6 +488,7 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 			NetworkStart *string `json:"network_start"`
 			NetworkEnd   *string `json:"network_end"`
 			IncludeNew   *bool   `json:"include_new"`
+			MinerSort    *string `json:"miner_sort"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, 400, "invalid body")
@@ -516,6 +517,18 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if body.MinerSort != nil {
+			parts := strings.SplitN(*body.MinerSort, ":", 2)
+			validKey := map[string]bool{"name": true, "hashrate": true, "node": true, "fleet": true}
+			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
+				writeError(w, 400, "miner_sort must be name, hashrate, node or fleet, then :asc or :desc")
+				return
+			}
+			if err := c.store.SetMeshMinerSort(*body.MinerSort); err != nil {
+				writeError(w, 500, "could not save the sort")
+				return
+			}
+		}
 	}
 	start, end := c.store.GetMeshNetwork()
 	found := 0
@@ -526,6 +539,7 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		"network_start": start,
 		"network_end":   end,
 		"include_new":   c.store.GetMeshIncludeNew(),
+		"miner_sort":    c.store.GetMeshMinerSort(),
 		"miners_found":  found,
 	})
 }
@@ -731,6 +745,17 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"pins":         c.store.GetMeshPins(worker),
 		})
 	}
+	// A stable order at the source. The list is built by walking a map, and Go
+	// randomises map order on purpose, so without this the miners came back in
+	// a different order on every poll and the Nexus tab's pills shuffled.
+	sort.SliceStable(miners, func(i, j int) bool {
+		name := func(v interface{}) string {
+			m, _ := v.(map[string]interface{})
+			w, _ := m["worker"].(string)
+			return strings.ToLower(w)
+		}
+		return name(miners[i]) < name(miners[j])
+	})
 	out["miners"] = miners
 	writeJSON(w, out)
 }
