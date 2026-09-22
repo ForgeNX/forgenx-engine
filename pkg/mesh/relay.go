@@ -63,6 +63,37 @@ func firstAlive(backends []*Backend, skip *Backend) *Backend {
 	return nil
 }
 
+// minerKeepalive is how long a miner may go without hearing anything before the
+// mesh sends it something. Between new work a coin says nothing, and a direct
+// miner is kept alive by the engine's pings - which the mesh answers itself and
+// never forwards. A quiet coin such as BCH can go minutes without new work, and
+// cgminer treats a pool that silent as broken and reconnects.
+const minerKeepalive = 30 * time.Second
+
+// keepaliveLoop resends the active coin's current difficulty when the line to the
+// miner has been quiet. A repeated set_difficulty with the same value changes
+// nothing for the miner; a repeated job could, since some miners restart their
+// nonce range on any new job ID and submit duplicates.
+func (m *Mesh) keepaliveLoop(s *Session) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		if s.isClosed() {
+			return
+		}
+		if s.sinceLastSent() < minerKeepalive {
+			continue
+		}
+		b := s.activeBackend()
+		if b == nil {
+			continue
+		}
+		if d := b.CachedDifficulty(); d != nil {
+			_ = s.SendRaw(d)
+		}
+	}
+}
+
 // deferredSwitchShare is how much of a coin's own slice a pending move may spend
 // waiting for that coin's next job, before giving up and switching mid-job.
 //
@@ -320,6 +351,9 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	s.setBonded(backends)
 	defer s.Close()
 	defer func() {
+		// Mark the session closed before its backends go, so their ending reads as
+		// the teardown it is rather than as a coin dying under a live miner.
+		s.Close()
 		for _, b := range backends {
 			b.Close()
 		}
@@ -357,6 +391,9 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			}
 		}
 		b.onDead = func() {
+			if s.isClosed() {
+				return
+			}
 			// A warm coin dying is tolerated — it is skipped until it comes back. The
 			// active coin dying means the miner has nowhere to get work from, so move it
 			// to the best coin still alive. Only if none are left is the session closed,
@@ -401,6 +438,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	}
 
 	go m.failbackLoop(s, backends)
+	go m.keepaliveLoop(s)
 	// Only does anything once the miner turns out to be rotating; the loop checks
 	// its weights each tick, so a miner assigned a split later starts rotating
 	// without reconnecting.

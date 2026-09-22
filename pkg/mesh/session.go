@@ -52,6 +52,9 @@ type Session struct {
 	remoteAddr string
 	vendor     string
 
+	// lastSent is when anything was last written to the miner, for the keepalive.
+	lastSent time.Time
+
 	// pending is a switch waiting for its target's next job. Moving a miner
 	// mid-job gives it a new difficulty while work computed at the old one is
 	// still in flight, and the coin it lands on rejects all of it — badly so
@@ -110,6 +113,7 @@ func (s *Session) SendRaw(line []byte) error {
 	if s.closed || s.conn == nil {
 		return net.ErrClosed
 	}
+	s.lastSent = time.Now()
 	s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, err := s.conn.Write(append(line, '\n'))
 	return err
@@ -311,4 +315,14 @@ func (s *Session) lookupJob(id string) (*Backend, string, bool) {
 		return nil, "", false
 	}
 	return ref.backend, ref.coinJob, true
+}
+
+// sinceLastSent reports how long since anything was written to the miner.
+func (s *Session) sinceLastSent() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastSent.IsZero() {
+		return 0
+	}
+	return time.Since(s.lastSent)
 }

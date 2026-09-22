@@ -479,6 +479,13 @@ func (b *Backend) GoLive() (setDiff, notify []byte) {
 	return b.lastSetDifficulty, b.lastNotify
 }
 
+// CachedDifficulty returns the coin's last set_difficulty line, unchanged.
+func (b *Backend) CachedDifficulty() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.lastSetDifficulty
+}
+
 // Difficulty returns the coin's current share difficulty for this session.
 func (b *Backend) Difficulty() float64 {
 	b.mu.Lock()
