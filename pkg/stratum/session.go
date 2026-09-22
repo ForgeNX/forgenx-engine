@@ -700,6 +700,10 @@ type SessionInfo struct {
 // maxJobDiffs bounds how many recent jobs keep their difficulty on record.
 const maxJobDiffs = 64
 
+// jobDiffSettle is how soon after a difficulty raise a job is still recorded at
+// the previous difficulty, covering jobs sent together with the change.
+const jobDiffSettle = 5 * time.Second
+
 // recordJobDifficulty notes the difficulty a job is being sent at. A job resent
 // at a new difficulty under the same ID keeps the lower of the two, since the
 // miner may still hold work from it at the old one.
@@ -713,6 +717,14 @@ func (s *Session) recordJobDifficulty(jobID string) {
 		s.jobDiff = make(map[string]float64)
 	}
 	d := s.difficulty
+	// Some miners attach a new difficulty only to jobs that arrive after the
+	// one it comes with. An Avalon given a raised difficulty with a new block's
+	// job worked that whole job at the old difficulty - over a minute on BCH,
+	// until the next job arrived. So a job sent within moments of a raise is
+	// judged at the old difficulty for as long as it lasts.
+	if s.prevDiff > 0 && s.prevDiff < d && time.Since(s.diffChangedAt) < jobDiffSettle {
+		d = s.prevDiff
+	}
 	if old, ok := s.jobDiff[jobID]; ok {
 		if d < old {
 			s.jobDiff[jobID] = d
