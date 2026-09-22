@@ -661,7 +661,18 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 					target = owner
 					out = rewriteSubmitJobID(out, coinJob)
 				} else {
-					m.logger.Warn("[nexus] %s: submit for unknown job %s; forwarding to active backend", s.id, nexusJob)
+					// A share for a job this connection never issued - work from before a
+					// reconnect or an engine restart. No coin can accept it, so it is answered
+					// here as stale rather than passed on to be rejected, and counted in the
+					// mesh's own tally so nothing is hidden.
+					m.logger.Info("[nexus] %s: share for job %s, which this connection never issued; answered as stale", s.id, nexusJob)
+					var sub struct {
+						ID json.RawMessage `json:"id"`
+					}
+					_ = json.Unmarshal(line, &sub)
+					_ = s.send(map[string]interface{}{"id": rawOrNull(sub.ID), "result": nil, "error": []interface{}{21, "Job not found (stale)", nil}})
+					m.statStale.Add(1)
+					break
 				}
 			}
 			out = rewriteSubmitWorker(out, target.Worker)

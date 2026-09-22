@@ -2,11 +2,14 @@ package mesh
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ForgeNX/forgenx-engine/pkg/logging"
@@ -299,8 +302,7 @@ func (s *Session) registerJob(b *Backend, coinJob string) string {
 	if s.jobs == nil {
 		s.jobs = make(map[string]jobRef, maxTrackedJobs)
 	}
-	s.jobSeq++
-	id := strconv.FormatUint(s.jobSeq, 16)
+	id := nextJobID()
 	s.jobs[id] = jobRef{backend: b, coinJob: coinJob}
 	s.jobOrder = append(s.jobOrder, id)
 	if len(s.jobOrder) > maxTrackedJobs {
@@ -361,4 +363,23 @@ func (s *Session) takePendingSubmit(id string) bool {
 		return true
 	}
 	return false
+}
+
+// Job IDs are unique across every connection and every engine start. Each
+// connection used to number its jobs from 1, so a share left over from an old
+// connection could carry the same ID as a job on the new one and be judged
+// against work it was never done for - rejected with a meaningless difficulty.
+// A random prefix chosen at start, plus a counter every connection shares, means
+// a leftover share can only ever be unknown, never mistaken for another job.
+var (
+	jobEpoch = func() string {
+		var b [4]byte
+		_, _ = rand.Read(b[:])
+		return hex.EncodeToString(b[:])
+	}()
+	jobCounter atomic.Uint64
+)
+
+func nextJobID() string {
+	return jobEpoch + strconv.FormatUint(jobCounter.Add(1), 16)
 }
