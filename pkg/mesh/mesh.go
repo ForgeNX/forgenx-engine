@@ -107,6 +107,10 @@ type Mesh struct {
 	statRejected atomic.Uint64
 	statStale    atomic.Uint64
 	statSwitches atomic.Uint64
+
+	// Per-worker share tallies this session: accepted, rejected, stale.
+	tallyMu sync.Mutex
+	tallies map[string]*[3]uint64
 }
 
 func New(opts Options) *Mesh {
@@ -560,6 +564,7 @@ func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
 	}
 	if ok, _ := r.Result.(bool); ok && r.Error == nil {
 		m.statAccepted.Add(1)
+		m.tally(s.workerName(), 0)
 		return true
 	}
 	stale := false
@@ -575,8 +580,41 @@ func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
 	}
 	if stale {
 		m.statStale.Add(1)
+		m.tally(s.workerName(), 2)
 	} else {
 		m.statRejected.Add(1)
+		m.tally(s.workerName(), 1)
 	}
 	return true
+}
+
+// tally records one share outcome for a worker: 0 accepted, 1 rejected, 2 stale.
+func (m *Mesh) tally(worker string, outcome int) {
+	if worker == "" {
+		return
+	}
+	m.tallyMu.Lock()
+	defer m.tallyMu.Unlock()
+	if m.tallies == nil {
+		m.tallies = make(map[string]*[3]uint64)
+	}
+	t := m.tallies[worker]
+	if t == nil {
+		t = &[3]uint64{}
+		m.tallies[worker] = t
+	}
+	t[outcome]++
+}
+
+// WorkerShares returns each worker's accepted, rejected and stale shares this
+// session, as counted at the relay - so it includes shares the relay answered
+// itself, which no coin ever saw.
+func (m *Mesh) WorkerShares() map[string][3]uint64 {
+	m.tallyMu.Lock()
+	defer m.tallyMu.Unlock()
+	out := make(map[string][3]uint64, len(m.tallies))
+	for w, t := range m.tallies {
+		out[w] = *t
+	}
+	return out
 }

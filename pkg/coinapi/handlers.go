@@ -78,6 +78,8 @@ type CoinAPI struct {
 
 	// meshOverview reports the relay's own tallies since the engine started.
 	meshOverview func() map[string]interface{}
+	// meshWorkerShares reports each worker's share tallies at the relay.
+	meshWorkerShares func() map[string][3]uint64
 	// meshPeak is the highest combined mesh hashrate seen this session.
 	meshPeakMu sync.Mutex
 	meshPeak   float64
@@ -269,6 +271,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, data)
 }
+
+// SetMeshWorkerShares installs the per-worker share tallies.
+func (c *CoinAPI) SetMeshWorkerShares(f func() map[string][3]uint64) { c.meshWorkerShares = f }
 
 // SetMeshOverview installs the relay's session tallies.
 func (c *CoinAPI) SetMeshOverview(f func() map[string]interface{}) { c.meshOverview = f }
@@ -694,6 +699,10 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		measured = c.meshHashrates()
 	}
 	const minMeasuredShares = 5
+	tallies := map[string][3]uint64{}
+	if c.meshWorkerShares != nil {
+		tallies = c.meshWorkerShares()
+	}
 
 	// A miner's own reading beats both of those: exact from its first second,
 	// where the relay's measurement needs a handful of shares and a coin's
@@ -746,6 +755,9 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"hashrate_15m":    f.hashrate,
 			"pending_coin":    pending[worker],
 			"hashrate_source": source,
+			"shares_accepted": tallies[worker][0],
+			"shares_rejected": tallies[worker][1],
+			"shares_stale":    tallies[worker][2],
 			"model":           rd.Model,
 			"chip":            rd.Chip,
 			"asic_temp":       rd.ASICTemp,
@@ -760,16 +772,19 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		miners = append(miners, map[string]interface{}{
-			"worker":       worker,
-			"active_coin":  "",
-			"assignment":   alloc,
-			"assigned":     true,
-			"connected":    false,
-			"ip":           "",
-			"device":       "",
-			"hashrate_15m": 0,
-			"pending_coin": "",
-			"pins":         c.store.GetMeshPins(worker),
+			"worker":          worker,
+			"active_coin":     "",
+			"assignment":      alloc,
+			"assigned":        true,
+			"connected":       false,
+			"ip":              "",
+			"device":          "",
+			"hashrate_15m":    0,
+			"pending_coin":    "",
+			"shares_accepted": tallies[worker][0],
+			"shares_rejected": tallies[worker][1],
+			"shares_stale":    tallies[worker][2],
+			"pins":            c.store.GetMeshPins(worker),
 		})
 	}
 	// A stable order at the source. The list is built by walking a map, and Go

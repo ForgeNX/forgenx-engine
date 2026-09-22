@@ -672,6 +672,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 					_ = json.Unmarshal(line, &sub)
 					_ = s.send(map[string]interface{}{"id": rawOrNull(sub.ID), "result": nil, "error": []interface{}{21, "Job not found (stale)", nil}})
 					m.statStale.Add(1)
+					m.tally(s.workerName(), 2)
 					break
 				}
 			}

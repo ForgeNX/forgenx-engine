@@ -339,6 +339,7 @@ func main() {
 				},
 			)
 			coinAPI.SetMeshRebalance(nexusMesh.Rebalance)
+			coinAPI.SetMeshWorkerShares(nexusMesh.WorkerShares)
 			coinAPI.SetMeshOverview(func() map[string]interface{} {
 				o := nexusMesh.Overview()
 				return map[string]interface{}{

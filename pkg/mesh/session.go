@@ -383,3 +383,10 @@ var (
 func nextJobID() string {
 	return jobEpoch + strconv.FormatUint(jobCounter.Add(1), 16)
 }
+
+// workerName returns the worker this connection authorized as.
+func (s *Session) workerName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.worker
+}
