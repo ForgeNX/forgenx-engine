@@ -494,10 +494,11 @@ func (c *CoinAPI) HandleMeshSystem(w http.ResponseWriter, r *http.Request) {
 func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var body struct {
-			NetworkStart *string `json:"network_start"`
-			NetworkEnd   *string `json:"network_end"`
-			IncludeNew   *bool   `json:"include_new"`
-			MinerSort    *string `json:"miner_sort"`
+			NetworkStart   *string `json:"network_start"`
+			NetworkEnd     *string `json:"network_end"`
+			IncludeNew     *bool   `json:"include_new"`
+			MinerSort      *string `json:"miner_sort"`
+			DiscoveredSort *string `json:"discovered_sort"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, 400, "invalid body")
@@ -528,12 +529,24 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.MinerSort != nil {
 			parts := strings.SplitN(*body.MinerSort, ":", 2)
-			validKey := map[string]bool{"name": true, "hashrate": true, "node": true, "fleet": true}
+			validKey := map[string]bool{"name": true, "hashrate": true, "device": true, "node": true, "fleet": true}
 			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
 				writeError(w, 400, "miner_sort must be name, hashrate, node or fleet, then :asc or :desc")
 				return
 			}
 			if err := c.store.SetMeshMinerSort(*body.MinerSort); err != nil {
+				writeError(w, 500, "could not save the sort")
+				return
+			}
+		}
+		if body.DiscoveredSort != nil {
+			parts := strings.SplitN(*body.DiscoveredSort, ":", 2)
+			validKey := map[string]bool{"name": true, "hashrate": true, "device": true, "connection": true}
+			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
+				writeError(w, 400, "discovered_sort must be name, hashrate, device or connection, then :asc or :desc")
+				return
+			}
+			if err := c.store.SetMeshDiscoveredSort(*body.DiscoveredSort); err != nil {
 				writeError(w, 500, "could not save the sort")
 				return
 			}
@@ -545,11 +558,12 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		found = len(c.scanner.Readings())
 	}
 	writeJSON(w, map[string]interface{}{
-		"network_start": start,
-		"network_end":   end,
-		"include_new":   c.store.GetMeshIncludeNew(),
-		"miner_sort":    c.store.GetMeshMinerSort(),
-		"miners_found":  found,
+		"network_start":   start,
+		"network_end":     end,
+		"include_new":     c.store.GetMeshIncludeNew(),
+		"miner_sort":      c.store.GetMeshMinerSort(),
+		"discovered_sort": c.store.GetMeshDiscoveredSort(),
+		"miners_found":    found,
 	})
 }
 

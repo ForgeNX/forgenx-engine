@@ -732,6 +732,22 @@ func (s *Store) SetMeshMinerSort(v string) error {
 	return s.SetMeshAssignment(meshSortKey, v)
 }
 
+// meshDiscoveredSortKey keeps how the Miners Discovered list is sorted.
+const meshDiscoveredSortKey = "\x00 discovered sort"
+
+// GetMeshDiscoveredSort returns the saved Miners Discovered sort.
+func (s *Store) GetMeshDiscoveredSort() string {
+	if v, ok := s.GetMeshAssignment(meshDiscoveredSortKey); ok && v != "" {
+		return v
+	}
+	return "name:asc"
+}
+
+// SetMeshDiscoveredSort records the Miners Discovered sort.
+func (s *Store) SetMeshDiscoveredSort(v string) error {
+	return s.SetMeshAssignment(meshDiscoveredSortKey, v)
+}
+
 // meshPinsPrefix keys the coins pinned in the allocator, per worker and for Fleet
 // Balance, so a pin holds across devices and reloads like every Nexus setting.
 const meshPinsPrefix = "\x00 pins "
