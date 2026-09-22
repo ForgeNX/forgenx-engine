@@ -107,10 +107,11 @@ type Mesh struct {
 	statRejected atomic.Uint64
 	statStale    atomic.Uint64
 	statSwitches atomic.Uint64
+	statLost     atomic.Uint64 // leftover work from before a reconnect, answered by the relay
 
 	// Per-worker share tallies this session: accepted, rejected, stale.
 	tallyMu sync.Mutex
-	tallies map[string]*[3]uint64
+	tallies map[string]*[4]uint64
 }
 
 func New(opts Options) *Mesh {
@@ -536,6 +537,7 @@ type Overview struct {
 	Since                     time.Time
 	Accepted, Rejected, Stale uint64
 	Switches                  uint64
+	Lost                      uint64
 }
 
 // Overview returns the relay's share and switch totals for this session.
@@ -546,6 +548,7 @@ func (m *Mesh) Overview() Overview {
 		Rejected: m.statRejected.Load(),
 		Stale:    m.statStale.Load(),
 		Switches: m.statSwitches.Load(),
+		Lost:     m.statLost.Load(),
 	}
 }
 
@@ -588,7 +591,7 @@ func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
 	return true
 }
 
-// tally records one share outcome for a worker: 0 accepted, 1 rejected, 2 stale.
+// tally records one share outcome for a worker: 0 accepted, 1 rejected, 2 stale, 3 lost to a reconnect.
 func (m *Mesh) tally(worker string, outcome int) {
 	if worker == "" {
 		return
@@ -596,11 +599,11 @@ func (m *Mesh) tally(worker string, outcome int) {
 	m.tallyMu.Lock()
 	defer m.tallyMu.Unlock()
 	if m.tallies == nil {
-		m.tallies = make(map[string]*[3]uint64)
+		m.tallies = make(map[string]*[4]uint64)
 	}
 	t := m.tallies[worker]
 	if t == nil {
-		t = &[3]uint64{}
+		t = &[4]uint64{}
 		m.tallies[worker] = t
 	}
 	t[outcome]++
@@ -609,10 +612,10 @@ func (m *Mesh) tally(worker string, outcome int) {
 // WorkerShares returns each worker's accepted, rejected and stale shares this
 // session, as counted at the relay - so it includes shares the relay answered
 // itself, which no coin ever saw.
-func (m *Mesh) WorkerShares() map[string][3]uint64 {
+func (m *Mesh) WorkerShares() map[string][4]uint64 {
 	m.tallyMu.Lock()
 	defer m.tallyMu.Unlock()
-	out := make(map[string][3]uint64, len(m.tallies))
+	out := make(map[string][4]uint64, len(m.tallies))
 	for w, t := range m.tallies {
 		out[w] = *t
 	}

@@ -79,7 +79,7 @@ type CoinAPI struct {
 	// meshOverview reports the relay's own tallies since the engine started.
 	meshOverview func() map[string]interface{}
 	// meshWorkerShares reports each worker's share tallies at the relay.
-	meshWorkerShares func() map[string][3]uint64
+	meshWorkerShares func() map[string][4]uint64
 	// meshPeak is the highest combined mesh hashrate seen this session.
 	meshPeakMu sync.Mutex
 	meshPeak   float64
@@ -273,7 +273,7 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetMeshWorkerShares installs the per-worker share tallies.
-func (c *CoinAPI) SetMeshWorkerShares(f func() map[string][3]uint64) { c.meshWorkerShares = f }
+func (c *CoinAPI) SetMeshWorkerShares(f func() map[string][4]uint64) { c.meshWorkerShares = f }
 
 // SetMeshOverview installs the relay's session tallies.
 func (c *CoinAPI) SetMeshOverview(f func() map[string]interface{}) { c.meshOverview = f }
@@ -705,7 +705,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		measured = c.meshHashrates()
 	}
 	const minMeasuredShares = 5
-	tallies := map[string][3]uint64{}
+	tallies := map[string][4]uint64{}
 	if c.meshWorkerShares != nil {
 		tallies = c.meshWorkerShares()
 	}
@@ -766,6 +766,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"shares_accepted": tallies[worker][0],
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],
+			"shares_lost":     tallies[worker][3],
 			"model":           rd.Model,
 			"chip":            rd.Chip,
 			"asic_temp":       rd.ASICTemp,
@@ -792,6 +793,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"shares_accepted": tallies[worker][0],
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],
+			"shares_lost":     tallies[worker][3],
 			"pins":            c.store.GetMeshPins(worker),
 		})
 	}
