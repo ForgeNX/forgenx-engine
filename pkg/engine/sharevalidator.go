@@ -70,6 +70,9 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 	// Look up the job
 	jobData := sv.jobMgr.GetJob(share.JobID)
 	if jobData == nil {
+		// Every rejection says why. These three paths all answer "job not found"
+		// to the miner, and none was logged, so one could not be told from another.
+		sv.logger.Info("share rejected: worker=%s job=%s reason=unknown job", share.WorkerName, share.JobID)
 		sv.stats.RecordShare(sv.symbol, metrics.ShareStale, share.WorkerName, 0)
 		return stratum.ErrJobNotFound
 	}
@@ -81,6 +84,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 		if sv.staleShareGrace > 0 && time.Since(sv.jobMgr.TipChangedAt()) < sv.staleShareGrace {
 			sv.logger.Debug("stale share accepted within grace period: worker=%s job=%s", share.WorkerName, share.JobID)
 		} else {
+			sv.logger.Info("share rejected: worker=%s job=%s reason=stale, block changed %s ago", share.WorkerName, share.JobID, time.Since(sv.jobMgr.TipChangedAt()).Round(time.Second))
 			sv.stats.RecordShare(sv.symbol, metrics.ShareStale, share.WorkerName, 0)
 			return stratum.ErrJobNotFound
 		}
@@ -93,6 +97,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 		if addrCoinb2, ok := jobData.AddressCoinb2s[addr]; ok {
 			coinb2 = addrCoinb2
 		} else {
+			sv.logger.Info("share rejected: worker=%s job=%s reason=no coinbase for payout address %s", share.WorkerName, share.JobID, addr)
 			sv.stats.RecordShare(sv.symbol, metrics.ShareStale, share.WorkerName, 0)
 			return stratum.ErrJobNotFound
 		}
