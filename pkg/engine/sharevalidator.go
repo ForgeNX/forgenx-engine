@@ -219,6 +219,19 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 				}
 			}
 		}
+		// Judge the share against the difficulty its own job was sent at. A miner
+		// finishes queued work from a job after a new difficulty arrives, since the
+		// new one applies only to later jobs, and a slow-draining miner outlasts any
+		// fixed grace. Sessions that don't record job difficulties are unaffected.
+		if !accepted {
+			if jd, ok := session.(interface{ JobDifficulty(string) (float64, bool) }); ok {
+				if d, ok := jd.JobDifficulty(share.JobID); ok && d < sessionDiff && coin.HashMeetsDifficulty(blockHashBE, d) {
+					sv.logger.Info("share accepted at its job's difficulty: worker=%s job=%s diff=%g jobDiff=%g currentDiff=%g",
+						share.WorkerName, share.JobID, actualDiff, d, sessionDiff)
+					accepted = true
+				}
+			}
+		}
 		if !accepted {
 			sv.logger.Info("share rejected: worker=%s required=%g actual=%g hash=%s", share.WorkerName, sessionDiff, actualDiff, blockHashHex)
 			sv.stats.RecordShare(sv.symbol, metrics.ShareInvalid, share.WorkerName, actualDiff)

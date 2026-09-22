@@ -75,6 +75,13 @@ type Session struct {
 	// Pending difficulty change (applied on next job broadcast)
 	pendingDiff float64
 
+	// jobDiff is the lowest difficulty each recent job was sent at. A miner works
+	// through queued work from a job after a new difficulty arrives - cgminer
+	// applies a difficulty only to jobs that follow it - so a share is judged
+	// against its own job's difficulty, not only the session's current one.
+	jobDiff  map[string]float64
+	jobOrder []string
+
 	// Solo mining
 	miningAddress string
 }
@@ -445,6 +452,8 @@ func (s *Session) SendJob(job *Job) {
 		s.mu.Unlock()
 	}
 
+	s.recordJobDifficulty(job.JobID)
+
 	s.sendJSON(NotifyNotification(job))
 }
 
@@ -686,4 +695,42 @@ type SessionInfo struct {
 	Vendor             string    `json:"vendor,omitempty"`
 	Firmware           string    `json:"firmware,omitempty"`
 	DeviceID           string    `json:"device_id,omitempty"`
+}
+
+// maxJobDiffs bounds how many recent jobs keep their difficulty on record.
+const maxJobDiffs = 64
+
+// recordJobDifficulty notes the difficulty a job is being sent at. A job resent
+// at a new difficulty under the same ID keeps the lower of the two, since the
+// miner may still hold work from it at the old one.
+func (s *Session) recordJobDifficulty(jobID string) {
+	if jobID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jobDiff == nil {
+		s.jobDiff = make(map[string]float64)
+	}
+	d := s.difficulty
+	if old, ok := s.jobDiff[jobID]; ok {
+		if d < old {
+			s.jobDiff[jobID] = d
+		}
+		return
+	}
+	s.jobDiff[jobID] = d
+	s.jobOrder = append(s.jobOrder, jobID)
+	for len(s.jobOrder) > maxJobDiffs {
+		delete(s.jobDiff, s.jobOrder[0])
+		s.jobOrder = s.jobOrder[1:]
+	}
+}
+
+// JobDifficulty returns the lowest difficulty a recent job was sent at.
+func (s *Session) JobDifficulty(jobID string) (float64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.jobDiff[jobID]
+	return d, ok
 }
