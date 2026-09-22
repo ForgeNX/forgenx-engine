@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"strconv"
@@ -99,6 +100,13 @@ type Mesh struct {
 
 	// keepaliveFor reports the active coin's ping settings, for the keepalive.
 	keepaliveFor func(symbol string) (bool, time.Duration)
+
+	// Session totals for the Nexus overview, since the engine started.
+	startedAt    time.Time
+	statAccepted atomic.Uint64
+	statRejected atomic.Uint64
+	statStale    atomic.Uint64
+	statSwitches atomic.Uint64
 }
 
 func New(opts Options) *Mesh {
@@ -109,6 +117,7 @@ func New(opts Options) *Mesh {
 		placement: make(map[string]string),
 		movedAt:   make(map[string]time.Time),
 		balNudge:  make(chan struct{}, 1),
+		startedAt: time.Now(),
 	}
 }
 
@@ -516,4 +525,58 @@ func (m *Mesh) SetKeepalive(f func(symbol string) (bool, time.Duration)) {
 	m.placeMu.Lock()
 	m.keepaliveFor = f
 	m.placeMu.Unlock()
+}
+
+// Overview is the relay's own tally since the engine started.
+type Overview struct {
+	Since                     time.Time
+	Accepted, Rejected, Stale uint64
+	Switches                  uint64
+}
+
+// Overview returns the relay's share and switch totals for this session.
+func (m *Mesh) Overview() Overview {
+	return Overview{
+		Since:    m.startedAt,
+		Accepted: m.statAccepted.Load(),
+		Rejected: m.statRejected.Load(),
+		Stale:    m.statStale.Load(),
+		Switches: m.statSwitches.Load(),
+	}
+}
+
+// noteSubmitResponse recognises a coin's reply to a share the relay forwarded,
+// counts it, and reports whether it was one - in which case the caller passes it
+// to the miner, whichever coin sent it. A stale reply is one naming a job the
+// coin no longer has; any other refusal counts as rejected.
+func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
+	var r struct {
+		ID     json.RawMessage `json:"id"`
+		Result interface{}     `json:"result"`
+		Error  interface{}     `json:"error"`
+	}
+	if json.Unmarshal(line, &r) != nil || !s.takePendingSubmit(string(r.ID)) {
+		return false
+	}
+	if ok, _ := r.Result.(bool); ok && r.Error == nil {
+		m.statAccepted.Add(1)
+		return true
+	}
+	stale := false
+	if e, isList := r.Error.([]interface{}); isList && len(e) > 0 {
+		if code, _ := e[0].(float64); code == 21 {
+			stale = true
+		}
+		if len(e) > 1 {
+			if msg, _ := e[1].(string); strings.Contains(strings.ToLower(msg), "stale") || strings.Contains(strings.ToLower(msg), "job not found") {
+				stale = true
+			}
+		}
+	}
+	if stale {
+		m.statStale.Add(1)
+	} else {
+		m.statRejected.Add(1)
+	}
+	return true
 }

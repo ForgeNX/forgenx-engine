@@ -343,6 +343,7 @@ func (m *Mesh) switchTo(s *Session, target *Backend, notify []byte) {
 
 	m.logger.Info("[nexus] %s: switched %s -> %s (diff=%t job=%t)",
 		s.id, symbolOf(prev), target.Symbol, setDiff != nil, notify != nil)
+	m.statSwitches.Add(1)
 }
 
 // authorizeSettle is how long to let a coin's post-authorize difficulty messages
@@ -390,6 +391,12 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	for _, b := range backends {
 		b := b
 		b.onMessage = func(line []byte) {
+			// A reply to a share goes back to the miner whichever coin sends it -
+			// including the coin it has just left, whose replies were dropped before.
+			if m.noteSubmitResponse(s, line) {
+				_ = s.SendRaw(line)
+				return
+			}
 			if s.activeBackend() != b {
 				return
 			}
@@ -442,6 +449,11 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	// sends one, move on that job rather than replaying a cached one.
 	for _, wb := range backends {
 		b := wb
+		b.SetWarmResponseHandler(func(line []byte) {
+			if m.noteSubmitResponse(s, line) {
+				_ = s.SendRaw(line)
+			}
+		})
 		b.SetWarmNotifyHandler(func(line []byte) {
 			if target, _ := s.pendingSwitch(); target == b {
 				m.switchTo(s, b, line)
@@ -653,6 +665,11 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 				}
 			}
 			out = rewriteSubmitWorker(out, target.Worker)
+			var sub struct {
+				ID json.RawMessage `json:"id"`
+			}
+			_ = json.Unmarshal(line, &sub)
+			s.addPendingSubmit(string(sub.ID))
 			if err := target.SendRaw(out); err != nil {
 				m.logger.Info("[nexus] %s submit forward FAILED: %v", s.id, err)
 			} else {

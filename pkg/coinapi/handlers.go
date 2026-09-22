@@ -76,6 +76,12 @@ type CoinAPI struct {
 	// target changes or a miner joins or leaves it.
 	meshRebalance func()
 
+	// meshOverview reports the relay's own tallies since the engine started.
+	meshOverview func() map[string]interface{}
+	// meshPeak is the highest combined mesh hashrate seen this session.
+	meshPeakMu sync.Mutex
+	meshPeak   float64
+
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
 	bestAllTimeMu    sync.Mutex
@@ -263,6 +269,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, data)
 }
+
+// SetMeshOverview installs the relay's session tallies.
+func (c *CoinAPI) SetMeshOverview(f func() map[string]interface{}) { c.meshOverview = f }
 
 // SetMeshRebalance installs the balancer nudge.
 func (c *CoinAPI) SetMeshRebalance(f func()) { c.meshRebalance = f }
@@ -607,6 +616,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		hashrate   float64
 	}
 	facts := map[string]minerFacts{}
+	bestShare := map[string]float64{} // highest session-best per worker, across coins
 	if minersData, err := c.fetchEngineJSON("/miners"); err == nil {
 		if byCoin, ok := minersData["miners"].(map[string]interface{}); ok {
 			for coinSym, raw := range byCoin {
@@ -623,6 +633,9 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 					}
 					if suffix == "" {
 						continue
+					}
+					if bd := getFloat(m, "best_difficulty_session"); bd > bestShare[suffix] {
+						bestShare[suffix] = bd
 					}
 					addr := getString(m, "remote_addr")
 					if i := strings.LastIndex(addr, ":"); i >= 0 {
@@ -757,6 +770,75 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		return name(miners[i]) < name(miners[j])
 	})
 	out["miners"] = miners
+
+	// The overview at the top of the Nexus tab: totals across connected mesh
+	// miners, the relay's own tallies, and the session's best share and blocks.
+	type nodeTotal struct {
+		miners int
+		ths    float64
+	}
+	perNode := map[string]*nodeTotal{}
+	allWorkers := map[string]bool{}
+	var total, best float64
+	connected := 0
+	for _, mi := range miners {
+		mm, _ := mi.(map[string]interface{})
+		w, _ := mm["worker"].(string)
+		allWorkers[w] = true
+		if on, _ := mm["connected"].(bool); !on {
+			continue
+		}
+		hr, _ := mm["hashrate_15m"].(float64)
+		coin, _ := mm["active_coin"].(string)
+		connected++
+		total += hr
+		if bestShare[w] > best {
+			best = bestShare[w]
+		}
+		if perNode[coin] == nil {
+			perNode[coin] = &nodeTotal{}
+		}
+		perNode[coin].miners++
+		perNode[coin].ths += hr
+	}
+	c.meshPeakMu.Lock()
+	if total > c.meshPeak {
+		c.meshPeak = total
+	}
+	peak := c.meshPeak
+	c.meshPeakMu.Unlock()
+	nodes := []map[string]interface{}{}
+	for coin, n := range perNode {
+		nodes = append(nodes, map[string]interface{}{"coin": coin, "miners": n.miners, "ths": n.ths})
+	}
+	sort.Slice(nodes, func(a, b int) bool { return nodes[a]["coin"].(string) < nodes[b]["coin"].(string) })
+	ov := map[string]interface{}{
+		"connected": connected, "total_ths": total, "peak_ths": peak,
+		"best_share": best, "nodes": nodes, "blocks": 0,
+	}
+	if c.meshOverview != nil {
+		for k, v := range c.meshOverview() {
+			ov[k] = v
+		}
+	}
+	if since, ok := ov["since"].(time.Time); ok && c.meshInfo != nil {
+		_, _, coins := c.meshInfo()
+		blocks := 0
+		for _, sym := range coins {
+			list, _ := c.store.GetBlocks(sym, 500)
+			for _, b := range list {
+				wn := b.WorkerName
+				if j := strings.LastIndex(wn, "."); j >= 0 {
+					wn = wn[j+1:]
+				}
+				if allWorkers[wn] && blockTimeAfter(b.BlockTime, since) {
+					blocks++
+				}
+			}
+		}
+		ov["blocks"] = blocks
+	}
+	out["overview"] = ov
 	writeJSON(w, out)
 }
 
@@ -2721,4 +2803,15 @@ func (c *CoinAPI) HandleAction(w http.ResponseWriter, r *http.Request, coinID, a
 		"restart": "running",
 	}
 	writeJSON(w, map[string]interface{}{"success": true, "status": statusMap[action]})
+}
+
+// blockTimeAfter reports whether a stored block time falls at or after since.
+// Unparseable times are left out rather than guessed at.
+func blockTimeAfter(stored string, since time.Time) bool {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(layout, stored); err == nil {
+			return !t.Before(since)
+		}
+	}
+	return false
 }

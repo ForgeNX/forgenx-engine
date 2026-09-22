@@ -70,7 +70,11 @@ type Session struct {
 	// across switches, since every share passes through here whichever coin it
 	// is for.
 	shares []shareSample
-	closed bool
+
+	// pendingSubmits holds the id of every share forwarded and not yet answered,
+	// so its reply is passed back whichever coin sends it.
+	pendingSubmits map[string]time.Time
+	closed         bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -325,4 +329,36 @@ func (s *Session) sinceLastSent() time.Duration {
 		return 0
 	}
 	return time.Since(s.lastSent)
+}
+
+// addPendingSubmit notes a share forwarded to a coin, dropping any that have
+// gone unanswered for two minutes.
+func (s *Session) addPendingSubmit(id string) {
+	if id == "" || id == "null" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingSubmits == nil {
+		s.pendingSubmits = make(map[string]time.Time)
+	}
+	now := time.Now()
+	for k, t := range s.pendingSubmits {
+		if now.Sub(t) > 2*time.Minute {
+			delete(s.pendingSubmits, k)
+		}
+	}
+	s.pendingSubmits[id] = now
+}
+
+// takePendingSubmit reports whether id is a share awaiting its reply, and stops
+// waiting for it.
+func (s *Session) takePendingSubmit(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.pendingSubmits[id]; ok {
+		delete(s.pendingSubmits, id)
+		return true
+	}
+	return false
 }

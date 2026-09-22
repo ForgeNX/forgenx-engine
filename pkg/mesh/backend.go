@@ -83,6 +83,10 @@ type Backend struct {
 	// the old one exactly as it would on a new block, losing nothing.
 	onWarmNotify func(line []byte)
 
+	// onWarmResponse fires for a reply arriving on a backend the miner has moved
+	// away from - the answer to a share it sent before the switch.
+	onWarmResponse func(line []byte)
+
 	// curDiff is the coin's current share difficulty for this session, parsed from
 	// its last set_difficulty. Used to weight each submitted share when the mesh
 	// measures a miner's hashrate itself.
@@ -317,6 +321,8 @@ func (b *Backend) Run() {
 			}
 		} else if msg.Method == "mining.notify" && b.onWarmNotify != nil {
 			b.onWarmNotify(line)
+		} else if msg.Method == "" && len(msg.ID) > 0 && b.onWarmResponse != nil {
+			b.onWarmResponse(line)
 		}
 	}
 }
@@ -529,6 +535,13 @@ func (b *Backend) SettleDifficulty(budget time.Duration) {
 func (b *Backend) SetWarmNotifyHandler(f func(line []byte)) {
 	b.mu.Lock()
 	b.onWarmNotify = f
+	b.mu.Unlock()
+}
+
+// SetWarmResponseHandler installs the callback for replies on a warm backend.
+func (b *Backend) SetWarmResponseHandler(f func(line []byte)) {
+	b.mu.Lock()
+	b.onWarmResponse = f
 	b.mu.Unlock()
 }
 

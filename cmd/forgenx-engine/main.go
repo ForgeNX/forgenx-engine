@@ -339,6 +339,13 @@ func main() {
 				},
 			)
 			coinAPI.SetMeshRebalance(nexusMesh.Rebalance)
+			coinAPI.SetMeshOverview(func() map[string]interface{} {
+				o := nexusMesh.Overview()
+				return map[string]interface{}{
+					"since": o.Since, "accepted": o.Accepted, "rejected": o.Rejected,
+					"stale": o.Stale, "switches": o.Switches,
+				}
+			})
 			nexusMesh.SetKeepalive(eng.PingSettings)
 			coinAPI.SetMeshInfo(func() (bool, int, []string) {
 				return nexusMesh.Enabled(), nexusMesh.Port(), nexusMesh.Coins()
