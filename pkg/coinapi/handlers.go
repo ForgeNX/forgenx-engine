@@ -2,6 +2,8 @@ package coinapi
 
 import (
 	"context"
+	"net/netip"
+	"sort"
 
 	"bufio"
 	"bytes"
@@ -388,6 +390,49 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 		"pool_user":      reading.PoolUser,
 		"hostname":       reading.Hostname,
 	})
+}
+
+// HandleFoundMiners lists every miner the LAN scanner has found, with its own
+// readings and whether it is on the mesh - both whether it is mining through
+// the mesh now, and whether its pool setting points at the mesh port, since a
+// miner can be one without the other.
+func (c *CoinAPI) HandleFoundMiners(w http.ResponseWriter, r *http.Request) {
+	active := map[string]string{}
+	if c.meshActiveCoins != nil {
+		active = c.meshActiveCoins()
+	}
+	port := 0
+	if c.meshInfo != nil {
+		_, port, _ = c.meshInfo()
+	}
+	list := []map[string]interface{}{}
+	if c.scanner != nil {
+		for worker, rd := range c.scanner.Readings() {
+			coin, onMesh := active[worker]
+			pointed := port > 0 && strings.HasSuffix(strings.TrimRight(rd.PoolURL, "/"), ":"+strconv.Itoa(port))
+			list = append(list, map[string]interface{}{
+				"worker":         worker,
+				"host":           rd.Host,
+				"driver":         rd.Driver,
+				"model":          rd.Model,
+				"chip":           rd.Chip,
+				"hashrate_ths":   rd.Hashrate / 1e12,
+				"asic_temp":      rd.ASICTemp,
+				"asic_temp_max":  rd.ASICTempMax,
+				"vr_temp":        rd.VRTemp,
+				"pool_url":       rd.PoolURL,
+				"on_mesh":        onMesh,
+				"mesh_coin":      coin,
+				"points_at_mesh": pointed,
+			})
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		a, _ := netip.ParseAddr(list[i]["host"].(string))
+		b, _ := netip.ParseAddr(list[j]["host"].(string))
+		return a.Less(b)
+	})
+	writeJSON(w, map[string]interface{}{"miners": list, "mesh_port": port})
 }
 
 // HandleMeshPins saves which coins are pinned in the allocator for a worker, or
@@ -1372,6 +1417,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mesh/settings", c.HandleMeshSettings)
 	mux.HandleFunc("/api/mesh/system", c.HandleMeshSystem)
 	mux.HandleFunc("/api/mesh/pins", c.HandleMeshPins)
+	mux.HandleFunc("/api/mesh/miners", c.HandleFoundMiners)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

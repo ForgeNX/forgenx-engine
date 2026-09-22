@@ -37,6 +37,7 @@ type Reading struct {
 	Model       string  // the product, e.g. "NerdQAxe++", "Bitaxe Gamma", "Avalon Nano3s"
 	Chip        string  // the ASIC, where the miner reports it, e.g. "BM1370"
 	PoolUser    string  // the username the miner authorizes with, for matching to a worker
+	PoolURL     string  // the pool it is mining to, host:port
 	Hostname    string
 	ASICTemp    float64 // °C, the hottest ASIC reading the miner offers; 0 when unknown
 	ASICTempMax float64 // °C, the hottest single chip, where the miner reports it separately from ASICTemp
@@ -154,6 +155,8 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		VRTemp      float64   `json:"vrTemp"`
 		VRTempInt   float64   `json:"vrTempInt"` // NerdQAxe's second regulator reading
 		StratumUser string    `json:"stratumUser"`
+		StratumURL  string    `json:"stratumURL"`
+		StratumPort int       `json:"stratumPort"`
 		Hostname    string    `json:"hostname"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
@@ -183,6 +186,7 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		ASICTemp: firstSensor(info.Temp, hottest(info.ASICTemps...), info.Temp2),
 		VRTemp:   firstSensor(info.VRTemp, info.VRTempInt),
 		PoolUser: info.StratumUser,
+		PoolURL:  axeosPool(info.StratumURL, info.StratumPort),
 		Hostname: info.Hostname,
 	}
 	r.Hashrate10 = r.Hashrate
@@ -214,6 +218,17 @@ func axeosProduct(device, chip string, count int) string {
 		name = fmt.Sprintf("%s (%d chips)", name, count)
 	}
 	return name
+}
+
+// axeosPool renders AxeOS's separate host and port as one pool address.
+func axeosPool(host string, port int) string {
+	if host == "" {
+		return ""
+	}
+	if port > 0 {
+		return fmt.Sprintf("%s:%d", host, port)
+	}
+	return host
 }
 
 // ── CGMiner API ──────────────────────────────────────────────────────────────
@@ -314,6 +329,7 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 				pm, _ := p.(map[string]interface{})
 				if st, _ := pm["Stratum Active"].(bool); st || len(pl) == 1 {
 					r.PoolUser, _ = pm["User"].(string)
+					r.PoolURL, _ = pm["URL"].(string)
 					break
 				}
 			}
