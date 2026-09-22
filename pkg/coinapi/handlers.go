@@ -390,6 +390,27 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleMeshPins saves which coins are pinned in the allocator for a worker, or
+// for Fleet Balance ("__system__"): POST {"worker": "...", "coins": ["BCH"]}.
+func (c *CoinAPI) HandleMeshPins(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Worker string   `json:"worker"`
+		Coins  []string `json:"coins"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Worker) == "" {
+		writeError(w, 400, "worker is required")
+		return
+	}
+	for i, c := range body.Coins {
+		body.Coins[i] = strings.ToUpper(strings.TrimSpace(c))
+	}
+	if err := c.store.SetMeshPins(body.Worker, body.Coins); err != nil {
+		writeError(w, 500, "could not save pins")
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "worker": body.Worker, "pins": body.Coins})
+}
+
 // HandleMeshSystem reads (GET) or sets (POST {"target":"DGB:60,BCH:40"}) the
 // System Mesh split - the share of included miners' hashrate each coin gets.
 func (c *CoinAPI) HandleMeshSystem(w http.ResponseWriter, r *http.Request) {
@@ -505,6 +526,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		out["system_target"] = ""
 	}
+	out["system_pins"] = c.store.GetMeshPins("__system__")
 	if iv, ok := c.store.GetMeshInterval(); ok {
 		out["rotate_interval"] = iv
 	} else {
@@ -643,6 +665,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"asic_temp":       rd.ASICTemp,
 			"asic_temp_max":   rd.ASICTempMax,
 			"vr_temp":         rd.VRTemp,
+			"pins":            c.store.GetMeshPins(worker),
 		})
 		seen[worker] = true
 	}
@@ -660,6 +683,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"device":       "",
 			"hashrate_15m": 0,
 			"pending_coin": "",
+			"pins":         c.store.GetMeshPins(worker),
 		})
 	}
 	out["miners"] = miners
@@ -1347,6 +1371,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mesh/status", c.HandleMeshStatus)
 	mux.HandleFunc("/api/mesh/settings", c.HandleMeshSettings)
 	mux.HandleFunc("/api/mesh/system", c.HandleMeshSystem)
+	mux.HandleFunc("/api/mesh/pins", c.HandleMeshPins)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

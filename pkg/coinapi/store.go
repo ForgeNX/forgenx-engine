@@ -716,6 +716,24 @@ const (
 	meshSystemKey     = "\x00 system target"
 )
 
+// meshPinsPrefix keys the coins pinned in the allocator, per worker and for Fleet
+// Balance, so a pin holds across devices and reloads like every Nexus setting.
+const meshPinsPrefix = "\x00 pins "
+
+// GetMeshPins returns the coins pinned for a worker, or for Fleet Balance.
+func (s *Store) GetMeshPins(worker string) []string {
+	v, ok := s.GetMeshAssignment(meshPinsPrefix + worker)
+	if !ok || v == "" {
+		return []string{}
+	}
+	return strings.Split(v, ",")
+}
+
+// SetMeshPins records the pinned coins; an empty list clears them.
+func (s *Store) SetMeshPins(worker string, coins []string) error {
+	return s.SetMeshAssignment(meshPinsPrefix+worker, strings.Join(coins, ","))
+}
+
 // MeshAuto is the assignment value for a miner handed to the System Mesh: the
 // balancer decides which coin it mines, towards the System Mesh target.
 const MeshAuto = "AUTO"
@@ -821,7 +839,7 @@ func (s *Store) ListMeshAssignments() (map[string]string, error) {
 	for rows.Next() {
 		var w, a string
 		if err := rows.Scan(&w, &a); err == nil {
-			if w == meshDefaultKey || w == meshIntervalKey || w == meshNetworkKey || w == meshIncludeNewKey || w == meshSystemKey {
+			if strings.HasPrefix(w, "\x00") { // every reserved key, present and future
 				continue // mesh-wide settings, not workers
 			}
 			out[w] = a
