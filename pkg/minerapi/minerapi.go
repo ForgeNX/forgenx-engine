@@ -111,11 +111,26 @@ func Probe(ctx context.Context, host, subscribe string) (Reading, error) {
 		r, err := d.Read(dctx, host)
 		cancel()
 		if err == nil {
+			r.Model = displayModel(r.Model)
 			return r, nil
 		}
 		errs = append(errs, d.Name()+": "+err.Error())
 	}
 	return Reading{}, fmt.Errorf("%s", strings.Join(errs, "; "))
+}
+
+// displayModels tidies model names firmwares report awkwardly, so every screen
+// shows the product's proper name. Anything not listed is shown as reported.
+var displayModels = map[string]string{
+	"avalon nano3s": "Avalon Nano 3S",
+	"avalon nano3":  "Avalon Nano 3",
+}
+
+func displayModel(raw string) string {
+	if pretty, ok := displayModels[strings.ToLower(strings.TrimSpace(raw))]; ok {
+		return pretty
+	}
+	return raw
 }
 
 // ── AxeOS ────────────────────────────────────────────────────────────────────
