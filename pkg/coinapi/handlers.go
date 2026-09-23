@@ -416,6 +416,54 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleMoveToMesh points a miner at the mesh: POST {"host": "...", "worker": "..."}.
+// The first thing ForgeNX writes to someone else's hardware, so it changes the
+// pool and worker name only, confirms the change took, and says plainly what
+// happened. Only AxeOS miners can be moved this way - an Avalon's firmware has
+// no command to add or change a pool.
+func (c *CoinAPI) HandleMoveToMesh(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Host   string `json:"host"`
+		Worker string `json:"worker"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Host) == "" {
+		writeError(w, 400, "host is required")
+		return
+	}
+	worker := strings.TrimSpace(body.Worker)
+	if worker == "" {
+		writeError(w, 400, "a worker name is required")
+		return
+	}
+	addr := c.store.GetMeshAddress()
+	if addr == "" {
+		writeError(w, 400, "set the mesh address in Mesh Settings first, so miners are pointed somewhere they can reach")
+		return
+	}
+	enabled, port, _ := false, 0, []string(nil)
+	if c.meshInfo != nil {
+		enabled, port, _ = c.meshInfo()
+	}
+	if !enabled || port == 0 {
+		writeError(w, 400, "the mesh is not enabled")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := minerapi.SetPool(ctx, strings.TrimSpace(body.Host), addr, port, worker); err != nil {
+		writeError(w, 502, err.Error())
+		return
+	}
+	// The name is taken from the moment it is given out, so the next miner moved
+	// gets the next one rather than the same.
+	c.nameReservations.reserve(worker)
+	writeJSON(w, map[string]interface{}{
+		"ok": true, "worker": worker, "pool": fmt.Sprintf("%s:%d", addr, port),
+		"note": "restarting; it should appear on the mesh within a minute",
+	})
+}
+
 // HandleRejections lists the most recent rejected shares for every worker, with
 // the reason each was refused - for every miner, not only meshed ones.
 func (c *CoinAPI) HandleRejections(w http.ResponseWriter, r *http.Request) {
@@ -526,6 +574,7 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 			DiscoveredSort *string `json:"discovered_sort"`
 			AutoName       *bool   `json:"auto_name"`
 			NamePrefix     *string `json:"name_prefix"`
+			MeshAddress    *string `json:"mesh_address"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, 400, "invalid body")
@@ -578,6 +627,12 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if body.MeshAddress != nil {
+			if err := c.store.SetMeshAddress(*body.MeshAddress); err != nil {
+				writeError(w, 500, "could not save the address")
+				return
+			}
+		}
 		if body.DiscoveredSort != nil {
 			parts := strings.SplitN(*body.DiscoveredSort, ":", 2)
 			validKey := map[string]bool{"name": true, "hashrate": true, "device": true, "connection": true}
@@ -604,6 +659,7 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		"discovered_sort": c.store.GetMeshDiscoveredSort(),
 		"auto_name":       c.store.GetMeshAutoName(),
 		"name_prefix":     c.store.GetMeshNamePrefix(),
+		"mesh_address":    c.store.GetMeshAddress(),
 		"next_name":       c.NextWorkerName(),
 		"miners_found":    found,
 	})
@@ -1602,6 +1658,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mesh/pins", c.HandleMeshPins)
 	mux.HandleFunc("/api/mesh/miners", c.HandleFoundMiners)
 	mux.HandleFunc("/api/miners/rejections", c.HandleRejections)
+	mux.HandleFunc("/api/miners/move-to-mesh", c.HandleMoveToMesh)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

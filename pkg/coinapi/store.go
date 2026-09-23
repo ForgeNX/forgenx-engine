@@ -763,6 +763,23 @@ func (s *Store) SetMeshNamePrefix(v string) error {
 	return s.SetMeshAssignment(meshNamePrefixKey, strings.TrimSpace(v))
 }
 
+// meshAddressKey is the address miners are pointed at when moved to the mesh.
+// The engine cannot discover its own LAN address from inside its container, and
+// the address the browser happens to be using may not be the one miners can
+// reach, so the user confirms it.
+const meshAddressKey = "\x00 mesh address"
+
+// GetMeshAddress returns the address miners are pointed at for the mesh.
+func (s *Store) GetMeshAddress() string {
+	v, _ := s.GetMeshAssignment(meshAddressKey)
+	return v
+}
+
+// SetMeshAddress records the address miners are pointed at for the mesh.
+func (s *Store) SetMeshAddress(v string) error {
+	return s.SetMeshAssignment(meshAddressKey, strings.TrimSpace(v))
+}
+
 // meshDiscoveredSortKey keeps how the Miners Discovered list is sorted.
 const meshDiscoveredSortKey = "\x00 discovered sort"
 

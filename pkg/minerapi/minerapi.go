@@ -17,6 +17,7 @@ package minerapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,18 +31,19 @@ import (
 
 // Reading is one answer from a miner.
 type Reading struct {
-	Driver      string  // which API answered
-	Host        string  // the address it answered on
-	Hashrate    float64 // H/s, the most recent figure the miner gives
-	Hashrate10  float64 // H/s, a longer average where the miner offers one; else Hashrate
-	Model       string  // the product, e.g. "NerdQAxe++", "Bitaxe Gamma", "Avalon Nano3s"
-	Chip        string  // the ASIC, where the miner reports it, e.g. "BM1370"
-	PoolUser    string  // the username the miner authorizes with, for matching to a worker
-	PoolURL     string  // the pool it is mining to, host:port
-	Hostname    string
-	ASICTemp    float64 // °C, the hottest ASIC reading the miner offers; 0 when unknown
-	ASICTempMax float64 // °C, the hottest single chip, where the miner reports it separately from ASICTemp
-	VRTemp      float64 // °C, voltage regulator; 0 when the miner has no such sensor
+	Driver       string  // which API answered
+	Host         string  // the address it answered on
+	Hashrate     float64 // H/s, the most recent figure the miner gives
+	Hashrate10   float64 // H/s, a longer average where the miner offers one; else Hashrate
+	Model        string  // the product, e.g. "NerdQAxe++", "Bitaxe Gamma", "Avalon Nano3s"
+	Chip         string  // the ASIC, where the miner reports it, e.g. "BM1370"
+	PoolUser     string  // the username the miner authorizes with, for matching to a worker
+	PoolURL      string  // the pool it is mining to, host:port
+	PoolProtocol string  // the protocol set for that pool, where the miner reports it
+	Hostname     string
+	ASICTemp     float64 // °C, the hottest ASIC reading the miner offers; 0 when unknown
+	ASICTempMax  float64 // °C, the hottest single chip, where the miner reports it separately from ASICTemp
+	VRTemp       float64 // °C, voltage regulator; 0 when the miner has no such sensor
 }
 
 // sensor treats the values firmwares use for "no sensor fitted" — zero, -1,
@@ -158,21 +160,22 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		return Reading{}, fmt.Errorf("axeos: HTTP %d", resp.StatusCode)
 	}
 	var info struct {
-		HashRate    float64   `json:"hashRate"`     // GH/s, instantaneous
-		HashRate1m  float64   `json:"hashRate_1m"`  // GH/s, newer firmware only
-		HashRate10m float64   `json:"hashRate_10m"` // GH/s, newer firmware only
-		ASICModel   string    `json:"ASICModel"`
-		ASICCount   int       `json:"asicCount"`
-		DeviceModel string    `json:"deviceModel"` // NerdQAxe and newer AxeOS builds
-		Temp        float64   `json:"temp"`
-		Temp2       float64   `json:"temp2"`
-		ASICTemps   []float64 `json:"asicTemps"` // per chip; NerdQAxe reports zeros
-		VRTemp      float64   `json:"vrTemp"`
-		VRTempInt   float64   `json:"vrTempInt"` // NerdQAxe's second regulator reading
-		StratumUser string    `json:"stratumUser"`
-		StratumURL  string    `json:"stratumURL"`
-		StratumPort int       `json:"stratumPort"`
-		Hostname    string    `json:"hostname"`
+		HashRate        float64   `json:"hashRate"`     // GH/s, instantaneous
+		HashRate1m      float64   `json:"hashRate_1m"`  // GH/s, newer firmware only
+		HashRate10m     float64   `json:"hashRate_10m"` // GH/s, newer firmware only
+		ASICModel       string    `json:"ASICModel"`
+		ASICCount       int       `json:"asicCount"`
+		DeviceModel     string    `json:"deviceModel"` // NerdQAxe and newer AxeOS builds
+		Temp            float64   `json:"temp"`
+		Temp2           float64   `json:"temp2"`
+		ASICTemps       []float64 `json:"asicTemps"` // per chip; NerdQAxe reports zeros
+		VRTemp          float64   `json:"vrTemp"`
+		VRTempInt       float64   `json:"vrTempInt"` // NerdQAxe's second regulator reading
+		StratumUser     string    `json:"stratumUser"`
+		StratumURL      string    `json:"stratumURL"`
+		StratumPort     int       `json:"stratumPort"`
+		StratumProtocol string    `json:"stratumProtocol"`
+		Hostname        string    `json:"hostname"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return Reading{}, fmt.Errorf("axeos: %w", err)
@@ -198,11 +201,12 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		// for the regulator — so the two never disagree. NerdQAxe also reports
 		// vrTempInt, the regulator chip's internal reading, which runs several
 		// degrees hotter; it is only used when vrTemp is absent.
-		ASICTemp: firstSensor(info.Temp, hottest(info.ASICTemps...), info.Temp2),
-		VRTemp:   firstSensor(info.VRTemp, info.VRTempInt),
-		PoolUser: info.StratumUser,
-		PoolURL:  axeosPool(info.StratumURL, info.StratumPort),
-		Hostname: info.Hostname,
+		ASICTemp:     firstSensor(info.Temp, hottest(info.ASICTemps...), info.Temp2),
+		VRTemp:       firstSensor(info.VRTemp, info.VRTempInt),
+		PoolUser:     info.StratumUser,
+		PoolURL:      axeosPool(info.StratumURL, info.StratumPort),
+		PoolProtocol: info.StratumProtocol,
+		Hostname:     info.Hostname,
 	}
 	r.Hashrate10 = r.Hashrate
 	if info.HashRate10m > 0 {
@@ -439,3 +443,72 @@ func cgExtended(ctx context.Context, host string) cgExtras {
 // DefaultTimeout bounds a single probe, so an unreachable miner costs seconds
 // rather than stalling whatever is asking.
 const DefaultTimeout = 5 * time.Second
+
+// SetPool points a miner at a new primary pool. Only AxeOS accepts this: an
+// Avalon's firmware has no command to add or change a pool, only to reorder the
+// ones it already has.
+//
+// It changes the pool and worker name and nothing else - the fallback pools,
+// frequency, voltage and the rest are left exactly as the owner set them - then
+// restarts the miner, since AxeOS applies a pool change on restart.
+func SetPool(ctx context.Context, host, poolHost string, poolPort int, worker string) error {
+	// Make sure it is AxeOS before writing anything to it.
+	r, err := (AxeOS{}).Read(ctx, host)
+	if err != nil {
+		return fmt.Errorf("%s does not answer as an AxeOS miner: %w", host, err)
+	}
+	// The mesh speaks V1, so the protocol goes with the address: a miner left on
+	// SV2 cannot reach it and quietly falls back to its other pool. Extranonce
+	// subscription lets the mesh move it between coins without a reconnect.
+	body, err := json.Marshal(map[string]interface{}{
+		"stratumURL":                 poolHost,
+		"stratumPort":                poolPort,
+		"stratumUser":                worker,
+		"stratumProtocol":            "SV1",
+		"stratumExtranonceSubscribe": true,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, "http://"+host+"/api/system", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("setting the pool on %s: %w", host, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("setting the pool on %s: HTTP %d", host, resp.StatusCode)
+	}
+
+	// Confirm it took, rather than assuming.
+	after, err := (AxeOS{}).Read(ctx, host)
+	if err != nil {
+		return fmt.Errorf("%s did not answer after the change: %w", host, err)
+	}
+	want := axeosPool(poolHost, poolPort)
+	if after.PoolURL != want || after.PoolUser != worker {
+		return fmt.Errorf("%s did not take the change: pool is %q as %q", host, after.PoolURL, after.PoolUser)
+	}
+	if !strings.EqualFold(after.PoolProtocol, "SV1") {
+		return fmt.Errorf("%s kept protocol %q on its pool, which the mesh does not speak", host, after.PoolProtocol)
+	}
+	_ = r
+
+	// AxeOS applies a pool change on restart.
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, "http://"+host+"/api/system/restart", nil)
+	if err != nil {
+		return err
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		// The change is saved; it simply has not restarted. Worth saying so
+		// rather than reporting the whole thing as a failure.
+		return fmt.Errorf("%s saved the pool but would not restart: %w", host, err)
+	}
+	resp.Body.Close()
+	return nil
+}
