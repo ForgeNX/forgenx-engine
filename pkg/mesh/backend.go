@@ -20,7 +20,7 @@ type Backend struct {
 	Symbol string
 	Addr   string // host:port of the coin's V1 stratum
 	Payout string // coin's configured payout address (from Settings)
-	Worker string // worker suffix (e.g. "Ellevix002")
+	Worker string // worker suffix (e.g. "Worker001")
 
 	conn   net.Conn
 	reader *bufio.Reader

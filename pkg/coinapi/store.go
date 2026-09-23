@@ -732,6 +732,37 @@ func (s *Store) SetMeshMinerSort(v string) error {
 	return s.SetMeshAssignment(meshSortKey, v)
 }
 
+// Automatic worker naming: whether a miner added to the mesh is renamed, and
+// the prefix its name is built from.
+const (
+	meshAutoNameKey   = "\x00 auto name"
+	meshNamePrefixKey = "\x00 name prefix"
+)
+
+// GetMeshAutoName reports whether a miner added to the mesh is renamed to the
+// next free name in sequence. Off unless the user turns it on: renaming someone
+// else's hardware is not something to do by default.
+func (s *Store) GetMeshAutoName() bool {
+	v, ok := s.GetMeshAssignment(meshAutoNameKey)
+	return ok && v == "true"
+}
+
+// SetMeshAutoName records whether miners added to the mesh are renamed.
+func (s *Store) SetMeshAutoName(v bool) error {
+	return s.SetMeshAssignment(meshAutoNameKey, strconv.FormatBool(v))
+}
+
+// GetMeshNamePrefix returns the prefix automatic names are built from.
+func (s *Store) GetMeshNamePrefix() string {
+	v, _ := s.GetMeshAssignment(meshNamePrefixKey)
+	return v
+}
+
+// SetMeshNamePrefix records the prefix automatic names are built from.
+func (s *Store) SetMeshNamePrefix(v string) error {
+	return s.SetMeshAssignment(meshNamePrefixKey, strings.TrimSpace(v))
+}
+
 // meshDiscoveredSortKey keeps how the Miners Discovered list is sorted.
 const meshDiscoveredSortKey = "\x00 discovered sort"
 

@@ -43,7 +43,7 @@ func describeWeights(w []Weight) string {
 
 // workerSuffix strips the payout-address prefix a miner authorizes with, leaving
 // the name that identifies the hardware. The same machine authorizes as
-// <dgb-address>.Ellevix002 on one coin and <bch-address>.Ellevix002 on another, so
+// <coin-a-address>.Worker001 on one coin and <coin-b-address>.Worker001 on another, so
 // only the suffix is stable enough to key an assignment on.
 func workerSuffix(worker string) string {
 	if i := strings.LastIndex(worker, "."); i >= 0 {

@@ -15,8 +15,8 @@ import (
 //
 // A full sweep runs every sweepEvery to find miners; the ones found are polled
 // every pollEvery. A miner is matched to a worker by the username it mines under,
-// taking the part after the last dot, so "address.Ellevix004" and a meshed
-// miner's plain "Ellevix002" both match their workers.
+// taking the part after the last dot, so "address.Worker004" and a meshed
+// miner's plain "Worker004" both match their workers.
 type Scanner struct {
 	mu       sync.Mutex
 	hosts    []netip.Addr

@@ -47,7 +47,7 @@ func (e *Engine) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 		for _, sess := range sessions {
 			// Key on the worker suffix: the same miner authorizes as
-			// <dgb-address>.Ellevix002 on one coin and <bch-address>.Ellevix002 on
+			// <coin-a-address>.Worker001 on one coin and <coin-b-address>.Worker001 on
 			// another, so the full authorize strings never match.
 			name := sess.WorkerName
 			if name == "" {

@@ -83,6 +83,9 @@ type CoinAPI struct {
 
 	// rejections reports recent rejected shares per worker, across every coin.
 	rejections func() map[string]interface{}
+
+	// nameReservations remembers names handed out but not yet in use.
+	nameReservations *nameReservations
 	// meshPeak is the highest combined mesh hashrate seen this session.
 	meshPeakMu sync.Mutex
 	meshPeak   float64
@@ -119,6 +122,7 @@ type PortStatusFunc func(symbol string) (v1, v2 bool)
 
 func NewCoinAPI(store *Store, engineAPIURL string) *CoinAPI {
 	return &CoinAPI{
+		nameReservations: newNameReservations(),
 		store:            store,
 		engineAPIURL:     engineAPIURL,
 		bestAllTimeCache: make(map[string]bestAllTimeCtx),
@@ -520,6 +524,8 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 			IncludeNew     *bool   `json:"include_new"`
 			MinerSort      *string `json:"miner_sort"`
 			DiscoveredSort *string `json:"discovered_sort"`
+			AutoName       *bool   `json:"auto_name"`
+			NamePrefix     *string `json:"name_prefix"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, 400, "invalid body")
@@ -560,6 +566,18 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if body.AutoName != nil {
+			if err := c.store.SetMeshAutoName(*body.AutoName); err != nil {
+				writeError(w, 500, "could not save the setting")
+				return
+			}
+		}
+		if body.NamePrefix != nil {
+			if err := c.store.SetMeshNamePrefix(*body.NamePrefix); err != nil {
+				writeError(w, 500, "could not save the prefix")
+				return
+			}
+		}
 		if body.DiscoveredSort != nil {
 			parts := strings.SplitN(*body.DiscoveredSort, ":", 2)
 			validKey := map[string]bool{"name": true, "hashrate": true, "device": true, "connection": true}
@@ -584,6 +602,9 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		"include_new":     c.store.GetMeshIncludeNew(),
 		"miner_sort":      c.store.GetMeshMinerSort(),
 		"discovered_sort": c.store.GetMeshDiscoveredSort(),
+		"auto_name":       c.store.GetMeshAutoName(),
+		"name_prefix":     c.store.GetMeshNamePrefix(),
+		"next_name":       c.NextWorkerName(),
 		"miners_found":    found,
 	})
 }
