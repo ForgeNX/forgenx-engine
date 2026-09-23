@@ -80,6 +80,9 @@ type CoinAPI struct {
 	meshOverview func() map[string]interface{}
 	// meshWorkerShares reports each worker's share tallies at the relay.
 	meshWorkerShares func() map[string][4]uint64
+
+	// rejections reports recent rejected shares per worker, across every coin.
+	rejections func() map[string]interface{}
 	// meshPeak is the highest combined mesh hashrate seen this session.
 	meshPeakMu sync.Mutex
 	meshPeak   float64
@@ -272,6 +275,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// SetRejections installs the recent-rejections lookup.
+func (c *CoinAPI) SetRejections(f func() map[string]interface{}) { c.rejections = f }
+
 // SetMeshWorkerShares installs the per-worker share tallies.
 func (c *CoinAPI) SetMeshWorkerShares(f func() map[string][4]uint64) { c.meshWorkerShares = f }
 
@@ -404,6 +410,16 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 		"pool_user":      reading.PoolUser,
 		"hostname":       reading.Hostname,
 	})
+}
+
+// HandleRejections lists the most recent rejected shares for every worker, with
+// the reason each was refused - for every miner, not only meshed ones.
+func (c *CoinAPI) HandleRejections(w http.ResponseWriter, r *http.Request) {
+	out := map[string]interface{}{}
+	if c.rejections != nil {
+		out = c.rejections()
+	}
+	writeJSON(w, map[string]interface{}{"rejections": out})
 }
 
 // HandleFoundMiners lists every miner the LAN scanner has found, with its own
@@ -1564,6 +1580,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mesh/system", c.HandleMeshSystem)
 	mux.HandleFunc("/api/mesh/pins", c.HandleMeshPins)
 	mux.HandleFunc("/api/mesh/miners", c.HandleFoundMiners)
+	mux.HandleFunc("/api/miners/rejections", c.HandleRejections)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

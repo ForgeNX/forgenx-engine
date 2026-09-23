@@ -31,7 +31,10 @@ const CoinsDir = "/pool/coins"
 
 // Engine is the top-level orchestrator that manages all coin runners.
 type Engine struct {
-	runners      map[string]*CoinRunner
+	runners map[string]*CoinRunner
+
+	// rejections keeps recent rejected shares per worker, for the UI.
+	rejections   *RejectionLog
 	runnersMu    sync.RWMutex
 	stats        *metrics.Stats
 	store        workerDiffStore
@@ -59,6 +62,8 @@ func (e *Engine) SetStore(s workerDiffStore) {
 func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 	e := &Engine{
 		runners:    make(map[string]*CoinRunner),
+		rejections: NewRejectionLog(),
+
 		configSigs: make(map[string][32]byte),
 		prevCfgs:   make(map[string]*config.CoinConfig),
 		stats:      stats,
@@ -82,6 +87,7 @@ func New(cfg *config.Config, stats *metrics.Stats) (*Engine, error) {
 		}
 		sym := symbol
 		runner.SetStopSelf(func() { e.StopCoin(sym) })
+		runner.SetRejectionLog(e.rejections)
 		e.runners[symbol] = runner
 	}
 
@@ -228,6 +234,7 @@ func (e *Engine) StartCoin(symbol string, coinCfg *config.CoinConfig, donation c
 	}
 
 	e.runnersMu.Lock()
+	runner.SetRejectionLog(e.rejections)
 	e.runners[symbol] = runner
 	e.runnersMu.Unlock()
 	e.logger.Info("[%s] dynamically started", symbol)
@@ -687,4 +694,9 @@ func (e *Engine) PingSettings(symbol string) (bool, time.Duration) {
 		}
 	}
 	return true, 30 * time.Second
+}
+
+// Rejections returns recent rejected shares per worker, across every coin.
+func (e *Engine) Rejections() map[string][]Rejection {
+	return e.rejections.ByWorker()
 }

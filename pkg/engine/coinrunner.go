@@ -1195,3 +1195,11 @@ func (r *CoinRunner) SV2Running() bool {
 	}
 	return r.sv2Server.IsRunning()
 }
+
+// SetRejectionLog passes the engine's rejection log to this coin's validator, so
+// a refused share's reason can be shown rather than only logged.
+func (r *CoinRunner) SetRejectionLog(l *RejectionLog) {
+	if r.validator != nil {
+		r.validator.SetRejectionLog(l)
+	}
+}

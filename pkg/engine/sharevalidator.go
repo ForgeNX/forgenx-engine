@@ -43,6 +43,7 @@ type ShareValidator struct {
 	soloMode          bool
 	staleShareGrace   time.Duration // grace period to accept shares after a new block
 	lowDiffShareGrace time.Duration // grace period to accept shares at previous diff after a change
+	rejections        *RejectionLog // recent rejections per worker, for the UI
 	logger            *logging.Logger
 	runner            *CoinRunner
 }
@@ -73,6 +74,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 		// Every rejection says why. These three paths all answer "job not found"
 		// to the miner, and none was logged, so one could not be told from another.
 		sv.logger.Info("share rejected: worker=%s job=%s reason=unknown job", share.WorkerName, share.JobID)
+		sv.rejections.Add(Rejection{Coin: sv.symbol, Worker: share.WorkerName, JobID: share.JobID, Reason: "unknown job", Detail: "the job this share was for is not one the pool has"})
 		sv.stats.RecordShare(sv.symbol, metrics.ShareStale, share.WorkerName, 0)
 		return stratum.ErrJobNotFound
 	}
@@ -85,6 +87,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 			sv.logger.Debug("stale share accepted within grace period: worker=%s job=%s", share.WorkerName, share.JobID)
 		} else {
 			sv.logger.Info("share rejected: worker=%s job=%s reason=stale, block changed %s ago", share.WorkerName, share.JobID, time.Since(sv.jobMgr.TipChangedAt()).Round(time.Second))
+			sv.rejections.Add(Rejection{Coin: sv.symbol, Worker: share.WorkerName, JobID: share.JobID, Reason: "stale", Detail: fmt.Sprintf("the block changed %s before this share arrived", time.Since(sv.jobMgr.TipChangedAt()).Round(time.Second))})
 			sv.stats.RecordShare(sv.symbol, metrics.ShareStale, share.WorkerName, 0)
 			return stratum.ErrJobNotFound
 		}
@@ -98,6 +101,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 			coinb2 = addrCoinb2
 		} else {
 			sv.logger.Info("share rejected: worker=%s job=%s reason=no coinbase for payout address %s", share.WorkerName, share.JobID, addr)
+			sv.rejections.Add(Rejection{Coin: sv.symbol, Worker: share.WorkerName, JobID: share.JobID, Reason: "no coinbase", Detail: "the job had no coinbase for this miner's payout address"})
 			sv.stats.RecordShare(sv.symbol, metrics.ShareStale, share.WorkerName, 0)
 			return stratum.ErrJobNotFound
 		}
@@ -248,6 +252,7 @@ func (sv *ShareValidator) ValidateShare(session stratum.ShareSession, share *str
 			sv.logger.Info("share rejected: worker=%s job=%s required=%g actual=%g jobDiff=%g jobKnown=%t prevDiff=%g changed=%s ago hash=%s",
 				share.WorkerName, share.JobID, sessionDiff, actualDiff, jobDiff, jobKnown, prevDiff,
 				time.Since(changedAt).Round(time.Second), blockHashHex)
+			sv.rejections.Add(Rejection{Coin: sv.symbol, Worker: share.WorkerName, JobID: share.JobID, Reason: "low difficulty", Required: sessionDiff, Actual: actualDiff, Detail: fmt.Sprintf("worth %.0f against the %.0f asked of it", actualDiff, sessionDiff)})
 			sv.stats.RecordShare(sv.symbol, metrics.ShareInvalid, share.WorkerName, actualDiff)
 			return stratum.ErrLowDifficulty
 		}
@@ -486,3 +491,6 @@ func swapEndianWords(hexStr string) []byte {
 	}
 	return result
 }
+
+// SetRejectionLog installs where rejections are recorded for the UI.
+func (sv *ShareValidator) SetRejectionLog(l *RejectionLog) { sv.rejections = l }

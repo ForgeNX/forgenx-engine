@@ -230,6 +230,13 @@ func main() {
 	} else {
 		coinAPI := coinapi.NewCoinAPI(store, engineAPIURL)
 		coinAPI.SetStats(stats)
+		coinAPI.SetRejections(func() map[string]interface{} {
+			out := map[string]interface{}{}
+			for worker, list := range eng.Rejections() {
+				out[worker] = list
+			}
+			return out
+		})
 
 		// Find miners on the LAN and read their own hashrate and temperatures.
 		// Runs whether or not the mesh is enabled: every miner benefits.
