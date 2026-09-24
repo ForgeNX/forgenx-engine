@@ -660,8 +660,15 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		"auto_name":       c.store.GetMeshAutoName(),
 		"name_prefix":     c.store.GetMeshNamePrefix(),
 		"mesh_address":    c.store.GetMeshAddress(),
-		"next_name":       c.NextWorkerName(),
-		"miners_found":    found,
+		"mesh_port": func() int {
+			if c.meshInfo == nil {
+				return 0
+			}
+			_, p, _ := c.meshInfo()
+			return p
+		}(),
+		"next_name":    c.NextWorkerName(),
+		"miners_found": found,
 	})
 }
 

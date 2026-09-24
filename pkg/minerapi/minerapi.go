@@ -160,22 +160,24 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		return Reading{}, fmt.Errorf("axeos: HTTP %d", resp.StatusCode)
 	}
 	var info struct {
-		HashRate        float64   `json:"hashRate"`     // GH/s, instantaneous
-		HashRate1m      float64   `json:"hashRate_1m"`  // GH/s, newer firmware only
-		HashRate10m     float64   `json:"hashRate_10m"` // GH/s, newer firmware only
-		ASICModel       string    `json:"ASICModel"`
-		ASICCount       int       `json:"asicCount"`
-		DeviceModel     string    `json:"deviceModel"` // NerdQAxe and newer AxeOS builds
-		Temp            float64   `json:"temp"`
-		Temp2           float64   `json:"temp2"`
-		ASICTemps       []float64 `json:"asicTemps"` // per chip; NerdQAxe reports zeros
-		VRTemp          float64   `json:"vrTemp"`
-		VRTempInt       float64   `json:"vrTempInt"` // NerdQAxe's second regulator reading
-		StratumUser     string    `json:"stratumUser"`
-		StratumURL      string    `json:"stratumURL"`
-		StratumPort     int       `json:"stratumPort"`
-		StratumProtocol string    `json:"stratumProtocol"`
-		Hostname        string    `json:"hostname"`
+		HashRate    float64   `json:"hashRate"`     // GH/s, instantaneous
+		HashRate1m  float64   `json:"hashRate_1m"`  // GH/s, newer firmware only
+		HashRate10m float64   `json:"hashRate_10m"` // GH/s, newer firmware only
+		ASICModel   string    `json:"ASICModel"`
+		ASICCount   int       `json:"asicCount"`
+		DeviceModel string    `json:"deviceModel"` // NerdQAxe and newer AxeOS builds
+		Temp        float64   `json:"temp"`
+		Temp2       float64   `json:"temp2"`
+		ASICTemps   []float64 `json:"asicTemps"` // per chip; NerdQAxe reports zeros
+		VRTemp      float64   `json:"vrTemp"`
+		VRTempInt   float64   `json:"vrTempInt"` // NerdQAxe's second regulator reading
+		StratumUser string    `json:"stratumUser"`
+		StratumURL  string    `json:"stratumURL"`
+		StratumPort int       `json:"stratumPort"`
+		// Some firmwares report this as a name ("SV2"), others as a number, so it
+		// is read loosely and normalised below.
+		StratumProtocol json.RawMessage `json:"stratumProtocol"`
+		Hostname        string          `json:"hostname"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return Reading{}, fmt.Errorf("axeos: %w", err)
@@ -205,7 +207,7 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		VRTemp:       firstSensor(info.VRTemp, info.VRTempInt),
 		PoolUser:     info.StratumUser,
 		PoolURL:      axeosPool(info.StratumURL, info.StratumPort),
-		PoolProtocol: info.StratumProtocol,
+		PoolProtocol: protocolName(info.StratumProtocol),
 		Hostname:     info.Hostname,
 	}
 	r.Hashrate10 = r.Hashrate
@@ -237,6 +239,30 @@ func axeosProduct(device, chip string, count int) string {
 		name = fmt.Sprintf("%s (%d chips)", name, count)
 	}
 	return name
+}
+
+// protocolName normalises however a firmware reports its stratum protocol: a
+// name on some, a number on others, where 0 is V1 and 1 is V2. Reading it
+// strictly cost four miners from the scanner's list, since a firmware that
+// answers differently broke the whole reading.
+func protocolName(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var name string
+	if json.Unmarshal(raw, &name) == nil {
+		return name
+	}
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		switch n {
+		case 0:
+			return "SV1"
+		case 1:
+			return "SV2"
+		}
+	}
+	return strings.Trim(string(raw), `"`)
 }
 
 // axeosPool renders AxeOS's separate host and port as one pool address.
