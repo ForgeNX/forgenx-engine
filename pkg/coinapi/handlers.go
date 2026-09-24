@@ -416,6 +416,17 @@ func (c *CoinAPI) HandleMinerProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleRescan sweeps the miner network now rather than waiting for the next
+// scheduled sweep.
+func (c *CoinAPI) HandleRescan(w http.ResponseWriter, r *http.Request) {
+	if c.scanner == nil {
+		writeError(w, 400, "the miner network is not set")
+		return
+	}
+	c.scanner.Rescan()
+	writeJSON(w, map[string]interface{}{"ok": true, "note": "scanning; the list fills in within a minute"})
+}
+
 // HandleMoveToMesh points a miner at the mesh: POST {"host": "...", "worker": "..."}.
 // The first thing ForgeNX writes to someone else's hardware, so it changes the
 // pool and worker name only, confirms the change took, and says plainly what
@@ -458,6 +469,9 @@ func (c *CoinAPI) HandleMoveToMesh(w http.ResponseWriter, r *http.Request) {
 	// The name is taken from the moment it is given out, so the next miner moved
 	// gets the next one rather than the same.
 	c.nameReservations.reserve(worker)
+	if c.scanner != nil {
+		c.scanner.Rescan()
+	}
 	writeJSON(w, map[string]interface{}{
 		"ok": true, "worker": worker, "pool": fmt.Sprintf("%s:%d", addr, port),
 		"note": "restarting; it should appear on the mesh within a minute",
@@ -1666,6 +1680,7 @@ func (c *CoinAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mesh/miners", c.HandleFoundMiners)
 	mux.HandleFunc("/api/miners/rejections", c.HandleRejections)
 	mux.HandleFunc("/api/miners/move-to-mesh", c.HandleMoveToMesh)
+	mux.HandleFunc("/api/miners/rescan", c.HandleRescan)
 	mux.HandleFunc("/api/miner/probe", c.HandleMinerProbe)
 	mux.HandleFunc("/api/mesh/default", c.HandleMeshDefault)
 	mux.HandleFunc("/api/mesh/interval", c.HandleMeshInterval)

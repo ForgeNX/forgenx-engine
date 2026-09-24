@@ -120,6 +120,16 @@ func (s *Scanner) SetRange(start, end string) error {
 	return nil
 }
 
+// Rescan asks for a sweep now rather than at the next tick - after a miner is
+// plugged in, or moved onto the mesh, when waiting ten minutes to see it would
+// be its own small annoyance.
+func (s *Scanner) Rescan() {
+	select {
+	case s.rescan <- struct{}{}:
+	default:
+	}
+}
+
 // WorkerOf returns the worker name a pool username refers to.
 func WorkerOf(poolUser string) string {
 	if i := strings.LastIndex(poolUser, "."); i >= 0 {
