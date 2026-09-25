@@ -700,3 +700,16 @@ func (e *Engine) PingSettings(symbol string) (bool, time.Duration) {
 func (e *Engine) Rejections() map[string][]Rejection {
 	return e.rejections.ByWorker()
 }
+
+// NetworkDifficulty reports a coin's current network difficulty, or 0 when the
+// coin is not running or has not reported one yet.
+func (e *Engine) NetworkDifficulty(symbol string) float64 {
+	e.runnersMu.RLock()
+	runner, ok := e.runners[strings.ToUpper(symbol)]
+	e.runnersMu.RUnlock()
+	if !ok || runner == nil {
+		return 0
+	}
+	_, _, _, _, _, _, netDiff := runner.BestRatioContext()
+	return netDiff
+}

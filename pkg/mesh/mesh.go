@@ -97,6 +97,7 @@ type Mesh struct {
 	balIsAuto   func(worker string) bool
 	balHashrate func(worker string) float64
 	balNudge    chan struct{}
+	balNetDiff  func(symbol string) float64
 
 	// keepaliveFor reports the active coin's ping settings, for the keepalive.
 	keepaliveFor func(symbol string) (bool, time.Duration)

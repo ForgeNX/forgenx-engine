@@ -16,6 +16,12 @@ import (
 // while each coin is within balanceTolerance of target, moves at most
 // maxMovesPerRound miners at a time, and leaves a miner alone for moveCooldown
 // after moving it. Better to sit a little off target than shuffle hardware.
+// tieTolerance is how much worse than the best a move may be and still count as
+// equally good, so the difficulty pairing can decide between them. Two points of
+// the target: the split is a preference, and a small miner mining somewhere it
+// can realistically win is worth more than a point of accuracy.
+const tieTolerance = 0.02 * 0.02
+
 const (
 	balanceEvery     = 5 * time.Minute
 	balanceTolerance = 0.05
@@ -29,6 +35,14 @@ const (
 func (m *Mesh) SetBalancer(target func() ([]Weight, bool), isAuto func(worker string) bool, hashrate func(worker string) float64) {
 	m.placeMu.Lock()
 	m.balTarget, m.balIsAuto, m.balHashrate = target, isAuto, hashrate
+	m.placeMu.Unlock()
+}
+
+// SetNetworkDifficulty installs the per-coin network difficulty lookup, used to
+// break ties between arrangements that are equally close to target.
+func (m *Mesh) SetNetworkDifficulty(f func(symbol string) float64) {
+	m.placeMu.Lock()
+	m.balNetDiff = f
 	m.placeMu.Unlock()
 }
 
@@ -186,9 +200,15 @@ func (m *Mesh) balance() {
 		if worst <= balanceTolerance {
 			break
 		}
-		var best *balMiner
-		var bestCoin string
-		bestScore := current
+		// Every move that helps, with how much it helps and how well it sits a
+		// miner against the coin's difficulty.
+		type candidate struct {
+			miner *balMiner
+			coin  string
+			score float64
+			fit   float64 // smaller miners on easier coins score lower
+		}
+		var options []candidate
 		for _, bm := range miners {
 			if !bm.movable || bm.hash <= 0 {
 				continue
@@ -199,15 +219,33 @@ func (m *Mesh) balance() {
 					continue
 				}
 				bm.coin = c
-				if sc, _ := score(); sc < bestScore-1e-9 {
-					best, bestCoin, bestScore = bm, c, sc
+				if sc, _ := score(); sc < current-1e-9 {
+					options = append(options, candidate{bm, c, sc, m.difficultyFit(miners)})
 				}
 				bm.coin = from
 			}
 		}
-		if best == nil {
+		if len(options) == 0 {
 			break // no single move helps
 		}
+		sort.Slice(options, func(i, j int) bool { return options[i].score < options[j].score })
+		// Among the moves that come within a couple of points of the best, take
+		// the one that pairs miners and coins best. A miner too small ever to
+		// find a block on a hard coin contributes nothing there, and the same
+		// hashrate on an easier coin has a real chance - for no loss in expected
+		// blocks, since those depend on share of each network, not on which
+		// miner holds it.
+		bestScore := options[0].score
+		chosen := options[0]
+		for _, o := range options[1:] {
+			if o.score > bestScore+tieTolerance {
+				break
+			}
+			if o.fit < chosen.fit {
+				chosen = o
+			}
+		}
+		best, bestCoin := chosen.miner, chosen.coin
 		best.coin = bestCoin
 		best.movable = false
 	}
@@ -236,4 +274,57 @@ func (m *Mesh) balance() {
 			m.logger.Info("[nexus] balancer: %s %s -> %s", bm.worker, original[bm.worker], bm.coin)
 		}
 	}
+}
+
+// difficultyFit scores an arrangement on how well miner sizes match coin
+// difficulties: lower is better. It prefers the largest miners on the hardest
+// coins and the smallest on the easiest, since a miner too small to realistically
+// find a block on a hard coin contributes nothing there, while the same hashrate
+// on an easier coin has a real chance - at no cost in expected blocks, which
+// depend on share of each network rather than on which miner holds it.
+//
+// Coins are scored by their rank in difficulty order rather than by difficulty
+// itself: hashrate times raw difficulty totals the same whichever way round the
+// miners are paired, so it cannot tell the arrangements apart.
+//
+// Difficulty alone, deliberately: what a coin is worth is not something ForgeNX
+// knows or should guess at.
+func (m *Mesh) difficultyFit(miners []*balMiner) float64 {
+	m.placeMu.Lock()
+	lookup := m.balNetDiff
+	m.placeMu.Unlock()
+	if lookup == nil {
+		return 0
+	}
+
+	// Rank the coins in use, easiest first.
+	diffs := map[string]float64{}
+	for _, bm := range miners {
+		if _, seen := diffs[bm.coin]; !seen {
+			diffs[bm.coin] = lookup(bm.coin)
+		}
+	}
+	coins := make([]string, 0, len(diffs))
+	for c, d := range diffs {
+		if d <= 0 {
+			return 0 // a coin has not reported its difficulty; do not guess
+		}
+		coins = append(coins, c)
+	}
+	sort.Slice(coins, func(i, j int) bool { return diffs[coins[i]] < diffs[coins[j]] })
+	rank := map[string]int{}
+	for i, c := range coins {
+		rank[c] = i
+	}
+
+	// A miner's hashrate against how easy its coin is: the biggest miners on the
+	// easiest coins cost the most, so the lowest score pairs them the other way.
+	var fit float64
+	hardest := len(coins) - 1
+	for _, bm := range miners {
+		if bm.hash > 0 {
+			fit += bm.hash * float64(hardest-rank[bm.coin])
+		}
+	}
+	return fit
 }
