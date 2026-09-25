@@ -324,6 +324,60 @@ func (s *Store) RecordWorkerSnapshot(symbol, workerName string, valid, invalid, 
 	return err
 }
 
+// LastSeenByWorker returns when each worker was last mining, by the bare worker
+// name - the part after the last dot, so a payout-prefixed name and a meshed
+// miner's plain name are the same worker. Taken from the share snapshots, which
+// are only written while a worker is submitting, so it survives an engine
+// restart and says how long a miner has really been away.
+var (
+	lastSeenMu     sync.Mutex
+	lastSeenCache  map[string]time.Time
+	lastSeenCached time.Time
+)
+
+func (s *Store) LastSeenByWorker() map[string]time.Time {
+	lastSeenMu.Lock()
+	if lastSeenCache != nil && time.Since(lastSeenCached) < time.Minute {
+		cached := lastSeenCache
+		lastSeenMu.Unlock()
+		return cached
+	}
+	lastSeenMu.Unlock()
+
+	out := map[string]time.Time{}
+	rows, err := s.db.Query(`SELECT worker_name, MAX(snapshot_time) FROM worker_shares GROUP BY worker_name`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, when string
+		if err := rows.Scan(&name, &when); err != nil {
+			continue
+		}
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		t, err := time.Parse(time.RFC3339Nano, when)
+		if err != nil || name == "" {
+			continue
+		}
+		if prev, ok := out[name]; !ok || t.After(prev) {
+			out[name] = t
+		}
+	}
+	// A failed read leaves the previous answer in place rather than replacing it
+	// with nothing: the table is busy often enough that one miss should not wipe
+	// every miner's last-seen.
+	lastSeenMu.Lock()
+	if len(out) > 0 || lastSeenCache == nil {
+		lastSeenCache, lastSeenCached = out, time.Now()
+	}
+	cached := lastSeenCache
+	lastSeenMu.Unlock()
+	return cached
+}
+
 func (s *Store) GetWorkerShares48hLive(symbol, workerName string, currentValid, currentInvalid int64) ShareCounts {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -827,6 +827,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	const minMeasuredShares = 5
 	tallies := map[string][4]uint64{}
+	lastSeen := c.store.LastSeenByWorker()
 	if c.meshWorkerShares != nil {
 		tallies = c.meshWorkerShares()
 	}
@@ -888,12 +889,18 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],
 			"shares_lost":     tallies[worker][3],
-			"model":           rd.Model,
-			"chip":            rd.Chip,
-			"asic_temp":       rd.ASICTemp,
-			"asic_temp_max":   rd.ASICTempMax,
-			"vr_temp":         rd.VRTemp,
-			"pins":            c.store.GetMeshPins(worker),
+			"last_seen": func() interface{} {
+				if t, ok := lastSeen[worker]; ok {
+					return t.Format(time.RFC3339)
+				}
+				return nil
+			}(),
+			"model":         rd.Model,
+			"chip":          rd.Chip,
+			"asic_temp":     rd.ASICTemp,
+			"asic_temp_max": rd.ASICTempMax,
+			"vr_temp":       rd.VRTemp,
+			"pins":          c.store.GetMeshPins(worker),
 		})
 		seen[worker] = true
 	}
@@ -915,7 +922,13 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],
 			"shares_lost":     tallies[worker][3],
-			"pins":            c.store.GetMeshPins(worker),
+			"last_seen": func() interface{} {
+				if t, ok := lastSeen[worker]; ok {
+					return t.Format(time.RFC3339)
+				}
+				return nil
+			}(),
+			"pins": c.store.GetMeshPins(worker),
 		})
 	}
 	// A stable order at the source. The list is built by walking a map, and Go
