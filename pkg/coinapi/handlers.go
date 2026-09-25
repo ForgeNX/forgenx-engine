@@ -81,6 +81,10 @@ type CoinAPI struct {
 	// meshWorkerShares reports each worker's share tallies at the relay.
 	meshWorkerShares func() map[string][4]uint64
 
+	// meshCoinShares reports the same tallies per coin, for the overview's
+	// per-node line.
+	meshCoinShares func() map[string][4]uint64
+
 	// rejections reports recent rejected shares per worker, across every coin.
 	rejections func() map[string]interface{}
 
@@ -281,6 +285,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 
 // SetRejections installs the recent-rejections lookup.
 func (c *CoinAPI) SetRejections(f func() map[string]interface{}) { c.rejections = f }
+
+// SetMeshCoinShares installs the per-coin share tallies.
+func (c *CoinAPI) SetMeshCoinShares(f func() map[string][4]uint64) { c.meshCoinShares = f }
 
 // SetMeshWorkerShares installs the per-worker share tallies.
 func (c *CoinAPI) SetMeshWorkerShares(f func() map[string][4]uint64) { c.meshWorkerShares = f }
@@ -931,6 +938,9 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		ths    float64
 	}
 	perNode := map[string]*nodeTotal{}
+	fleetOn := map[string]int{}
+	bestOn := map[string]float64{}
+	blocksOn := map[string]int{}
 	allWorkers := map[string]bool{}
 	var total, best float64
 	connected := 0
@@ -953,6 +963,12 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		perNode[coin].miners++
 		perNode[coin].ths += hr
+		if a, _ := mm["assignment"].(string); a == MeshAuto {
+			fleetOn[coin]++
+		}
+		if bestShare[w] > bestOn[coin] {
+			bestOn[coin] = bestShare[w]
+		}
 	}
 	c.meshPeakMu.Lock()
 	if total > c.meshPeak {
@@ -961,8 +977,21 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	peak := c.meshPeak
 	c.meshPeakMu.Unlock()
 	nodes := []map[string]interface{}{}
+	coinShares := map[string][4]uint64{}
+	if c.meshCoinShares != nil {
+		coinShares = c.meshCoinShares()
+	}
 	for coin, n := range perNode {
-		nodes = append(nodes, map[string]interface{}{"coin": coin, "miners": n.miners, "ths": n.ths})
+		t := coinShares[coin]
+		nodes = append(nodes, map[string]interface{}{
+			"coin": coin, "miners": n.miners, "ths": n.ths,
+			"fleet_miners":    fleetOn[coin],
+			"assigned_miners": n.miners - fleetOn[coin],
+			"accepted":        t[0],
+			"rejected":        t[1],
+			"stale":           t[2],
+			"best_share":      bestOn[coin],
+		})
 	}
 	sort.Slice(nodes, func(a, b int) bool { return nodes[a]["coin"].(string) < nodes[b]["coin"].(string) })
 	ov := map[string]interface{}{
@@ -986,10 +1015,17 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 				}
 				if allWorkers[wn] && blockTimeAfter(b.BlockTime, since) {
 					blocks++
+					blocksOn[strings.ToUpper(sym)]++
 				}
 			}
 		}
 		ov["blocks"] = blocks
+		// The per-node counts are only known now, after the blocks have been walked.
+		for _, n := range nodes {
+			if coin, _ := n["coin"].(string); coin != "" {
+				n["blocks"] = blocksOn[coin]
+			}
+		}
 	}
 	out["overview"] = ov
 	writeJSON(w, out)

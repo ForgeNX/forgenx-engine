@@ -393,7 +393,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 		b.onMessage = func(line []byte) {
 			// A reply to a share goes back to the miner whichever coin sends it -
 			// including the coin it has just left, whose replies were dropped before.
-			if m.noteSubmitResponse(s, line) {
+			if m.noteSubmitResponse(s, b.Symbol, line) {
 				_ = s.SendRaw(line)
 				return
 			}
@@ -450,7 +450,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	for _, wb := range backends {
 		b := wb
 		b.SetWarmResponseHandler(func(line []byte) {
-			if m.noteSubmitResponse(s, line) {
+			if m.noteSubmitResponse(s, b.Symbol, line) {
 				_ = s.SendRaw(line)
 			}
 		})
@@ -672,7 +672,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 					_ = json.Unmarshal(line, &sub)
 					_ = s.send(map[string]interface{}{"id": rawOrNull(sub.ID), "result": nil, "error": []interface{}{21, "Job not found (stale)", nil}})
 					m.statLost.Add(1)
-					m.tally(s.workerName(), 3)
+					m.tallyOn(s.workerName(), "", 3)
 					break
 				}
 			}

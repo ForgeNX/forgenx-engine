@@ -113,6 +113,8 @@ type Mesh struct {
 	// Per-worker share tallies this session: accepted, rejected, stale.
 	tallyMu sync.Mutex
 	tallies map[string]*[4]uint64
+	// The same outcomes counted per coin, for the Nexus overview's per-node line.
+	coinTallies map[string]*[4]uint64
 }
 
 func New(opts Options) *Mesh {
@@ -557,7 +559,7 @@ func (m *Mesh) Overview() Overview {
 // counts it, and reports whether it was one - in which case the caller passes it
 // to the miner, whichever coin sent it. A stale reply is one naming a job the
 // coin no longer has; any other refusal counts as rejected.
-func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
+func (m *Mesh) noteSubmitResponse(s *Session, coin string, line []byte) bool {
 	var r struct {
 		ID     json.RawMessage `json:"id"`
 		Result interface{}     `json:"result"`
@@ -568,7 +570,7 @@ func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
 	}
 	if ok, _ := r.Result.(bool); ok && r.Error == nil {
 		m.statAccepted.Add(1)
-		m.tally(s.workerName(), 0)
+		m.tallyOn(s.workerName(), coin, 0)
 		return true
 	}
 	stale := false
@@ -584,16 +586,19 @@ func (m *Mesh) noteSubmitResponse(s *Session, line []byte) bool {
 	}
 	if stale {
 		m.statStale.Add(1)
-		m.tally(s.workerName(), 2)
+		m.tallyOn(s.workerName(), coin, 2)
 	} else {
 		m.statRejected.Add(1)
-		m.tally(s.workerName(), 1)
+		m.tallyOn(s.workerName(), coin, 1)
 	}
 	return true
 }
 
 // tally records one share outcome for a worker: 0 accepted, 1 rejected, 2 stale, 3 lost to a reconnect.
-func (m *Mesh) tally(worker string, outcome int) {
+func (m *Mesh) tally(worker string, outcome int) { m.tallyOn(worker, "", outcome) }
+
+// tallyOn records an outcome for a worker and, when known, the coin it was for.
+func (m *Mesh) tallyOn(worker, coin string, outcome int) {
 	if worker == "" {
 		return
 	}
@@ -608,6 +613,18 @@ func (m *Mesh) tally(worker string, outcome int) {
 		m.tallies[worker] = t
 	}
 	t[outcome]++
+	if coin == "" {
+		return
+	}
+	if m.coinTallies == nil {
+		m.coinTallies = make(map[string]*[4]uint64)
+	}
+	ct := m.coinTallies[coin]
+	if ct == nil {
+		ct = &[4]uint64{}
+		m.coinTallies[coin] = ct
+	}
+	ct[outcome]++
 }
 
 // WorkerShares returns each worker's accepted, rejected and stale shares this
@@ -619,6 +636,18 @@ func (m *Mesh) WorkerShares() map[string][4]uint64 {
 	out := make(map[string][4]uint64, len(m.tallies))
 	for w, t := range m.tallies {
 		out[w] = *t
+	}
+	return out
+}
+
+// CoinShares returns each coin's accepted, rejected, stale and lost shares this
+// session, as counted at the relay.
+func (m *Mesh) CoinShares() map[string][4]uint64 {
+	m.tallyMu.Lock()
+	defer m.tallyMu.Unlock()
+	out := make(map[string][4]uint64, len(m.coinTallies))
+	for c, t := range m.coinTallies {
+		out[c] = *t
 	}
 	return out
 }
