@@ -390,6 +390,21 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 			}
 		}
 	}
+	// Braiins and other firmwares leave the model out of version and put it on
+	// each hash board instead, so a 50 TH/s S19 would otherwise show as a blank
+	// device. Every board reports the same machine, so the first will do.
+	if r.Model == "" {
+		if dd, err := cgCommand(ctx, host, "devdetails"); err == nil {
+			list, _ := dd["DEVDETAILS"].([]interface{})
+			for _, d := range list {
+				dm, _ := d.(map[string]interface{})
+				if t, _ := dm["Model"].(string); t != "" {
+					r.Model = t
+					break
+				}
+			}
+		}
+	}
 	x := cgExtended(ctx, host)
 	r.ASICTemp, r.ASICTempMax = x.avg, x.max
 	// An Avalon's own current speed is steady where the summary's 5-second
