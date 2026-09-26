@@ -87,6 +87,10 @@ func (s *Store) init() error {
 			stale_shares INTEGER DEFAULT 0, snapshot_time TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_ws_symbol_time ON worker_shares(coin_symbol, snapshot_time)`,
 		`CREATE INDEX IF NOT EXISTS idx_ws_worker ON worker_shares(coin_symbol, worker_name, snapshot_time)`,
+		// The all-time counts are each a MAX over a worker's snapshots; with these
+		// SQLite answers each from the end of an index instead of reading them all.
+		`CREATE INDEX IF NOT EXISTS idx_ws_worker_valid ON worker_shares(coin_symbol, worker_name, valid_shares)`,
+		`CREATE INDEX IF NOT EXISTS idx_ws_worker_invalid ON worker_shares(coin_symbol, worker_name, invalid_shares)`,
 		`CREATE TABLE IF NOT EXISTS metric_samples (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				coin_symbol TEXT NOT NULL,
@@ -327,6 +331,17 @@ func (s *Store) SetWorkerSharesOffset(symbol, workerName string, offset, invalid
 }
 
 func (s *Store) RecordWorkerLastSeen(symbol, workerName, lastSeen, connectedAt string) error {
+	// Once a minute per worker is enough for "last seen", and every workers read
+	// used to queue a write for every connected worker.
+	key := "seen|" + symbol + "|" + workerName
+	s.snapMu.Lock()
+	if time.Since(s.lastSnap[key]) < snapshotEvery {
+		s.snapMu.Unlock()
+		return nil
+	}
+	s.lastSnap[key] = time.Now()
+	s.snapMu.Unlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -479,10 +494,13 @@ func (s *Store) GetWorkerShares48h(symbol string) map[string]ShareCounts {
 func (s *Store) GetWorkerSharesAlltime(symbol, workerName string) ShareCounts {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Two queries rather than one: SQLite only answers a lone MAX straight from an
+	// index, and a pair in one SELECT falls back to reading every row.
 	var c ShareCounts
-	s.db.QueryRow(`SELECT COALESCE(MAX(valid_shares),0), COALESCE(MAX(invalid_shares),0)
-		FROM worker_shares WHERE coin_symbol=? AND worker_name=?`,
-		symbol, workerName).Scan(&c.Valid, &c.Invalid)
+	s.db.QueryRow(`SELECT COALESCE(MAX(valid_shares),0) FROM worker_shares WHERE coin_symbol=? AND worker_name=?`,
+		symbol, workerName).Scan(&c.Valid)
+	s.db.QueryRow(`SELECT COALESCE(MAX(invalid_shares),0) FROM worker_shares WHERE coin_symbol=? AND worker_name=?`,
+		symbol, workerName).Scan(&c.Invalid)
 	return c
 }
 

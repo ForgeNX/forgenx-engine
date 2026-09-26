@@ -1207,11 +1207,57 @@ func (c *CoinAPI) HandleMeshUnassign(w http.ResponseWriter, r *http.Request) {
 
 // ── /api/apps/{coin}/workers ──────────────────────────────────────────────────
 
+// Each coin's workers list is built at most once every few seconds, however
+// many tabs are polling it: requests that arrive while it is being built wait
+// for that answer instead of each building their own. Building it reads and
+// writes the store for every worker, and overlapping builds queued behind one
+// another until an answer took most of a minute.
+const workersCacheFor = 5 * time.Second
+
+type workersCached struct {
+	at   time.Time
+	body []byte
+}
+
+var (
+	workersMu    sync.Mutex
+	workersLocks = map[string]*sync.Mutex{}
+	workersCache = map[string]workersCached{}
+)
+
 func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol string) {
+	workersMu.Lock()
+	lock := workersLocks[symbol]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		workersLocks[symbol] = lock
+	}
+	workersMu.Unlock()
+
+	lock.Lock()
+	defer lock.Unlock()
+	workersMu.Lock()
+	cached, ok := workersCache[symbol]
+	workersMu.Unlock()
+	if !ok || time.Since(cached.at) >= workersCacheFor {
+		body, err := json.Marshal(c.workersPayload(symbol))
+		if err != nil {
+			writeError(w, 500, "could not build the workers list")
+			return
+		}
+		cached = workersCached{at: time.Now(), body: append(body, '\n')}
+		workersMu.Lock()
+		workersCache[symbol] = cached
+		workersMu.Unlock()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(cached.body)
+}
+
+func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 	minersData, err := c.fetchEngineJSON("/miners")
 	if err != nil {
-		writeJSON(w, map[string]interface{}{"workers": []interface{}{}})
-		return
+		return map[string]interface{}{"workers": []interface{}{}}
 	}
 
 	miners, _ := minersData["miners"].(map[string]interface{})
@@ -1433,7 +1479,7 @@ func (c *CoinAPI) HandleWorkers(w http.ResponseWriter, r *http.Request, symbol s
 	if workers == nil {
 		workers = []map[string]interface{}{}
 	}
-	writeJSON(w, map[string]interface{}{"workers": workers})
+	return map[string]interface{}{"workers": workers}
 }
 
 // ── /api/apps/{coin}/worker-shares-48h ───────────────────────────────────────
