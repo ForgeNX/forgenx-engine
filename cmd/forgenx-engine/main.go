@@ -254,7 +254,19 @@ func main() {
 		// between mines the default until it next reconnects.
 		if nexusMesh != nil {
 			nexusMesh.SetAssignmentLookup(func(worker string) ([]mesh.Weight, bool) {
-				alloc, found := store.GetMeshAssignment(worker)
+				alloc, found, err := store.LookupMeshAssignment(worker)
+				// A busy store is retried briefly. If the assignment still cannot be
+				// read, this connection mines the default order and nothing is
+				// written: treating the failure as "never placed" would hand the
+				// miner to Fleet Balance over the user's own allocation.
+				for i := 0; err != nil && i < 3; i++ {
+					time.Sleep(500 * time.Millisecond)
+					alloc, found, err = store.LookupMeshAssignment(worker)
+				}
+				if err != nil {
+					logger.Warn("mesh: could not read the assignment for %s, using the default order for this connection: %v", worker, err)
+					return nil, false
+				}
 				if !found {
 					// A miner never placed by the user joins the System Mesh when
 					// include-new is on, so it is balanced from its first connect.

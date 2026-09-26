@@ -2,6 +2,7 @@ package coinapi
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -1009,6 +1010,24 @@ func (s *Store) GetMeshAssignment(worker string) (string, bool) {
 		return "", false
 	}
 	return alloc, true
+}
+
+// LookupMeshAssignment is GetMeshAssignment with a failed read kept apart from
+// "no assignment". A busy database must never read as a miner the user has not
+// placed: that is the case where a miner is handed to Fleet Balance, and it used
+// to overwrite a saved allocation whenever the store was busy at connect time.
+func (s *Store) LookupMeshAssignment(worker string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var alloc string
+	err := s.db.QueryRow(`SELECT allocation FROM mesh_assignments WHERE worker = ?`, worker).Scan(&alloc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return alloc, alloc != "", nil
 }
 
 // SetMeshAssignment records the allocation for a worker, replacing any existing one.
