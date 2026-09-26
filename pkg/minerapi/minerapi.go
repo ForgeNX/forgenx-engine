@@ -44,6 +44,7 @@ type Reading struct {
 	ASICTemp     float64 // °C, the hottest ASIC reading the miner offers; 0 when unknown
 	ASICTempMax  float64 // °C, the hottest single chip, where the miner reports it separately from ASICTemp
 	VRTemp       float64 // °C, voltage regulator; 0 when the miner has no such sensor
+	Uptime       float64 // seconds since the miner itself last started; 0 when unknown
 }
 
 // sensor treats the values firmwares use for "no sensor fitted" — zero, -1,
@@ -178,6 +179,7 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		// is read loosely and normalised below.
 		StratumProtocol json.RawMessage `json:"stratumProtocol"`
 		Hostname        string          `json:"hostname"`
+		UptimeSeconds   float64         `json:"uptimeSeconds"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return Reading{}, fmt.Errorf("axeos: %w", err)
@@ -209,6 +211,7 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		PoolURL:      axeosPool(info.StratumURL, info.StratumPort),
 		PoolProtocol: protocolName(info.StratumProtocol),
 		Hostname:     info.Hostname,
+		Uptime:       info.UptimeSeconds,
 	}
 	r.Hashrate10 = r.Hashrate
 	if info.HashRate10m > 0 {
@@ -353,7 +356,8 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 		}
 		return 0
 	}
-	r := Reading{Driver: "cgminer"}
+	// Elapsed is the miner software's own running time, in seconds.
+	r := Reading{Driver: "cgminer", Uptime: number(s["Elapsed"])}
 	// A 5-second figure on a small miner swings wildly — an Avalon Nano 3S rated
 	// at 6.7 TH/s read 13.4 over 5s against 6.7 over 15m. Prefer a minute for the
 	// live number and the longest window for the steady one; fall back to 5s

@@ -551,6 +551,7 @@ func (c *CoinAPI) HandleFoundMiners(w http.ResponseWriter, r *http.Request) {
 				"asic_temp":      rd.ASICTemp,
 				"asic_temp_max":  rd.ASICTempMax,
 				"vr_temp":        rd.VRTemp,
+				"uptime_s":       rd.Uptime,
 				"pool_url":       rd.PoolURL,
 				"on_mesh":        onMesh,
 				"mesh_coin":      coin,
