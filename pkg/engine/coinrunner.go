@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,6 +113,24 @@ func (r *CoinRunner) SetStore(s workerDiffStore) {
 // BestRatioContext returns the pool-wide (engine-session) best shareDiff/
 // networkDiff ratio for this coin — the closest any worker has come to a block
 // since the runner started — plus the share behind it and the worker name.
+// noteJobDifficulty records the network difficulty of a job as it goes out.
+// It used to be set only when a share was graded, so a coin nobody happened to
+// be mining reported no difficulty at all - which left the balancer unable to
+// tell an easy node from a hard one and quietly expressing no preference.
+func (r *CoinRunner) noteJobDifficulty(nBitsHex string) {
+	n, err := strconv.ParseUint(nBitsHex, 16, 32)
+	if err != nil {
+		return
+	}
+	d := stratumv2.TargetToDifficulty(stratumv2.NBitsToTarget(uint32(n)))
+	if d <= 0 {
+		return
+	}
+	r.sharesMu.Lock()
+	r.lastNetDiff = d
+	r.sharesMu.Unlock()
+}
+
 func (r *CoinRunner) BestRatioContext() (ratio, shareDiff, netDiff float64, height uint32, when time.Time, worker string, lastNetDiff float64) {
 	r.sharesMu.Lock()
 	defer r.sharesMu.Unlock()
@@ -586,6 +605,7 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		if runner.sv2Server == nil {
 			return
 		}
+		runner.noteJobDifficulty(evt.JobData.Job.NBits)
 		src := stratumv2.V1JobSource{
 			JobIDHex:          evt.JobData.Job.JobID,
 			PrevBlockHashHex:  evt.Template.PreviousBlockHash,
@@ -673,6 +693,7 @@ func (cr *CoinRunner) Start() error {
 	if cr.sv2Server != nil {
 		go func() {
 			if evt := cr.jobMgr.LatestJobEvent(); evt != nil {
+				cr.noteJobDifficulty(evt.JobData.Job.NBits)
 				src := stratumv2.V1JobSource{
 					JobIDHex:          evt.JobData.Job.JobID,
 					PrevBlockHashHex:  evt.Template.PreviousBlockHash,

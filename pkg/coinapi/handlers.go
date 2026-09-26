@@ -85,6 +85,9 @@ type CoinAPI struct {
 	// per-node line.
 	meshCoinShares func() map[string][4]uint64
 
+	// meshSettled reports when a recently moved miner can be moved again.
+	meshSettled func() map[string]time.Time
+
 	// rejections reports recent rejected shares per worker, across every coin.
 	rejections func() map[string]interface{}
 
@@ -285,6 +288,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 
 // SetRejections installs the recent-rejections lookup.
 func (c *CoinAPI) SetRejections(f func() map[string]interface{}) { c.rejections = f }
+
+// SetMeshSettled installs the balancer's cooldown lookup.
+func (c *CoinAPI) SetMeshSettled(f func() map[string]time.Time) { c.meshSettled = f }
 
 // SetMeshCoinShares installs the per-coin share tallies.
 func (c *CoinAPI) SetMeshCoinShares(f func() map[string][4]uint64) { c.meshCoinShares = f }
@@ -828,6 +834,10 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	const minMeasuredShares = 5
 	tallies := map[string][4]uint64{}
 	lastSeen := c.store.LastSeenByWorker()
+	settled := map[string]time.Time{}
+	if c.meshSettled != nil {
+		settled = c.meshSettled()
+	}
 	if c.meshWorkerShares != nil {
 		tallies = c.meshWorkerShares()
 	}
@@ -889,8 +899,15 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],
 			"shares_lost":     tallies[worker][3],
+			"best_share":      bestShare[worker],
 			"last_seen": func() interface{} {
 				if t, ok := lastSeen[worker]; ok {
+					return t.Format(time.RFC3339)
+				}
+				return nil
+			}(),
+			"settled_until": func() interface{} {
+				if t, ok := settled[worker]; ok {
 					return t.Format(time.RFC3339)
 				}
 				return nil
@@ -922,8 +939,15 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			"shares_rejected": tallies[worker][1],
 			"shares_stale":    tallies[worker][2],
 			"shares_lost":     tallies[worker][3],
+			"best_share":      bestShare[worker],
 			"last_seen": func() interface{} {
 				if t, ok := lastSeen[worker]; ok {
+					return t.Format(time.RFC3339)
+				}
+				return nil
+			}(),
+			"settled_until": func() interface{} {
+				if t, ok := settled[worker]; ok {
 					return t.Format(time.RFC3339)
 				}
 				return nil
@@ -954,6 +978,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	fleetOn := map[string]int{}
 	bestOn := map[string]float64{}
 	blocksOn := map[string]int{}
+	bestWorkerOn := map[string]string{} // whose share it was
 	allWorkers := map[string]bool{}
 	var total, best float64
 	connected := 0
@@ -981,6 +1006,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		if bestShare[w] > bestOn[coin] {
 			bestOn[coin] = bestShare[w]
+			bestWorkerOn[coin] = w
 		}
 	}
 	c.meshPeakMu.Lock()
@@ -998,12 +1024,13 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		t := coinShares[coin]
 		nodes = append(nodes, map[string]interface{}{
 			"coin": coin, "miners": n.miners, "ths": n.ths,
-			"fleet_miners":    fleetOn[coin],
-			"assigned_miners": n.miners - fleetOn[coin],
-			"accepted":        t[0],
-			"rejected":        t[1],
-			"stale":           t[2],
-			"best_share":      bestOn[coin],
+			"fleet_miners":      fleetOn[coin],
+			"assigned_miners":   n.miners - fleetOn[coin],
+			"accepted":          t[0],
+			"rejected":          t[1],
+			"stale":             t[2],
+			"best_share":        bestOn[coin],
+			"best_share_worker": bestWorkerOn[coin],
 		})
 	}
 	sort.Slice(nodes, func(a, b int) bool { return nodes[a]["coin"].(string) < nodes[b]["coin"].(string) })

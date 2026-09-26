@@ -328,3 +328,19 @@ func (m *Mesh) difficultyFit(miners []*balMiner) float64 {
 	}
 	return fit
 }
+
+// SettledUntil returns when each recently moved miner becomes movable again,
+// for workers still inside the cooldown. A Fleet Balance miner sitting on an
+// apparently wrong node is usually settled rather than stuck, and saying so
+// saves the reader wondering.
+func (m *Mesh) SettledUntil() map[string]time.Time {
+	m.placeMu.Lock()
+	defer m.placeMu.Unlock()
+	out := map[string]time.Time{}
+	for worker, at := range m.movedAt {
+		if until := at.Add(moveCooldown); time.Now().Before(until) {
+			out[worker] = until
+		}
+	}
+	return out
+}
