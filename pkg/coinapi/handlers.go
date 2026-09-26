@@ -505,10 +505,20 @@ func (c *CoinAPI) HandleMoveToMesh(w http.ResponseWriter, r *http.Request) {
 
 // HandleRejections lists the most recent rejected shares for every worker, with
 // the reason each was refused - for every miner, not only meshed ones.
+//
+// ?worker= narrows it to one worker's list, which is all a miner's card needs.
 func (c *CoinAPI) HandleRejections(w http.ResponseWriter, r *http.Request) {
 	out := map[string]interface{}{}
 	if c.rejections != nil {
 		out = c.rejections()
+	}
+	if worker := strings.TrimSpace(r.URL.Query().Get("worker")); worker != "" {
+		list, ok := out[worker]
+		if !ok || list == nil {
+			list = []interface{}{}
+		}
+		writeJSON(w, map[string]interface{}{"worker": worker, "rejections": list})
+		return
 	}
 	writeJSON(w, map[string]interface{}{"rejections": out})
 }
@@ -1065,6 +1075,9 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			ov[k] = v
 		}
 	}
+	// The blocks themselves, not only the count, so the tab can announce one and
+	// place it in the activity record. Newest first; empty until one is found.
+	found := []map[string]interface{}{}
 	if since, ok := ov["since"].(time.Time); ok && c.meshInfo != nil {
 		_, _, coins := c.meshInfo()
 		blocks := 0
@@ -1078,9 +1091,17 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 				if allWorkers[wn] && blockTimeAfter(b.BlockTime, since) {
 					blocks++
 					blocksOn[strings.ToUpper(sym)]++
+					at, _ := parseBlockTime(b.BlockTime)
+					found = append(found, map[string]interface{}{
+						"at": at, "worker": wn, "coin": strings.ToUpper(sym),
+						"height": b.Height, "hash": b.BlockHash,
+					})
 				}
 			}
 		}
+		sort.Slice(found, func(a, b int) bool {
+			return found[a]["at"].(time.Time).After(found[b]["at"].(time.Time))
+		})
 		ov["blocks"] = blocks
 		// The per-node counts are only known now, after the blocks have been walked.
 		for _, n := range nodes {
@@ -1090,6 +1111,7 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["overview"] = ov
+	out["found_blocks"] = found
 	if c.meshActivity != nil {
 		out["activity"] = c.meshActivity()
 	}
@@ -3065,10 +3087,17 @@ func (c *CoinAPI) HandleAction(w http.ResponseWriter, r *http.Request, coinID, a
 // blockTimeAfter reports whether a stored block time falls at or after since.
 // Unparseable times are left out rather than guessed at.
 func blockTimeAfter(stored string, since time.Time) bool {
+	t, ok := parseBlockTime(stored)
+	return ok && !t.Before(since)
+}
+
+// parseBlockTime reads a stored block time in any of the layouts it has been
+// written in over the store's life.
+func parseBlockTime(stored string) (time.Time, bool) {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
 		if t, err := time.Parse(layout, stored); err == nil {
-			return !t.Before(since)
+			return t, true
 		}
 	}
-	return false
+	return time.Time{}, false
 }
