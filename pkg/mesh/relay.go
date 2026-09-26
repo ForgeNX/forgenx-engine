@@ -149,7 +149,8 @@ func (m *Mesh) rotateLoop(s *Session, backends []*Backend, cycle time.Duration) 
 		}
 		weights := s.rotationWeights()
 		if len(weights) < 2 {
-			continue // no longer rotating
+			s.setNextRotation(time.Time{}) // not rotating: nothing to count down to
+			continue
 		}
 
 		total := 0.0
@@ -171,6 +172,11 @@ func (m *Mesh) rotateLoop(s *Session, backends []*Backend, cycle time.Duration) 
 				break
 			}
 		}
+
+		// acc is where the current slice ends, so that is the next switch. The
+		// loop already works this out each tick; recording it lets the tab say
+		// when a rotating miner will move rather than only that it will.
+		s.setNextRotation(time.Now().Add(acc - elapsed))
 
 		cur := s.activeBackend()
 		m.logger.Debug("[nexus] %s: rotate tick elapsed=%s want=%s cur=%s",

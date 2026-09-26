@@ -77,7 +77,11 @@ type Session struct {
 	// pendingSubmits holds the id of every share forwarded and not yet answered,
 	// so its reply is passed back whichever coin sends it.
 	pendingSubmits map[string]time.Time
-	closed         bool
+
+	// nextRotation is when this miner's next scheduled switch falls, for a miner
+	// split across nodes. Zero when it is not rotating.
+	nextRotation time.Time
+	closed       bool
 
 	// Job registry. Job IDs issued by different coins collide (each coin numbers
 	// its own jobs from zero), so Nexus hands the miner its own namespaced IDs and
@@ -389,4 +393,19 @@ func (s *Session) workerName() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.worker
+}
+
+// setNextRotation records when this session's next scheduled switch falls.
+func (s *Session) setNextRotation(t time.Time) {
+	s.mu.Lock()
+	s.nextRotation = t
+	s.mu.Unlock()
+}
+
+// NextRotation returns when the next scheduled switch falls, or the zero time
+// when this miner is not rotating.
+func (s *Session) NextRotation() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.nextRotation
 }

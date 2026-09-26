@@ -88,6 +88,9 @@ type CoinAPI struct {
 	// meshSettled reports when a recently moved miner can be moved again.
 	meshSettled func() map[string]time.Time
 
+	// meshRotations reports when each rotating miner next switches.
+	meshRotations func() map[string]time.Time
+
 	// rejections reports recent rejected shares per worker, across every coin.
 	rejections func() map[string]interface{}
 
@@ -288,6 +291,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 
 // SetRejections installs the recent-rejections lookup.
 func (c *CoinAPI) SetRejections(f func() map[string]interface{}) { c.rejections = f }
+
+// SetMeshRotations installs the next-switch lookup for rotating miners.
+func (c *CoinAPI) SetMeshRotations(f func() map[string]time.Time) { c.meshRotations = f }
 
 // SetMeshSettled installs the balancer's cooldown lookup.
 func (c *CoinAPI) SetMeshSettled(f func() map[string]time.Time) { c.meshSettled = f }
@@ -818,6 +824,10 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	// Every connected worker, plus any that is assigned but not currently
 	// connected — the user set that assignment and should still see it.
 	pending := map[string]string{}
+	rotations := map[string]time.Time{}
+	if c.meshRotations != nil {
+		rotations = c.meshRotations()
+	}
 	if c.meshPending != nil {
 		pending = c.meshPending()
 	}
@@ -883,15 +893,21 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		miners = append(miners, map[string]interface{}{
-			"worker":          worker,
-			"active_coin":     coin,
-			"assignment":      alloc,
-			"assigned":        assigned,
-			"connected":       true,
-			"ip":              f.ip,
-			"device":          f.device,
-			"hashrate_15m":    f.hashrate,
-			"pending_coin":    pending[worker],
+			"worker":       worker,
+			"active_coin":  coin,
+			"assignment":   alloc,
+			"assigned":     assigned,
+			"connected":    true,
+			"ip":           f.ip,
+			"device":       f.device,
+			"hashrate_15m": f.hashrate,
+			"pending_coin": pending[worker],
+			"next_rotation": func() interface{} {
+				if t, ok := rotations[worker]; ok {
+					return t.Format(time.RFC3339)
+				}
+				return nil
+			}(),
 			"hashrate_source": source,
 			"difficulty":      diffNow[worker],
 			"next_difficulty": diffNext[worker],

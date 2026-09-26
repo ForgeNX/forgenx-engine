@@ -373,6 +373,30 @@ func (m *Mesh) Placements() map[string]string {
 // deferred switch does not take effect until the target sends a job, so without
 // this the UI would say a reassignment had applied while the miner was still
 // visibly on its old coin.
+// NextRotations returns when each rotating miner's next scheduled switch falls.
+// A miner on a single node, or one the balancer places, does not rotate and is
+// absent from the result.
+func (m *Mesh) NextRotations() map[string]time.Time {
+	m.liveMu.Lock()
+	sessions := make(map[string][]*Session, len(m.live))
+	for worker, set := range m.live {
+		for s := range set {
+			sessions[worker] = append(sessions[worker], s)
+		}
+	}
+	m.liveMu.Unlock()
+
+	out := map[string]time.Time{}
+	for worker, list := range sessions {
+		for _, s := range list {
+			if t := s.NextRotation(); !t.IsZero() && time.Now().Before(t) {
+				out[worker] = t
+			}
+		}
+	}
+	return out
+}
+
 func (m *Mesh) PendingSwitches() map[string]string {
 	m.liveMu.Lock()
 	sessions := make(map[string][]*Session, len(m.live))
