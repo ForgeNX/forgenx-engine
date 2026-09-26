@@ -350,6 +350,7 @@ func (m *Mesh) switchTo(s *Session, target *Backend, notify []byte) {
 	m.logger.Info("[nexus] %s: switched %s -> %s (diff=%t job=%t)",
 		s.id, symbolOf(prev), target.Symbol, setDiff != nil, notify != nil)
 	m.statSwitches.Add(1)
+	m.note(ActivitySwitch, s.workerName(), symbolOf(prev), target.Symbol, "")
 }
 
 // authorizeSettle is how long to let a coin's post-authorize difficulty messages
@@ -372,6 +373,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 	defer func() {
 		// Mark the session closed before its backends go, so their ending reads as
 		// the teardown it is rather than as a coin dying under a live miner.
+		m.note(ActivityLeave, s.workerName(), symbolOf(s.activeBackend()), "", "")
 		s.Close()
 		for _, b := range backends {
 			b.Close()
@@ -646,6 +648,7 @@ func (m *Mesh) runMiner(s *Session, backends []*Backend) {
 			}
 			m.logger.Info("[nexus] %s miner authorized (worker=%q) -> bonded to %s (replayed diff=%t job=%t)",
 				s.id, worker, b.Symbol, setDiff != nil, notify != nil)
+			m.note(ActivityJoin, worker, "", b.Symbol, "")
 
 		case "mining.extranonce.subscribe":
 			s.mu.Lock()

@@ -91,6 +91,9 @@ type CoinAPI struct {
 	// meshRotations reports when each rotating miner next switches.
 	meshRotations func() map[string]time.Time
 
+	// meshActivity reports what the mesh has done recently.
+	meshActivity func() interface{}
+
 	// rejections reports recent rejected shares per worker, across every coin.
 	rejections func() map[string]interface{}
 
@@ -291,6 +294,9 @@ func (c *CoinAPI) HandleEngineMiners(w http.ResponseWriter, r *http.Request) {
 
 // SetRejections installs the recent-rejections lookup.
 func (c *CoinAPI) SetRejections(f func() map[string]interface{}) { c.rejections = f }
+
+// SetMeshActivity installs the recent-activity lookup.
+func (c *CoinAPI) SetMeshActivity(f func() interface{}) { c.meshActivity = f }
 
 // SetMeshRotations installs the next-switch lookup for rotating miners.
 func (c *CoinAPI) SetMeshRotations(f func() map[string]time.Time) { c.meshRotations = f }
@@ -1084,6 +1090,9 @@ func (c *CoinAPI) HandleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["overview"] = ov
+	if c.meshActivity != nil {
+		out["activity"] = c.meshActivity()
+	}
 	writeJSON(w, out)
 }
 

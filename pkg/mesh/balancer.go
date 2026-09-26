@@ -272,6 +272,7 @@ func (m *Mesh) balance() {
 		if _, err := m.ReassignWorker(bm.worker, []Weight{{Coin: bm.coin, Percent: 100}}); err == nil &&
 			bm.coin != original[bm.worker] {
 			m.logger.Info("[nexus] balancer: %s %s -> %s", bm.worker, original[bm.worker], bm.coin)
+			m.note(ActivityBalancer, bm.worker, original[bm.worker], bm.coin, "Fleet Balance")
 		}
 	}
 }

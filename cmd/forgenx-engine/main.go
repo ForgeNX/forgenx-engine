@@ -351,6 +351,7 @@ func main() {
 			coinAPI.SetMeshCoinShares(nexusMesh.CoinShares)
 			coinAPI.SetMeshSettled(nexusMesh.SettledUntil)
 			coinAPI.SetMeshRotations(nexusMesh.NextRotations)
+			coinAPI.SetMeshActivity(func() interface{} { return nexusMesh.Activity() })
 			coinAPI.SetMeshOverview(func() map[string]interface{} {
 				o := nexusMesh.Overview()
 				return map[string]interface{}{

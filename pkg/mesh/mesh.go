@@ -115,6 +115,9 @@ type Mesh struct {
 	tallies map[string]*[4]uint64
 	// The same outcomes counted per coin, for the Nexus overview's per-node line.
 	coinTallies map[string]*[4]uint64
+
+	// activity is the recent record shown in the Nexus tab.
+	activity activityLog
 }
 
 func New(opts Options) *Mesh {
