@@ -17,14 +17,45 @@ type Store struct {
 	mu          sync.Mutex
 	db          *sql.DB
 	maxHashrate map[string]float64 // in-memory peak pool hashrate per coin
+
+	// Share snapshots are written at most once a minute per worker, and old ones
+	// cleared every ten minutes per coin, however often the workers list is read.
+	// Every open tab polls that list, and writing on each read made the reads
+	// queue behind each other.
+	snapMu    sync.Mutex
+	lastSnap  map[string]time.Time
+	lastPrune map[string]time.Time
+}
+
+const (
+	snapshotEvery = time.Minute
+	pruneEvery    = 10 * time.Minute
+)
+
+// windowStart returns the start of "the last d" in the same RFC3339 form the
+// times are stored in, so the comparison is between like strings. SQLite's
+// datetime() writes a space where these have a T, which made rows from the same
+// calendar day always compare as newer and stretched every window by up to a day.
+func windowStart(d time.Duration) string {
+	return time.Now().UTC().Add(-d).Format(time.RFC3339Nano)
 }
 
 func NewStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_journal=WAL&_timeout=10000")
+	// modernc.org/sqlite takes its settings as _pragma parameters. The earlier
+	// _journal and _timeout names belong to a different driver and were ignored,
+	// so the store ran in rollback mode, where every write blocks every read.
+	// WAL lets reads carry on while a write happens; NORMAL sync is safe with WAL.
+	db, err := sql.Open("sqlite", path+
+		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
-	s := &Store{db: db, maxHashrate: make(map[string]float64)}
+	s := &Store{
+		db:          db,
+		maxHashrate: make(map[string]float64),
+		lastSnap:    make(map[string]time.Time),
+		lastPrune:   make(map[string]time.Time),
+	}
 	if err := s.init(); err != nil {
 		db.Close()
 		return nil, err
@@ -250,6 +281,17 @@ func (s *Store) GetPoolBestAllTime(symbol string) (float64, string, string, bool
 func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, networkDiff float64, height uint32, bestTime string) (float64, float64, int64, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Read first: the stored best only changes when this session beats it, which
+	// is rare, so most calls need no write at all.
+	var best, storedNetDiff float64
+	var storedHeight int64
+	var storedTime string
+	err := s.db.QueryRow(`SELECT best_all_time, COALESCE(network_diff_at_best,0), COALESCE(height_at_best,0), COALESCE(time_at_best,'')
+		FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
+		symbol, workerName).Scan(&best, &storedNetDiff, &storedHeight, &storedTime)
+	if err == nil && sessionBest <= best {
+		return best, storedNetDiff, storedHeight, storedTime
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	// The context columns (network_diff_at_best, height_at_best, time_at_best)
 	// are only overwritten when the incoming share is a NEW all-time best, so
@@ -268,9 +310,6 @@ func (s *Store) UpdateWorkerBestDiff(symbol, workerName string, sessionBest, net
 		best_all_time=MAX(excluded.best_all_time, worker_best_diff.best_all_time),
 		updated_at=excluded.updated_at`,
 		symbol, workerName, sessionBest, now, networkDiff, height, bestTime)
-	var best, storedNetDiff float64
-	var storedHeight int64
-	var storedTime string
 	s.db.QueryRow(`SELECT best_all_time, COALESCE(network_diff_at_best,0), COALESCE(height_at_best,0), COALESCE(time_at_best,'')
 		FROM worker_best_diff WHERE coin_symbol=? AND worker_name=?`,
 		symbol, workerName).Scan(&best, &storedNetDiff, &storedHeight, &storedTime)
@@ -310,6 +349,19 @@ type ShareCounts struct {
 }
 
 func (s *Store) RecordWorkerSnapshot(symbol, workerName string, valid, invalid, stale int64) error {
+	key := symbol + "|" + workerName
+	s.snapMu.Lock()
+	if time.Since(s.lastSnap[key]) < snapshotEvery {
+		s.snapMu.Unlock()
+		return nil
+	}
+	s.lastSnap[key] = time.Now()
+	prune := time.Since(s.lastPrune[symbol]) >= pruneEvery
+	if prune {
+		s.lastPrune[symbol] = time.Now()
+	}
+	s.snapMu.Unlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -317,9 +369,9 @@ func (s *Store) RecordWorkerSnapshot(symbol, workerName string, valid, invalid, 
 		(coin_symbol, worker_name, valid_shares, invalid_shares, stale_shares, snapshot_time)
 		VALUES (?,?,?,?,?,?)`,
 		symbol, workerName, valid, invalid, stale, now)
-	if err == nil {
-		s.db.Exec(`DELETE FROM worker_shares WHERE coin_symbol=? AND worker_name=?
-			AND snapshot_time < datetime('now','-49 hours')`, symbol, workerName)
+	if err == nil && prune {
+		s.db.Exec(`DELETE FROM worker_shares WHERE coin_symbol=? AND snapshot_time < ?`,
+			symbol, windowStart(49*time.Hour))
 	}
 	return err
 }
@@ -382,8 +434,8 @@ func (s *Store) GetWorkerShares48hLive(symbol, workerName string, currentValid, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row := s.db.QueryRow(`SELECT MIN(valid_shares), MIN(invalid_shares) FROM worker_shares
-		WHERE coin_symbol=? AND worker_name=? AND snapshot_time >= datetime('now','-48 hours')`,
-		symbol, workerName)
+		WHERE coin_symbol=? AND worker_name=? AND snapshot_time >= ?`,
+		symbol, workerName, windowStart(48*time.Hour))
 	var minValid, minInvalid sql.NullInt64
 	row.Scan(&minValid, &minInvalid)
 	if !minValid.Valid {
@@ -407,8 +459,8 @@ func (s *Store) GetWorkerShares48h(symbol string) map[string]ShareCounts {
 		MAX(valid_shares)-MIN(valid_shares),
 		MAX(invalid_shares)-MIN(invalid_shares)
 		FROM worker_shares
-		WHERE coin_symbol=? AND snapshot_time >= datetime('now','-48 hours')
-		GROUP BY worker_name`, symbol)
+		WHERE coin_symbol=? AND snapshot_time >= ?
+		GROUP BY worker_name`, symbol, windowStart(48*time.Hour))
 	if err != nil {
 		return nil
 	}
@@ -656,7 +708,7 @@ func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, diffi
 		symbol, poolHashrate, networkHashrate, difficulty, now)
 	if err == nil {
 		// Prune samples older than 8 days
-		s.db.Exec(`DELETE FROM metric_samples WHERE coin_symbol=? AND recorded_at < datetime('now','-8 days')`, symbol)
+		s.db.Exec(`DELETE FROM metric_samples WHERE coin_symbol=? AND recorded_at < ?`, symbol, windowStart(8*24*time.Hour))
 	}
 	return err
 }
