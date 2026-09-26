@@ -138,6 +138,18 @@ func (s *Session) send(v interface{}) error {
 	return s.SendRaw(data)
 }
 
+// waitForFirstByte blocks until the other side sends something or d passes. The
+// byte is only peeked, so the miner's first message is still read in full.
+func (s *Session) waitForFirstByte(d time.Duration) error {
+	if s.conn == nil {
+		return net.ErrClosed
+	}
+	s.conn.SetReadDeadline(time.Now().Add(d))
+	_, err := s.reader.Peek(1)
+	s.conn.SetReadDeadline(time.Time{})
+	return err
+}
+
 func (s *Session) readLine() ([]byte, error) {
 	line, err := s.reader.ReadBytes('\n')
 	if err != nil {

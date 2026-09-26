@@ -161,9 +161,23 @@ func (m *Mesh) acceptLoop() {
 	}
 }
 
+// firstByteWait is how long a new connection has to say something before it is
+// closed unbonded. Miners speak straight away; this only bounds a silent client.
+const firstByteWait = 30 * time.Second
+
 func (m *Mesh) handleMiner(conn net.Conn) {
 	id := "n" + strconv.FormatUint(m.sessSeq.Add(1), 16)
 	s := NewSession(id, conn, m.logger)
+
+	// A miner always speaks first (configure or subscribe), so no coin is bonded
+	// until it does. A port check that connects and closes without a word -
+	// monitoring tools do this every few seconds - then costs nothing, where it used
+	// to open a session on every coin and log a bond each time.
+	if err := s.waitForFirstByte(firstByteWait); err != nil {
+		m.logger.Debug("[nexus] %s: closed before sending anything (%v); nothing bonded", id, err)
+		s.Close()
+		return
+	}
 
 	// Bond a backend per configured coin. The first that connects becomes active;
 	// the rest are held warm (connected and authorized, capturing jobs but not
