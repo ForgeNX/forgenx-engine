@@ -928,6 +928,40 @@ func (s *Store) SetMeshDiscoveredSort(v string) error {
 	return s.SetMeshAssignment(meshDiscoveredSortKey, v)
 }
 
+// The Miners tab keeps how its list is sorted, and whether it shows each
+// miner's live hashrate or its longer average.
+const (
+	minersSortKey     = "\x00 miners sort"
+	minersHashrateKey = "\x00 miners hashrate"
+)
+
+// GetMinersSort returns the saved Miners tab sort, by name ascending by default.
+func (s *Store) GetMinersSort() string {
+	if v, ok := s.GetMeshAssignment(minersSortKey); ok && v != "" {
+		return v
+	}
+	return "name:asc"
+}
+
+// SetMinersSort records the Miners tab sort.
+func (s *Store) SetMinersSort(v string) error {
+	return s.SetMeshAssignment(minersSortKey, v)
+}
+
+// GetMinersHashrate returns which hashrate the Miners tab shows: "avg" unless
+// the user has chosen "live".
+func (s *Store) GetMinersHashrate() string {
+	if v, ok := s.GetMeshAssignment(minersHashrateKey); ok && v == "live" {
+		return v
+	}
+	return "avg"
+}
+
+// SetMinersHashrate records which hashrate the Miners tab shows.
+func (s *Store) SetMinersHashrate(v string) error {
+	return s.SetMeshAssignment(minersHashrateKey, v)
+}
+
 // meshPinsPrefix keys the coins pinned in the allocator, per worker and for Fleet
 // Balance, so a pin holds across devices and reloads like every Nexus setting.
 const meshPinsPrefix = "\x00 pins "

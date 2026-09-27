@@ -45,6 +45,12 @@ type Reading struct {
 	ASICTempMax  float64 // °C, the hottest single chip, where the miner reports it separately from ASICTemp
 	VRTemp       float64 // °C, voltage regulator; 0 when the miner has no such sensor
 	Uptime       float64 // seconds since the miner itself last started; 0 when unknown
+
+	// The window each hashrate covers, as the miner labels it: "now" for an
+	// instantaneous reading, "5s", "1m", "5m", "10m", "15m" or "30m" for a
+	// rolling average, "av" for an average since the miner started.
+	HashrateWindow   string
+	Hashrate10Window string
 }
 
 // sensor treats the values firmwares use for "no sensor fitted" — zero, -1,
@@ -192,15 +198,16 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 	if info.ASICModel == "" && info.Hostname == "" {
 		return Reading{}, fmt.Errorf("axeos: response does not look like AxeOS")
 	}
-	live := info.HashRate
+	live, liveWindow := info.HashRate, "now"
 	if info.HashRate1m > 0 {
-		live = info.HashRate1m // steadier than the instantaneous figure
+		live, liveWindow = info.HashRate1m, "1m" // steadier than the instantaneous figure
 	}
 	r := Reading{
-		Driver:   "axeos",
-		Hashrate: live * 1e9,
-		Model:    axeosProduct(info.DeviceModel, info.ASICModel, info.ASICCount),
-		Chip:     info.ASICModel,
+		Driver:         "axeos",
+		Hashrate:       live * 1e9,
+		HashrateWindow: liveWindow,
+		Model:          axeosProduct(info.DeviceModel, info.ASICModel, info.ASICCount),
+		Chip:           info.ASICModel,
 		// Report what the miner's own dashboard shows — temp for the ASIC, vrTemp
 		// for the regulator — so the two never disagree. NerdQAxe also reports
 		// vrTempInt, the regulator chip's internal reading, which runs several
@@ -213,9 +220,9 @@ func (AxeOS) Read(ctx context.Context, host string) (Reading, error) {
 		Hostname:     info.Hostname,
 		Uptime:       info.UptimeSeconds,
 	}
-	r.Hashrate10 = r.Hashrate
+	r.Hashrate10, r.Hashrate10Window = r.Hashrate, r.HashrateWindow
 	if info.HashRate10m > 0 {
-		r.Hashrate10 = info.HashRate10m * 1e9
+		r.Hashrate10, r.Hashrate10Window = info.HashRate10m*1e9, "10m"
 	}
 	return r, nil
 }
@@ -346,15 +353,15 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 	// Vendors disagree on units and on which average they expose. Take the
 	// most recent figure available, and the longest average for Hashrate10.
 	scale := map[string]float64{"THS": 1e12, "GHS": 1e9, "MHS": 1e6, "KHS": 1e3}
-	pick := func(suffixes ...string) float64 {
+	pick := func(suffixes ...string) (float64, string) {
 		for _, suf := range suffixes {
 			for unit, mul := range scale {
 				if v := number(s[unit+" "+suf]); v > 0 {
-					return v * mul
+					return v * mul, suf
 				}
 			}
 		}
-		return 0
+		return 0, ""
 	}
 	// Elapsed is the miner software's own running time, in seconds.
 	r := Reading{Driver: "cgminer", Uptime: number(s["Elapsed"])}
@@ -362,13 +369,13 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 	// at 6.7 TH/s read 13.4 over 5s against 6.7 over 15m. Prefer a minute for the
 	// live number and the longest window for the steady one; fall back to 5s
 	// only where the firmware offers nothing longer, as stock Antminer does.
-	r.Hashrate = pick("1m", "5m", "15m", "av", "5s")
-	r.Hashrate10 = pick("15m", "30m", "5m", "av", "1m", "5s")
+	r.Hashrate, r.HashrateWindow = pick("1m", "5m", "15m", "av", "5s")
+	r.Hashrate10, r.Hashrate10Window = pick("15m", "30m", "5m", "av", "1m", "5s")
 	if r.Hashrate <= 0 {
 		return Reading{}, fmt.Errorf("cgminer: no hashrate in SUMMARY")
 	}
 	if r.Hashrate10 <= 0 {
-		r.Hashrate10 = r.Hashrate
+		r.Hashrate10, r.Hashrate10Window = r.Hashrate, r.HashrateWindow
 	}
 
 	// Best-effort extras: the pool username for matching, and the model.
@@ -416,7 +423,7 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 	// an average since boot — sixteen days on one test unit — so the steady
 	// figure stays with the summary's 15-minute window.
 	if x.ghsSpd > 0 {
-		r.Hashrate = x.ghsSpd * 1e9
+		r.Hashrate, r.HashrateWindow = x.ghsSpd*1e9, "now"
 	}
 	return r, nil
 }

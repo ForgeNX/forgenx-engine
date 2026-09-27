@@ -587,6 +587,12 @@ func (c *CoinAPI) HandleFoundMiners(w http.ResponseWriter, r *http.Request) {
 				"on_mesh":        onMesh,
 				"mesh_coin":      coin,
 				"points_at_mesh": pointed,
+
+				// The miner's longer average too, and the window each figure covers
+				// as the miner labels it, so the Miners tab can show either.
+				"hashrate10_ths":    rd.Hashrate10 / 1e12,
+				"hashrate_window":   rd.HashrateWindow,
+				"hashrate10_window": rd.Hashrate10Window,
 			})
 		}
 	}
@@ -653,6 +659,8 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 			IncludeNew     *bool   `json:"include_new"`
 			MinerSort      *string `json:"miner_sort"`
 			DiscoveredSort *string `json:"discovered_sort"`
+			MinersSort     *string `json:"miners_sort"`
+			MinersHashrate *string `json:"miners_hashrate"`
 			AutoName       *bool   `json:"auto_name"`
 			NamePrefix     *string `json:"name_prefix"`
 			MeshAddress    *string `json:"mesh_address"`
@@ -726,6 +734,30 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// The Miners tab: how its list is sorted, and which of a miner's own
+		// hashrate figures it shows - the live one or the longer average.
+		if body.MinersSort != nil {
+			parts := strings.SplitN(*body.MinersSort, ":", 2)
+			validKey := map[string]bool{"name": true, "hashrate": true, "coin": true, "device": true, "best": true, "last": true}
+			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
+				writeError(w, 400, "miners_sort must be name, hashrate, coin, device, best or last, then :asc or :desc")
+				return
+			}
+			if err := c.store.SetMinersSort(*body.MinersSort); err != nil {
+				writeError(w, 500, "could not save the sort")
+				return
+			}
+		}
+		if body.MinersHashrate != nil {
+			if *body.MinersHashrate != "live" && *body.MinersHashrate != "avg" {
+				writeError(w, 400, "miners_hashrate must be live or avg")
+				return
+			}
+			if err := c.store.SetMinersHashrate(*body.MinersHashrate); err != nil {
+				writeError(w, 500, "could not save the setting")
+				return
+			}
+		}
 	}
 	start, end := c.store.GetMeshNetwork()
 	found := 0
@@ -738,6 +770,8 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		"include_new":     c.store.GetMeshIncludeNew(),
 		"miner_sort":      c.store.GetMeshMinerSort(),
 		"discovered_sort": c.store.GetMeshDiscoveredSort(),
+		"miners_sort":     c.store.GetMinersSort(),
+		"miners_hashrate": c.store.GetMinersHashrate(),
 		"auto_name":       c.store.GetMeshAutoName(),
 		"name_prefix":     c.store.GetMeshNamePrefix(),
 		"mesh_address":    c.store.GetMeshAddress(),
