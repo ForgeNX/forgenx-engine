@@ -24,6 +24,37 @@ import (
 )
 
 // CoinAPI handles HTTP requests for coin app endpoints.
+// shareBase is the running total a worker had reached before this engine
+// process started, per coin and worker. The engine's own per-worker counters
+// start from zero with the process, and this code runs in the same process, so
+// the total carried in from earlier runs is simply the highest total recorded
+// when the worker is first seen after a start. Fixed once, never re-derived: the
+// earlier approach guessed at restarts by comparing against stored totals, from
+// two places at once, and each would count the other's correction again.
+type shareBase struct {
+	valid, invalid int64
+}
+
+var (
+	shareBaseMu sync.Mutex
+	shareBases  = map[string]shareBase{}
+)
+
+func (c *CoinAPI) shareBaseFor(symbol, worker string) shareBase {
+	key := symbol + "|" + worker
+	shareBaseMu.Lock()
+	defer shareBaseMu.Unlock()
+	if b, ok := shareBases[key]; ok {
+		return b
+	}
+	prev := c.store.GetWorkerSharesAlltime(symbol, worker)
+	b := shareBase{valid: prev.Valid, invalid: prev.Invalid}
+	shareBases[key] = b
+	// Kept in the store too, for anything reading the offset directly.
+	c.store.SetWorkerSharesOffset(symbol, worker, b.valid, b.invalid)
+	return b
+}
+
 type CoinAPI struct {
 	store           *Store
 	engineAPIURL    string // e.g. "http://localhost:8080"
@@ -1263,7 +1294,6 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 	miners, _ := minersData["miners"].(map[string]interface{})
 	coinMiners, _ := miners[symbol].([]interface{})
 
-	workerInfos := c.store.GetWorkerBestDiffs(symbol)
 	var workers []map[string]interface{}
 
 	// A mesh miner is authorized on every coin it is bonded to, so it appears in
@@ -1310,26 +1340,12 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 			sessionSharesRejected = int64(getFloat(m, "shares_rejected"))
 		}
 
-		winfo := workerInfos[workerName]
-		offset := winfo.SharesOffset
-		invalidOffset := winfo.InvalidSharesOffset
-		currentValid := sharesAccepted + offset
-		currentInvalid := sessionSharesRejected + invalidOffset
-
-		// Detect engine restart
-		prevAlltime := c.store.GetWorkerSharesAlltime(symbol, workerName)
-		restarted := prevAlltime.Valid > 0 && sharesAccepted < (prevAlltime.Valid-offset)
-		if restarted {
-			offset = prevAlltime.Valid
-			invalidOffset = prevAlltime.Invalid
-			c.store.SetWorkerSharesOffset(symbol, workerName, offset, invalidOffset)
-			currentValid = sharesAccepted + offset
-			currentInvalid = sessionSharesRejected + invalidOffset
-		}
-
-		// Snapshot
-		c.store.RecordWorkerSnapshot(symbol, workerName, currentValid, currentInvalid,
-			int64(getFloat(m, "shares_stale")))
+		// Running totals: this process's counts on top of what earlier runs
+		// reached. Snapshots are written by the background job alone; reading here
+		// never changes the stored history.
+		base := c.shareBaseFor(symbol, workerName)
+		currentValid := sharesAccepted + base.valid
+		currentInvalid := int64(getFloat(m, "shares_rejected")) + base.invalid
 
 		w48 := c.store.GetWorkerShares48hLive(symbol, workerName, currentValid, currentInvalid)
 		alltime := c.store.GetWorkerSharesAlltime(symbol, workerName)
@@ -1371,38 +1387,43 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 		}
 
 		workers = append(workers, map[string]interface{}{
-			"name":                   workerName,
-			"online":                 true,
-			"standby":                standby,
-			"active_coin":            activeCoin,
-			"hashrate":               getFloat(m, "hashrate_5m"),
-			"hashrate_15m":           getFloat(m, "hashrate_15m"),
-			"hashrate_5m":            getFloat(m, "hashrate_5m"),
-			"difficulty":             getFloat(m, "difficulty"),
-			"connected_at":           getString(m, "connected_at"),
-			"best_session":           sessionBest,
-			"best_all_time":          allTimeBest,
-			"network_diff_at_best":   storedNetDiff,
-			"height_at_best":         storedHeight,
-			"time_at_best":           storedTime,
-			"best_ratio":             getFloat(m, "best_ratio"),
-			"best_ratio_share_diff":  getFloat(m, "best_ratio_share_diff"),
-			"best_ratio_net_diff":    getFloat(m, "best_ratio_net_diff"),
-			"best_ratio_height":      getFloat(m, "best_ratio_height"),
-			"best_ratio_outcome":     c.classifyBestRatioOutcome(symbol, getFloat(m, "best_ratio"), int64(getFloat(m, "best_ratio_height"))),
-			"best_ratio_time":        getString(m, "best_ratio_time"),
-			"last_share":             lastShare,
-			"valid_shares":           sessionSharesAccepted,
-			"invalid_shares":         sessionSharesRejected,
-			"stale_shares":           int64(getFloat(m, "shares_stale")),
-			"protocol":               getString(m, "protocol"),
-			"shares_48h_valid":       w48.Valid,
-			"shares_48h_invalid":     w48.Invalid,
-			"shares_alltime_valid":   alltime.Valid,
-			"shares_alltime_invalid": alltime.Invalid,
-			"payout_address":         payoutAddress,
-			"ip":                     ip,
-			"device":                 vendor,
+			"name":         workerName,
+			"online":       true,
+			"standby":      standby,
+			"active_coin":  activeCoin,
+			"hashrate":     getFloat(m, "hashrate_5m"),
+			"hashrate_15m": getFloat(m, "hashrate_15m"),
+			"hashrate_5m":  getFloat(m, "hashrate_5m"),
+			"difficulty":   getFloat(m, "difficulty"),
+			"connected_at": getString(m, "connected_at"),
+			"best_session": sessionBest,
+			// The session best's own context. The *_at_best fields below belong to
+			// the all-time best, which may be from another day entirely.
+			"best_session_network_diff": bestNetDiff,
+			"best_session_height":       bestHeight,
+			"best_session_time":         bestTime,
+			"best_all_time":             allTimeBest,
+			"network_diff_at_best":      storedNetDiff,
+			"height_at_best":            storedHeight,
+			"time_at_best":              storedTime,
+			"best_ratio":                getFloat(m, "best_ratio"),
+			"best_ratio_share_diff":     getFloat(m, "best_ratio_share_diff"),
+			"best_ratio_net_diff":       getFloat(m, "best_ratio_net_diff"),
+			"best_ratio_height":         getFloat(m, "best_ratio_height"),
+			"best_ratio_outcome":        c.classifyBestRatioOutcome(symbol, getFloat(m, "best_ratio"), int64(getFloat(m, "best_ratio_height"))),
+			"best_ratio_time":           getString(m, "best_ratio_time"),
+			"last_share":                lastShare,
+			"valid_shares":              sessionSharesAccepted,
+			"invalid_shares":            sessionSharesRejected,
+			"stale_shares":              int64(getFloat(m, "shares_stale")),
+			"protocol":                  getString(m, "protocol"),
+			"shares_48h_valid":          w48.Valid,
+			"shares_48h_invalid":        w48.Invalid,
+			"shares_alltime_valid":      alltime.Valid,
+			"shares_alltime_invalid":    alltime.Invalid,
+			"payout_address":            payoutAddress,
+			"ip":                        ip,
+			"device":                    vendor,
 		})
 		go c.store.RecordWorkerLastSeen(symbol, workerName, lastShare, getString(m, "connected_at"))
 	}
@@ -1737,7 +1758,6 @@ func (c *CoinAPI) runSnapshot() {
 	miners, _ := minersData["miners"].(map[string]interface{})
 	for symbol, coinMinersRaw := range miners {
 		coinMiners, _ := coinMinersRaw.([]interface{})
-		workerInfos := c.store.GetWorkerBestDiffs(symbol)
 		for _, mRaw := range coinMiners {
 			m, ok := mRaw.(map[string]interface{})
 			if !ok {
@@ -1745,27 +1765,17 @@ func (c *CoinAPI) runSnapshot() {
 			}
 			name := getString(m, "worker_name")
 			rawValid := int64(getFloat(m, "shares_accepted"))
-			rawInvalid := int64(getFloat(m, "session_shares_rejected"))
-			if rawInvalid == 0 {
-				rawInvalid = int64(getFloat(m, "shares_rejected"))
+			if strings.TrimSpace(name) == "" {
+				continue
 			}
+			// Both counts are the engine's per-worker totals for this process, so
+			// they sit on the same footing as the base carried in from earlier runs.
+			rawInvalid := int64(getFloat(m, "shares_rejected"))
 			stale := int64(getFloat(m, "shares_stale"))
 
-			winfo := workerInfos[name]
-			snapOffset := winfo.SharesOffset
-			snapInvalidOffset := winfo.InvalidSharesOffset
-
-			// Detect restart
-			prevAlltime := c.store.GetWorkerSharesAlltime(symbol, name)
-			restarted := prevAlltime.Valid > 0 && rawValid < (prevAlltime.Valid-snapOffset)
-			if restarted {
-				snapOffset = prevAlltime.Valid
-				snapInvalidOffset = prevAlltime.Invalid
-				c.store.SetWorkerSharesOffset(symbol, name, snapOffset, snapInvalidOffset)
-			}
-
+			base := c.shareBaseFor(symbol, name)
 			c.store.RecordWorkerSnapshot(symbol, name,
-				rawValid+snapOffset, rawInvalid+snapInvalidOffset, stale)
+				rawValid+base.valid, rawInvalid+base.invalid, stale)
 		}
 	}
 }
