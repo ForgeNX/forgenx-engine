@@ -662,6 +662,8 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 			DiscoveredSort *string `json:"discovered_sort"`
 			MinersSort     *string `json:"miners_sort"`
 			MinersHashrate *string `json:"miners_hashrate"`
+			NodesSort      *string `json:"nodes_sort"`
+			NodeMinersSort *string `json:"node_miners_sort"`
 			AutoName       *bool   `json:"auto_name"`
 			NamePrefix     *string `json:"name_prefix"`
 			MeshAddress    *string `json:"mesh_address"`
@@ -759,6 +761,32 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// The Nodes tab: how its node list is sorted, and how the list of miners
+		// on the selected node is sorted.
+		if body.NodesSort != nil {
+			parts := strings.SplitN(*body.NodesSort, ":", 2)
+			validKey := map[string]bool{"name": true, "hashrate": true, "miners": true, "status": true}
+			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
+				writeError(w, 400, "nodes_sort must be name, hashrate, miners or status, then :asc or :desc")
+				return
+			}
+			if err := c.store.SetNodesSort(*body.NodesSort); err != nil {
+				writeError(w, 500, "could not save the sort")
+				return
+			}
+		}
+		if body.NodeMinersSort != nil {
+			parts := strings.SplitN(*body.NodeMinersSort, ":", 2)
+			validKey := map[string]bool{"name": true, "hashrate": true, "best": true}
+			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
+				writeError(w, 400, "node_miners_sort must be name, hashrate or best, then :asc or :desc")
+				return
+			}
+			if err := c.store.SetNodeMinersSort(*body.NodeMinersSort); err != nil {
+				writeError(w, 500, "could not save the sort")
+				return
+			}
+		}
 	}
 	start, end := c.store.GetMeshNetwork()
 	found := 0
@@ -766,16 +794,18 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		found = len(c.scanner.Readings())
 	}
 	writeJSON(w, map[string]interface{}{
-		"network_start":   start,
-		"network_end":     end,
-		"include_new":     c.store.GetMeshIncludeNew(),
-		"miner_sort":      c.store.GetMeshMinerSort(),
-		"discovered_sort": c.store.GetMeshDiscoveredSort(),
-		"miners_sort":     c.store.GetMinersSort(),
-		"miners_hashrate": c.store.GetMinersHashrate(),
-		"auto_name":       c.store.GetMeshAutoName(),
-		"name_prefix":     c.store.GetMeshNamePrefix(),
-		"mesh_address":    c.store.GetMeshAddress(),
+		"network_start":    start,
+		"network_end":      end,
+		"include_new":      c.store.GetMeshIncludeNew(),
+		"miner_sort":       c.store.GetMeshMinerSort(),
+		"discovered_sort":  c.store.GetMeshDiscoveredSort(),
+		"miners_sort":      c.store.GetMinersSort(),
+		"miners_hashrate":  c.store.GetMinersHashrate(),
+		"nodes_sort":       c.store.GetNodesSort(),
+		"node_miners_sort": c.store.GetNodeMinersSort(),
+		"auto_name":        c.store.GetMeshAutoName(),
+		"name_prefix":      c.store.GetMeshNamePrefix(),
+		"mesh_address":     c.store.GetMeshAddress(),
 		"mesh_port": func() int {
 			if c.meshInfo == nil {
 				return 0

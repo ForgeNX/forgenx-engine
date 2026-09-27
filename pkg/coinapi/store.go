@@ -962,6 +962,40 @@ func (s *Store) SetMinersHashrate(v string) error {
 	return s.SetMeshAssignment(minersHashrateKey, v)
 }
 
+// The Nodes tab keeps how its node list is sorted, and how the miners on the
+// selected node are sorted.
+const (
+	nodesSortKey      = "\x00 nodes sort"
+	nodeMinersSortKey = "\x00 node miners sort"
+)
+
+// GetNodesSort returns the saved node list sort, by name ascending by default.
+func (s *Store) GetNodesSort() string {
+	if v, ok := s.GetMeshAssignment(nodesSortKey); ok && v != "" {
+		return v
+	}
+	return "name:asc"
+}
+
+// SetNodesSort records the node list sort.
+func (s *Store) SetNodesSort(v string) error {
+	return s.SetMeshAssignment(nodesSortKey, v)
+}
+
+// GetNodeMinersSort returns the saved sort for the miners on a node, by name
+// ascending by default.
+func (s *Store) GetNodeMinersSort() string {
+	if v, ok := s.GetMeshAssignment(nodeMinersSortKey); ok && v != "" {
+		return v
+	}
+	return "name:asc"
+}
+
+// SetNodeMinersSort records the sort for the miners on a node.
+func (s *Store) SetNodeMinersSort(v string) error {
+	return s.SetMeshAssignment(nodeMinersSortKey, v)
+}
+
 // meshPinsPrefix keys the coins pinned in the allocator, per worker and for Fleet
 // Balance, so a pin holds across devices and reloads like every Nexus setting.
 const meshPinsPrefix = "\x00 pins "
