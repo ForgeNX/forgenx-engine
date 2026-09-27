@@ -32,7 +32,7 @@ import (
 // earlier approach guessed at restarts by comparing against stored totals, from
 // two places at once, and each would count the other's correction again.
 type shareBase struct {
-	valid, invalid int64
+	valid, invalid, stale int64
 }
 
 var (
@@ -48,7 +48,7 @@ func (c *CoinAPI) shareBaseFor(symbol, worker string) shareBase {
 		return b
 	}
 	prev := c.store.GetWorkerSharesAlltime(symbol, worker)
-	b := shareBase{valid: prev.Valid, invalid: prev.Invalid}
+	b := shareBase{valid: prev.Valid, invalid: prev.Invalid, stale: prev.Stale}
 	shareBases[key] = b
 	// Kept in the store too, for anything reading the offset directly.
 	c.store.SetWorkerSharesOffset(symbol, worker, b.valid, b.invalid)
@@ -1344,11 +1344,19 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 		// reached. Snapshots are written by the background job alone; reading here
 		// never changes the stored history.
 		base := c.shareBaseFor(symbol, workerName)
-		currentValid := sharesAccepted + base.valid
-		currentInvalid := int64(getFloat(m, "shares_rejected")) + base.invalid
+		current := ShareCounts{
+			Valid:   sharesAccepted + base.valid,
+			Invalid: int64(getFloat(m, "shares_rejected")) + base.invalid,
+			Stale:   int64(getFloat(m, "shares_stale")) + base.stale,
+		}
 
-		w48 := c.store.GetWorkerShares48hLive(symbol, workerName, currentValid, currentInvalid)
+		w48 := c.store.GetWorkerShares48hLive(symbol, workerName, current)
+		// All time is the recorded high, or the live total when that is newer: the
+		// recorded one trails by up to a minute between snapshots.
 		alltime := c.store.GetWorkerSharesAlltime(symbol, workerName)
+		alltime.Valid = max(alltime.Valid, current.Valid)
+		alltime.Invalid = max(alltime.Invalid, current.Invalid)
+		alltime.Stale = max(alltime.Stale, current.Stale)
 
 		// Parse name parts
 		nameParts := strings.SplitN(workerName, ".", 2)
@@ -1419,8 +1427,10 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 			"protocol":                  getString(m, "protocol"),
 			"shares_48h_valid":          w48.Valid,
 			"shares_48h_invalid":        w48.Invalid,
+			"shares_48h_stale":          w48.Stale,
 			"shares_alltime_valid":      alltime.Valid,
 			"shares_alltime_invalid":    alltime.Invalid,
+			"shares_alltime_stale":      alltime.Stale,
 			"payout_address":            payoutAddress,
 			"ip":                        ip,
 			"device":                    vendor,
@@ -1446,7 +1456,7 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 		}
 		// 48h shares using alltime as effective current (worker is offline)
 		alltimeShares := c.store.GetWorkerSharesAlltime(symbol, workerName)
-		w48 := c.store.GetWorkerShares48hLive(symbol, workerName, alltimeShares.Valid, alltimeShares.Invalid)
+		w48 := c.store.GetWorkerShares48hLive(symbol, workerName, alltimeShares)
 
 		// Compute last session duration
 		lastSessionDuration := ""
@@ -1491,8 +1501,10 @@ func (c *CoinAPI) workersPayload(symbol string) map[string]interface{} {
 			"stale_shares":           0,
 			"shares_48h_valid":       w48.Valid,
 			"shares_48h_invalid":     w48.Invalid,
+			"shares_48h_stale":       w48.Stale,
 			"shares_alltime_valid":   alltimeShares.Valid,
 			"shares_alltime_invalid": alltimeShares.Invalid,
+			"shares_alltime_stale":   alltimeShares.Stale,
 			"protocol":               "v1",
 		})
 	}
@@ -1775,7 +1787,7 @@ func (c *CoinAPI) runSnapshot() {
 
 			base := c.shareBaseFor(symbol, name)
 			c.store.RecordWorkerSnapshot(symbol, name,
-				rawValid+base.valid, rawInvalid+base.invalid, stale)
+				rawValid+base.valid, rawInvalid+base.invalid, stale+base.stale)
 		}
 	}
 }

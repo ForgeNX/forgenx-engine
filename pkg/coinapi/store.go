@@ -92,6 +92,7 @@ func (s *Store) init() error {
 		// SQLite answers each from the end of an index instead of reading them all.
 		`CREATE INDEX IF NOT EXISTS idx_ws_worker_valid ON worker_shares(coin_symbol, worker_name, valid_shares)`,
 		`CREATE INDEX IF NOT EXISTS idx_ws_worker_invalid ON worker_shares(coin_symbol, worker_name, invalid_shares)`,
+		`CREATE INDEX IF NOT EXISTS idx_ws_worker_stale ON worker_shares(coin_symbol, worker_name, stale_shares)`,
 		`CREATE TABLE IF NOT EXISTS metric_samples (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				coin_symbol TEXT NOT NULL,
@@ -446,26 +447,30 @@ func (s *Store) LastSeenByWorker() map[string]time.Time {
 	return cached
 }
 
-func (s *Store) GetWorkerShares48hLive(symbol, workerName string, currentValid, currentInvalid int64) ShareCounts {
+// GetWorkerShares48hLive returns how far each running total has moved in the
+// last 48 hours: the current totals less the lowest recorded in that window.
+func (s *Store) GetWorkerShares48hLive(symbol, workerName string, current ShareCounts) ShareCounts {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row := s.db.QueryRow(`SELECT MIN(valid_shares), MIN(invalid_shares) FROM worker_shares
+	row := s.db.QueryRow(`SELECT MIN(valid_shares), MIN(invalid_shares), MIN(stale_shares) FROM worker_shares
 		WHERE coin_symbol=? AND worker_name=? AND snapshot_time >= ?`,
 		symbol, workerName, windowStart(48*time.Hour))
-	var minValid, minInvalid sql.NullInt64
-	row.Scan(&minValid, &minInvalid)
+	var minValid, minInvalid, minStale sql.NullInt64
+	row.Scan(&minValid, &minInvalid, &minStale)
 	if !minValid.Valid {
 		return ShareCounts{}
 	}
-	v := currentValid - minValid.Int64
-	i := currentInvalid - minInvalid.Int64
-	if v < 0 {
-		v = 0
+	since := func(now int64, low sql.NullInt64) int64 {
+		if d := now - low.Int64; d > 0 {
+			return d
+		}
+		return 0
 	}
-	if i < 0 {
-		i = 0
+	return ShareCounts{
+		Valid:   since(current.Valid, minValid),
+		Invalid: since(current.Invalid, minInvalid),
+		Stale:   since(current.Stale, minStale),
 	}
-	return ShareCounts{Valid: v, Invalid: i}
 }
 
 func (s *Store) GetWorkerShares48h(symbol string) map[string]ShareCounts {
@@ -502,6 +507,8 @@ func (s *Store) GetWorkerSharesAlltime(symbol, workerName string) ShareCounts {
 		symbol, workerName).Scan(&c.Valid)
 	s.db.QueryRow(`SELECT COALESCE(MAX(invalid_shares),0) FROM worker_shares WHERE coin_symbol=? AND worker_name=?`,
 		symbol, workerName).Scan(&c.Invalid)
+	s.db.QueryRow(`SELECT COALESCE(MAX(stale_shares),0) FROM worker_shares WHERE coin_symbol=? AND worker_name=?`,
+		symbol, workerName).Scan(&c.Stale)
 	return c
 }
 
