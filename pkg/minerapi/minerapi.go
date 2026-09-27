@@ -51,6 +51,10 @@ type Reading struct {
 	// rolling average, "av" for an average since the miner started.
 	HashrateWindow   string
 	Hashrate10Window string
+
+	// °C, the hottest hash board's own temperature, where the miner reports one
+	// (Braiins OS); 0 when unknown. The board, not its voltage regulator.
+	BoardTemp float64
 }
 
 // sensor treats the values firmwares use for "no sensor fitted" — zero, -1,
@@ -418,6 +422,7 @@ func (CGMiner) Read(ctx context.Context, host string) (Reading, error) {
 	}
 	x := cgExtended(ctx, host)
 	r.ASICTemp, r.ASICTempMax = x.avg, x.max
+	r.BoardTemp = x.board
 	// An Avalon's own current speed is steady where the summary's 5-second
 	// figure is not: 6.61 TH/s against 13.4 at the same moment. Its GHSavg is
 	// an average since boot — sixteen days on one test unit — so the steady
@@ -434,6 +439,7 @@ var bracketed = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\[([^\]]*)\]`)
 // cgExtras is what the extended stats add to a CGMiner summary.
 type cgExtras struct {
 	avg, max float64 // ASIC temperatures, °C
+	board    float64 // the hottest hash board, °C, where reported
 	ghsSpd   float64 // the miner's own current speed, GH/s, where it reports one
 }
 
@@ -471,16 +477,17 @@ func cgExtended(ctx context.Context, host string) cgExtras {
 	// Braiins OS answers its own temps command instead: each hash board's chip
 	// and board temperature, e.g. {"Board":44.0,"Chip":59.0,"ID":1}. The chips
 	// give the ASIC figures; the board reading is the PCB, not a regulator, so it
-	// is not used as VR temp. Firmwares without the command answer with an error
-	// and fall through to stats.
+	// is kept as its own board temperature rather than passed off as VR temp.
+	// Firmwares without the command answer with an error and fall through to stats.
 	if tp, err := cgCommand(ctx, host, "temps"); err == nil {
 		list, _ := tp["TEMPS"].([]interface{})
-		var chips []float64
+		var chips, boards []float64
 		for _, e := range list {
 			em, _ := e.(map[string]interface{})
 			if c := sensor(number(em["Chip"])); c > 0 {
 				chips = append(chips, c)
 			}
+			boards = append(boards, number(em["Board"]))
 		}
 		if len(chips) > 0 {
 			sum := 0.0
@@ -489,6 +496,7 @@ func cgExtended(ctx context.Context, host string) cgExtras {
 			}
 			x.avg = sum / float64(len(chips))
 			x.max = hottest(chips...)
+			x.board = hottest(boards...)
 			return x
 		}
 	}

@@ -593,6 +593,7 @@ func (c *CoinAPI) HandleFoundMiners(w http.ResponseWriter, r *http.Request) {
 				"hashrate10_ths":    rd.Hashrate10 / 1e12,
 				"hashrate_window":   rd.HashrateWindow,
 				"hashrate10_window": rd.Hashrate10Window,
+				"board_temp":        rd.BoardTemp,
 			})
 		}
 	}
