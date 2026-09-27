@@ -133,6 +133,11 @@ type CoinAPI struct {
 	// meshPeak is the highest combined mesh hashrate seen this session.
 	meshPeakMu sync.Mutex
 	meshPeak   float64
+	// Each node's highest total hashrate this session from the miners' own
+	// figures, live and averaged; see nodepeaks.go.
+	nodePeakMu   sync.Mutex
+	nodePeakLive map[string]float64
+	nodePeakAvg  map[string]float64
 
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
@@ -1689,6 +1694,7 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			delete(nodeInfo, "connected")
 		}
 	}
+	peakLive, peakAvg := c.nodePeaks(symbol)
 	writeJSON(w, map[string]interface{}{
 		"engine_connected": engineConnected,
 		"zmq_connected":    engineConnected,
@@ -1741,6 +1747,11 @@ func (c *CoinAPI) HandleStatus(w http.ResponseWriter, r *http.Request, symbol st
 			"hashrate":              totalHashrate,
 			"max_hashrate":          c.store.UpdateAndGetMaxPoolHashrate(symbol, totalHashrate),
 			"worker_count":          workerCount,
+
+			// The node's peak from the miners' own figures, as the Nexus Nodes tab
+			// shows it; see nodepeaks.go.
+			"max_hashrate_live": peakLive,
+			"max_hashrate_avg":  peakAvg,
 		},
 		"engine_version": c.engineVersion,
 		"engine_updated": c.engineBuildDate,
@@ -1814,6 +1825,7 @@ func (c *CoinAPI) HandleDeleteWorker(w http.ResponseWriter, r *http.Request, sym
 
 // StartSnapshotThread runs the 60-second worker share snapshot background task.
 func (c *CoinAPI) StartSnapshotThread() {
+	go c.runNodePeaks()
 	go func() {
 		// Initial delay so engine has time to start
 		time.Sleep(10 * time.Second)
