@@ -441,7 +441,8 @@ type cgExtras struct {
 // these into a Key[value] string in estats: TAvg and TMax across the whole
 // machine (MTavg/MTmax are per hash board, and become lists on multi-board
 // models), and GHSspd for current speed. Antminers report temp_chip style
-// fields in stats instead — that path is untested on real hardware.
+// fields in stats instead — that path is untested on real hardware. Braiins OS
+// has a temps command of its own.
 func cgExtended(ctx context.Context, host string) cgExtras {
 	var x cgExtras
 	if est, err := cgCommand(ctx, host, "estats"); err == nil {
@@ -465,6 +466,30 @@ func cgExtended(ctx context.Context, host string) cgExtras {
 				}
 				return x
 			}
+		}
+	}
+	// Braiins OS answers its own temps command instead: each hash board's chip
+	// and board temperature, e.g. {"Board":44.0,"Chip":59.0,"ID":1}. The chips
+	// give the ASIC figures; the board reading is the PCB, not a regulator, so it
+	// is not used as VR temp. Firmwares without the command answer with an error
+	// and fall through to stats.
+	if tp, err := cgCommand(ctx, host, "temps"); err == nil {
+		list, _ := tp["TEMPS"].([]interface{})
+		var chips []float64
+		for _, e := range list {
+			em, _ := e.(map[string]interface{})
+			if c := sensor(number(em["Chip"])); c > 0 {
+				chips = append(chips, c)
+			}
+		}
+		if len(chips) > 0 {
+			sum := 0.0
+			for _, c := range chips {
+				sum += c
+			}
+			x.avg = sum / float64(len(chips))
+			x.max = hottest(chips...)
+			return x
 		}
 	}
 	if st, err := cgCommand(ctx, host, "stats"); err == nil {
