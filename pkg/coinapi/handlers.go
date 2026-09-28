@@ -750,9 +750,9 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		// hashrate figures it shows - the live one or the longer average.
 		if body.MinersSort != nil {
 			parts := strings.SplitN(*body.MinersSort, ":", 2)
-			validKey := map[string]bool{"name": true, "hashrate": true, "coin": true, "device": true, "best": true, "last": true}
+			validKey := map[string]bool{"name": true, "device": true, "coin": true, "hashrate": true, "difficulty": true, "best": true, "shares": true, "last": true, "uptime": true}
 			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
-				writeError(w, 400, "miners_sort must be name, hashrate, coin, device, best or last, then :asc or :desc")
+				writeError(w, 400, "miners_sort must be name, device, coin, hashrate, difficulty, best, shares, last or uptime, then :asc or :desc")
 				return
 			}
 			if err := c.store.SetMinersSort(*body.MinersSort); err != nil {
@@ -786,9 +786,9 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.NodeMinersSort != nil {
 			parts := strings.SplitN(*body.NodeMinersSort, ":", 2)
-			validKey := map[string]bool{"name": true, "hashrate": true, "best": true}
+			validKey := map[string]bool{"name": true, "connection": true, "hashrate": true, "difficulty": true, "best": true}
 			if len(parts) != 2 || !validKey[parts[0]] || (parts[1] != "asc" && parts[1] != "desc") {
-				writeError(w, 400, "node_miners_sort must be name, hashrate or best, then :asc or :desc")
+				writeError(w, 400, "node_miners_sort must be name, connection, hashrate, difficulty or best, then :asc or :desc")
 				return
 			}
 			if err := c.store.SetNodeMinersSort(*body.NodeMinersSort); err != nil {
