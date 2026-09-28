@@ -669,6 +669,8 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 			MinersHashrate *string `json:"miners_hashrate"`
 			NodesSort      *string `json:"nodes_sort"`
 			NodeMinersSort *string `json:"node_miners_sort"`
+			ChartWindow    *string `json:"chart_window"`
+			ChartSeries    *string `json:"chart_series"`
 			AutoName       *bool   `json:"auto_name"`
 			NamePrefix     *string `json:"name_prefix"`
 			MeshAddress    *string `json:"mesh_address"`
@@ -792,6 +794,33 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// The Overview chart: its time window, and which lines it shows.
+		if body.ChartWindow != nil {
+			if _, ok := historyTrails[*body.ChartWindow]; !ok {
+				writeError(w, 400, "chart_window must be one of the history windows, e.g. 6h or 1mo")
+				return
+			}
+			if err := c.store.SetChartWindow(*body.ChartWindow); err != nil {
+				writeError(w, 500, "could not save the setting")
+				return
+			}
+		}
+		if body.ChartSeries != nil {
+			v := *body.ChartSeries
+			if v != "none" {
+				valid := map[string]bool{"net": true, "pool": true, "diff": true}
+				for _, part := range strings.Split(v, ",") {
+					if !valid[part] {
+						writeError(w, 400, "chart_series must be none, or any of net, pool and diff separated by commas")
+						return
+					}
+				}
+			}
+			if err := c.store.SetChartSeries(v); err != nil {
+				writeError(w, 500, "could not save the setting")
+				return
+			}
+		}
 	}
 	start, end := c.store.GetMeshNetwork()
 	found := 0
@@ -808,6 +837,8 @@ func (c *CoinAPI) HandleMeshSettings(w http.ResponseWriter, r *http.Request) {
 		"miners_hashrate":  c.store.GetMinersHashrate(),
 		"nodes_sort":       c.store.GetNodesSort(),
 		"node_miners_sort": c.store.GetNodeMinersSort(),
+		"chart_window":     c.store.GetChartWindow(),
+		"chart_series":     c.store.GetChartSeries(),
 		"auto_name":        c.store.GetMeshAutoName(),
 		"name_prefix":      c.store.GetMeshNamePrefix(),
 		"mesh_address":     c.store.GetMeshAddress(),
@@ -1826,6 +1857,13 @@ func (c *CoinAPI) HandleDeleteWorker(w http.ResponseWriter, r *http.Request, sym
 // StartSnapshotThread runs the 60-second worker share snapshot background task.
 func (c *CoinAPI) StartSnapshotThread() {
 	go c.runNodePeaks()
+	// Thin the chart history past a week to one sample an hour, hourly.
+	go func() {
+		for {
+			time.Sleep(time.Hour)
+			c.store.ThinHistory()
+		}
+	}()
 	go func() {
 		// Initial delay so engine has time to start
 		time.Sleep(10 * time.Second)

@@ -733,10 +733,24 @@ func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, diffi
 		VALUES (?,?,?,?,?)`,
 		symbol, poolHashrate, networkHashrate, difficulty, now)
 	if err == nil {
-		// Prune samples older than 8 days
-		s.db.Exec(`DELETE FROM metric_samples WHERE coin_symbol=? AND recorded_at < ?`, symbol, windowStart(8*24*time.Hour))
+		// Six months of history for the charts' longest window, with a little to
+		// spare. Past a week, ThinHistory keeps one sample an hour.
+		s.db.Exec(`DELETE FROM metric_samples WHERE coin_symbol=? AND recorded_at < ?`, symbol, windowStart(190*24*time.Hour))
 	}
 	return err
+}
+
+// ThinHistory keeps samples older than a week at one an hour - the first of
+// each hour - so six months of history stays small and quick to chart. The
+// month and six-month windows show a point every few hours or more, so the
+// hourly samples lose nothing a chart can show.
+func (s *Store) ThinHistory() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := windowStart(8 * 24 * time.Hour)
+	s.db.Exec(`DELETE FROM metric_samples WHERE recorded_at < ? AND id NOT IN (
+		SELECT MIN(id) FROM metric_samples WHERE recorded_at < ?
+		GROUP BY coin_symbol, substr(recorded_at, 1, 13))`, cutoff, cutoff)
 }
 
 // historyTrail maps trail label to (seconds, numPoints)
@@ -749,6 +763,8 @@ var historyTrails = map[string]historyTrail{
 	"3d":  {3 * 24 * 3600, 72},
 	"6d":  {6 * 24 * 3600, 144},
 	"7d":  {7 * 24 * 3600, 168},
+	"1mo": {30 * 24 * 3600, 180},
+	"6mo": {182 * 24 * 3600, 182},
 }
 
 func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric string) []float64 {
@@ -960,6 +976,39 @@ func (s *Store) GetMinersHashrate() string {
 // SetMinersHashrate records which hashrate the Miners tab shows.
 func (s *Store) SetMinersHashrate(v string) error {
 	return s.SetMeshAssignment(minersHashrateKey, v)
+}
+
+// The Overview chart keeps its time window and which lines are shown.
+const (
+	chartWindowKey = "\x00 chart window"
+	chartSeriesKey = "\x00 chart series"
+)
+
+// GetChartWindow returns the chart's saved time window, six hours by default.
+func (s *Store) GetChartWindow() string {
+	if v, ok := s.GetMeshAssignment(chartWindowKey); ok && v != "" {
+		return v
+	}
+	return "6h"
+}
+
+// SetChartWindow records the chart's time window.
+func (s *Store) SetChartWindow(v string) error {
+	return s.SetMeshAssignment(chartWindowKey, v)
+}
+
+// GetChartSeries returns which lines the chart shows, as "net,pool,diff";
+// every line by default, and "none" when all are turned off.
+func (s *Store) GetChartSeries() string {
+	if v, ok := s.GetMeshAssignment(chartSeriesKey); ok && v != "" {
+		return v
+	}
+	return "net,pool,diff"
+}
+
+// SetChartSeries records which lines the chart shows.
+func (s *Store) SetChartSeries(v string) error {
+	return s.SetMeshAssignment(chartSeriesKey, v)
 }
 
 // The Nodes tab keeps how its node list is sorted, and how the miners on the
