@@ -103,6 +103,7 @@ func (c *CoinAPI) sampleNodePeaks() {
 
 	c.nodePeakMu.Lock()
 	defer c.nodePeakMu.Unlock()
+	c.nodeNowLive, c.nodeNowAvg = live, avg
 	if c.nodePeakLive == nil {
 		c.nodePeakLive = map[string]float64{}
 		c.nodePeakAvg = map[string]float64{}
@@ -117,6 +118,15 @@ func (c *CoinAPI) sampleNodePeaks() {
 			c.nodePeakAvg[sym] = v
 		}
 	}
+}
+
+// nodeNow returns a node's latest live and average totals, TH/s, as the
+// history charts record them.
+func (c *CoinAPI) nodeNow(symbol string) (live, avg float64) {
+	c.nodePeakMu.Lock()
+	defer c.nodePeakMu.Unlock()
+	sym := strings.ToUpper(symbol)
+	return c.nodeNowLive[sym], c.nodeNowAvg[sym]
 }
 
 // nodePeaks returns a node's peak live and average totals this session, TH/s.

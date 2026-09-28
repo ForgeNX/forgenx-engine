@@ -138,6 +138,8 @@ type CoinAPI struct {
 	nodePeakMu   sync.Mutex
 	nodePeakLive map[string]float64
 	nodePeakAvg  map[string]float64
+	nodeNowLive  map[string]float64 // the latest totals, for the history charts
+	nodeNowAvg   map[string]float64
 
 	// Last-good all-time best-share values per coin, to bridge a rare transient
 	// store read miss so best_all_time_* never blanks for a single poll.
@@ -3092,6 +3094,7 @@ func (c *CoinAPI) HandleHistory(w http.ResponseWriter, r *http.Request, symbol s
 
 	validMetrics := map[string]bool{
 		"pool_hashrate_raw": true, "network_hashrate_raw": true, "difficulty": true,
+		"node_hashrate_live": true, "node_hashrate_avg": true,
 	}
 	if !validMetrics[metric] {
 		writeError(w, 400, "invalid metric")
@@ -3143,7 +3146,8 @@ func (c *CoinAPI) runHistorySnapshot() {
 			difficulty = getFloat(info, "difficulty")
 		}
 
-		c.store.RecordSample(symbol, poolHashrate, networkHashrate, difficulty)
+		nodeLive, nodeAvg := c.nodeNow(symbol)
+		c.store.RecordSample(symbol, poolHashrate, networkHashrate, difficulty, nodeLive, nodeAvg)
 	}
 }
 

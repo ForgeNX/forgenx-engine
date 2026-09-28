@@ -129,6 +129,10 @@ func (s *Store) init() error {
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN acknowledged INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE blocks ADD COLUMN network_difficulty REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN last_difficulty REAL DEFAULT 0`)
+	// Each node's total from the miners' own figures, live and averaged, as the
+	// Nexus tabs count it; see nodepeaks.go. Zero on samples from before.
+	s.db.Exec(`ALTER TABLE metric_samples ADD COLUMN node_hashrate_live REAL DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE metric_samples ADD COLUMN node_hashrate_avg REAL DEFAULT 0`)
 	// Migrate: add best-share context columns if missing (safe to run multiple times)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN network_diff_at_best REAL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE worker_best_diff ADD COLUMN height_at_best INTEGER DEFAULT 0`)
@@ -719,7 +723,7 @@ func (s *Store) GetMaxPoolHashrate(symbol string) float64 {
 	return s.maxHashrate[symbol]
 }
 
-func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, difficulty float64) error {
+func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, difficulty, nodeLive, nodeAvg float64) error {
 	s.mu.Lock()
 	if poolHashrate > s.maxHashrate[symbol] {
 		s.maxHashrate[symbol] = poolHashrate
@@ -729,9 +733,9 @@ func (s *Store) RecordSample(symbol string, poolHashrate, networkHashrate, diffi
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`INSERT INTO metric_samples
-		(coin_symbol, pool_hashrate_raw, network_hashrate_raw, difficulty, recorded_at)
-		VALUES (?,?,?,?,?)`,
-		symbol, poolHashrate, networkHashrate, difficulty, now)
+		(coin_symbol, pool_hashrate_raw, network_hashrate_raw, difficulty, node_hashrate_live, node_hashrate_avg, recorded_at)
+		VALUES (?,?,?,?,?,?,?)`,
+		symbol, poolHashrate, networkHashrate, difficulty, nodeLive, nodeAvg, now)
 	if err == nil {
 		// Six months of history for the charts' longest window, with a little to
 		// spare. Past a week, ThinHistory keeps one sample an hour.
@@ -768,17 +772,25 @@ var historyTrails = map[string]historyTrail{
 }
 
 func (s *Store) GetHistory(symbol string, sinceSeconds, numPoints int, metric string) []float64 {
-	validMetrics := map[string]bool{
-		"pool_hashrate_raw": true, "network_hashrate_raw": true, "difficulty": true,
+	// What each metric reads. The node totals fall back to the pool figure on
+	// samples recorded before they were kept, so a chart's older stretch still
+	// has a line.
+	columns := map[string]string{
+		"pool_hashrate_raw":    "pool_hashrate_raw",
+		"network_hashrate_raw": "network_hashrate_raw",
+		"difficulty":           "difficulty",
+		"node_hashrate_live":   "COALESCE(NULLIF(node_hashrate_live, 0), pool_hashrate_raw)",
+		"node_hashrate_avg":    "COALESCE(NULLIF(node_hashrate_avg, 0), pool_hashrate_raw)",
 	}
-	if !validMetrics[metric] {
+	column, ok := columns[metric]
+	if !ok {
 		return make([]float64, numPoints)
 	}
 
 	cutoff := time.Now().UTC().Add(-time.Duration(sinceSeconds) * time.Second).Format(time.RFC3339Nano)
 	s.mu.Lock()
 	rows, err := s.db.Query(
-		`SELECT recorded_at, `+metric+` FROM metric_samples
+		`SELECT recorded_at, `+column+` FROM metric_samples
 		 WHERE coin_symbol=? AND recorded_at >= ?
 		 ORDER BY recorded_at ASC`, symbol, cutoff)
 	s.mu.Unlock()
