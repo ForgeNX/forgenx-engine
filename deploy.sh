@@ -59,6 +59,13 @@ docker push -q "$IMAGE:$VERSION"
 step "Listing $VERSION in the store"
 sed -i -E "s|^version: \"[0-9]+\.[0-9]+\.[0-9]+\"|version: \"$VERSION\"|" "$STORE/umbrel-app.yml"
 sed -i -E "s|$IMAGE:[0-9]+\.[0-9]+\.[0-9]+|$IMAGE:$VERSION|" "$STORE/docker-compose.yml"
+# The release date, shown in ForgeNX Apps (as the coin apps' release.sh does).
+TODAY=$(date +%Y-%m-%d)
+if grep -q '^releaseDate:' "$STORE/umbrel-app.yml"; then
+  sed -i "s|^releaseDate:.*|releaseDate: \"$TODAY\"|" "$STORE/umbrel-app.yml"
+else
+  sed -i "/^version:/a releaseDate: \"$TODAY\"" "$STORE/umbrel-app.yml"
+fi
 grep -q "version: \"$VERSION\"" "$STORE/umbrel-app.yml" || fail "store manifest did not take the new version"
 grep -q "$IMAGE:$VERSION" "$STORE/docker-compose.yml" || fail "store compose did not take the new image"
 cd "$STORE_REPO"
