@@ -2526,6 +2526,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	vardiff := getNestedMap(coinCfg, "vardiff")
 	stratum := getNestedMap(coinCfg, "stratum")
 	node := getNestedMap(coinCfg, "node")
+	donCfg := getNestedMap(coinCfg, "donation")
 
 	// Extract ZMQ port from tcp://host:port
 	zmqHashblock := 28333
@@ -2570,22 +2571,43 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"minDiff":           envInt(env, prefix+"MIN_DIFF", 32),
 		"maxDiff":           envInt(env, prefix+"MAX_DIFF", 4096),
 		"autoStart":         envStr(env, prefix+"AUTO_START", "true") == "true",
+		// Donations: what the engine actually pays is the coin config's
+		// donation section, so that's what's shown; .env only fills in
+		// anything the section doesn't have.
 		"donation1Enabled": func() bool {
+			if v, ok := donCfg["enabled"].(bool); ok {
+				return v
+			}
 			if v := envStr(env, prefix+"DONATION1_ENABLED", ""); v != "" {
 				return v == "true"
 			}
-			return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled", true)
+			return true
 		}(),
 		"donation2Enabled": func() bool {
-			if v := envStr(env, prefix+"DONATION2_ENABLED", ""); v != "" {
-				return v == "true"
+			if v, ok := donCfg["enabled2"].(bool); ok {
+				return v
 			}
-			return getNestedBool(getNestedMap(coinCfg, "donation"), "enabled2", false)
+			return envStr(env, prefix+"DONATION2_ENABLED", "false") == "true"
 		}(),
-		"donation1Addr":      envStr(env, prefix+"DONATION1_ADDR", ""),
-		"donation1Pct":       envFloat(env, prefix+"DONATION1_PCT", 1.0),
-		"donation2Addr":      envStr(env, prefix+"DONATION2_ADDR", ""),
-		"donation2Pct":       envFloat(env, prefix+"DONATION2_PCT", 0.0),
+		"donation1Addr": envStr(env, prefix+"DONATION1_ADDR", ""),
+		"donation1Pct": func() float64 {
+			if v, ok := donCfg["percent"].(float64); ok {
+				return v
+			}
+			return envFloat(env, prefix+"DONATION1_PCT", 1.0)
+		}(),
+		"donation2Addr": func() string {
+			if v, ok := donCfg["address2"].(string); ok && v != "" {
+				return v
+			}
+			return envStr(env, prefix+"DONATION2_ADDR", "")
+		}(),
+		"donation2Pct": func() float64 {
+			if v, ok := donCfg["percent2"].(float64); ok {
+				return v
+			}
+			return envFloat(env, prefix+"DONATION2_PCT", 0.0)
+		}(),
 		"configVersion":      getStr(coinCfg, "configVersion", "1.0"),
 		"sv2Enabled":         getNestedBool(stratum, "sv2_enabled", false),
 		"sv2Port":            getNestedInt(stratum, "sv2_port", 4334),
@@ -2790,6 +2812,9 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	if v, ok := body["donation2Addr"].(string); ok {
 		env[prefix+"DONATION2_ADDR"] = v
 	}
+	if v, ok := body["donation1Pct"].(float64); ok {
+		env[prefix+"DONATION1_PCT"] = strconv.FormatFloat(v, 'f', -1, 64)
+	}
 	if v, ok := body["donation2Pct"].(float64); ok {
 		env[prefix+"DONATION2_PCT"] = strconv.FormatFloat(v, 'f', -1, 64)
 	}
@@ -2899,12 +2924,6 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	}
 	if v, ok := body["keepaliveInterval"].(float64); ok {
 		stratum["keepalive_interval"] = int(v)
-	}
-	if v, ok := body["donation1Pct"].(float64); ok {
-		coinCfg["donation"] = map[string]interface{}{
-			"enabled": v > 0,
-			"percent": v,
-		}
 	}
 
 	coinCfg["mining"] = mining

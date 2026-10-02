@@ -193,23 +193,12 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		}
 	}
 
-	// Apply coin-level donation overrides before resolving scripts
+	// A coin's own donation settings are final. They are what the user set in
+	// the coin app: toggled off or 0% means no donation output at all. (The
+	// global default of 1% only applies to a coin config with no donation
+	// section; a coin's 0% must never fall back to it.)
 	if cfg.Donation != nil {
-		if !cfg.Donation.Enabled {
-			donation.Enabled = false
-		}
-		if cfg.Donation.Percent > 0 {
-			donation.Percent = cfg.Donation.Percent
-		}
-		if cfg.Donation.Enabled2 {
-			donation.Enabled2 = true
-		}
-		if cfg.Donation.Address2 != "" {
-			donation.Address2 = cfg.Donation.Address2
-		}
-		if cfg.Donation.Percent2 > 0 {
-			donation.Percent2 = cfg.Donation.Percent2
-		}
+		donation = *cfg.Donation
 	}
 	// Resolve donation output script from AUTHORS file
 	var donationScript []byte
@@ -226,25 +215,6 @@ func NewCoinRunner(symbol string, cfg config.CoinConfig, donation config.Donatio
 		}
 	}
 
-	// Merge coin-level donation settings over global
-	if cfg.Donation != nil {
-		if cfg.Donation.Enabled2 {
-			donation.Enabled2 = true
-		}
-		if cfg.Donation.Address2 != "" {
-			donation.Address2 = cfg.Donation.Address2
-		}
-		if cfg.Donation.Percent2 > 0 {
-			donation.Percent2 = cfg.Donation.Percent2
-		}
-		// Also allow coin-level override of donation1
-		if !cfg.Donation.Enabled {
-			donation.Enabled = false
-		}
-		if cfg.Donation.Percent > 0 {
-			donation.Percent = cfg.Donation.Percent
-		}
-	}
 	// Resolve custom donation2 address
 	var donation2Script []byte
 	var donation2Percent float64
