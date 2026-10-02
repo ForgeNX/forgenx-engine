@@ -517,32 +517,10 @@ func (e *Engine) LoadExistingCoinConfigs(dir string, donation config.DonationCon
 		// use symbol from filename (your current logic)
 		symbol := strings.ToUpper(strings.TrimSuffix(file.Name(), ".json"))
 
-		// 🔥 owner_app check with retry
-		if coinCfg.OwnerApp != "" {
-			appPath := "/opt/forgenx/apps/" + coinCfg.OwnerApp
-
-			exists := false
-
-			// try for ~20 seconds (40 × 500ms)
-			for i := 0; i < 40; i++ {
-				if _, err := os.Stat(appPath); err == nil {
-					exists = true
-					break
-				}
-				time.Sleep(500 * time.Millisecond)
-			}
-
-			if !exists {
-				e.logger.Warn("[%s] owner app CONFIRMED missing after retries — deleting config (%s)", symbol, appPath)
-
-				if err := os.Remove(path); err != nil {
-					e.logger.Error("[%s] failed to delete config %s: %v", symbol, path, err)
-				}
-
-				continue
-			}
-
-			e.logger.Info("[%s] owner app verified: %s", symbol, appPath)
+		// A config whose coin app was uninstalled is moved into removed/ rather
+		// than started (see ownerapp.go).
+		if coinCfg.OwnerApp != "" && !settleOwnerApp(dir, symbol, coinCfg.OwnerApp, e.logger.Info, e.logger.Warn) {
+			continue
 		}
 
 		e.handleCoinConfig(symbol, &coinCfg, donation)
