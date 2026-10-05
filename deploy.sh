@@ -3,6 +3,10 @@
 #
 #   ./deploy.sh 1.0.369
 #
+# The engine UI is built from ~/forgenx-engine-ui into static/ on the way, so
+# every release carries the UI as it is in git. (A changed build is committed
+# to the engine repo as "Static: engine UI ...".)
+#
 # Stops at the first thing that fails. When it finishes, update the engine from
 # the App Store as usual - the installed version is left alone on purpose, so the
 # store sees the new version as an update to offer.
@@ -11,6 +15,7 @@ set -euo pipefail
 VERSION="${1:-}"
 IMAGE="ghcr.io/forgenx/forgenx-engine"
 ENGINE="$HOME/forgenx-engine"
+ENGINE_UI="$HOME/forgenx-engine-ui"
 STORE_REPO="$HOME/ForgeNX-store"
 STORE="$STORE_REPO/forgenx-engine"
 export PATH="$PATH:/usr/local/go/bin"
@@ -22,6 +27,10 @@ fail() { printf '\nSTOPPED: %s\n' "$1" >&2; exit 1; }
 
 CURRENT=$(grep -oE '^version: "[0-9.]+"' "$STORE/umbrel-app.yml" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 [[ "$CURRENT" != "$VERSION" ]] || fail "the store is already at $VERSION - pick the next number"
+# Checked before anything is committed, so a taken number stops cleanly.
+if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+  fail "$IMAGE:$VERSION is already on GHCR - pick the next number"
+fi
 echo "Store is at $CURRENT, deploying $VERSION"
 
 cd "$ENGINE"
@@ -40,14 +49,43 @@ if [[ -n "$(git log origin/main..HEAD --oneline)" ]]; then
   git push -q origin main
 fi
 
+step "Building the engine UI"
+cd "$ENGINE_UI"
+# Same rule as the engine: the UI that ships must be the UI in git.
+if [[ -n "$(git status --porcelain)" ]]; then
+  git status --short
+  fail "uncommitted engine UI changes in $ENGINE_UI - commit them first"
+fi
+git fetch -q origin
+if [[ -n "$(git log origin/main..HEAD --oneline)" ]]; then
+  echo "Pushing local engine UI commits:"
+  git log origin/main..HEAD --oneline
+  git push -q origin main
+fi
+UI_COMMIT=$(git rev-parse --short HEAD)
+# Built into a scratch folder first: if the build fails, static/ is untouched.
+UI_OUT=$(mktemp -d)
+trap 'rm -rf "$UI_OUT"' EXIT
+npx vite build --logLevel error --outDir "$UI_OUT" --emptyOutDir || fail "engine UI build failed"
+[[ -f "$UI_OUT/index.html" ]] || fail "engine UI build made no index.html"
+cd "$ENGINE"
+find static -mindepth 1 -delete
+cp -a "$UI_OUT/." static/
+chmod 755 static
+if [[ -n "$(git status --porcelain -- static)" ]]; then
+  git add -A static
+  git commit -q -m "Static: engine UI $UI_COMMIT for $VERSION"
+  git push -q origin main
+  echo "engine UI $UI_COMMIT built into static/ and committed"
+else
+  echo "engine UI $UI_COMMIT already in static/"
+fi
+
 step "Compiling"
 go build ./... || fail "go build failed"
 echo "engine builds"
 
 step "Building image $IMAGE:$VERSION"
-if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-  fail "$IMAGE:$VERSION is already on GHCR - pick the next number"
-fi
 docker build -q \
   --build-arg VERSION="$VERSION" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
