@@ -35,6 +35,14 @@ echo "Store is at $CURRENT, deploying $VERSION"
 
 cd "$ENGINE"
 
+# Local copies of earlier versions are removed, keeping the newest few (every
+# version stays on GHCR, so any of them can be pulled again; an image a
+# container is using is kept anyway).
+keep_latest() { # image-repo how-many
+  docker image ls "$1" --format '{{.Tag}}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r | tail -n +"$(( $2 + 1 ))" \
+    | while read -r tag; do docker rmi "$1:$tag" >/dev/null 2>&1 || true; done
+}
+
 step "Checking the engine repo"
 # The image is built from the working tree, so anything uncommitted would ship
 # without being in git.
@@ -110,6 +118,11 @@ cd "$STORE_REPO"
 git add forgenx-engine
 git commit -q -m "forgenx-engine: bump to v$VERSION"
 git push -q origin main
+
+step "Tidying up"
+keep_latest "$IMAGE" 3 || true
+docker builder prune -af >/dev/null 2>&1 || true
+echo "kept the newest 3 local engine images; build cache cleared"
 
 step "Refreshing the store cache"
 if curl -s -X POST "http://localhost:8001/api/forgenx/refresh?force=true" >/dev/null 2>&1; then
