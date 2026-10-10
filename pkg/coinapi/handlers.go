@@ -2306,16 +2306,22 @@ func containerEnv(container string) map[string]string {
 	return env
 }
 
-// nodeRestartPending: whether the coin's node is still running with prune or
-// network settings other than the saved ones (it's waiting for a restart of
-// the app to use them). False when that can't be told.
-func nodeRestartPending(coinID, prefix string, env map[string]string) bool {
+// nodeRestartPending: which of the coin's node settings ("prune", "network")
+// it's still running without, the saved ones waiting for a restart of the app
+// to apply them. Empty when there are none, or when that can't be told.
+func nodeRestartPending(coinID, prefix string, env map[string]string) []string {
+	pending := []string{}
 	running := containerEnv(coinID + "-node")
 	if running == nil {
-		return false
+		return pending
 	}
-	return envStr(running, prefix+"PRUNE", "0") != envStr(env, prefix+"PRUNE", "0") ||
-		envStr(running, prefix+"NETWORK", "mainnet") != envStr(env, prefix+"NETWORK", "mainnet")
+	if envStr(running, prefix+"PRUNE", "0") != envStr(env, prefix+"PRUNE", "0") {
+		pending = append(pending, "prune")
+	}
+	if envStr(running, prefix+"NETWORK", "mainnet") != envStr(env, prefix+"NETWORK", "mainnet") {
+		pending = append(pending, "network")
+	}
+	return pending
 }
 
 // HandleEngineLogs fetches logs for the engine container itself.
@@ -2571,7 +2577,8 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"uiImageTag":        uiImageTag,
 		"releaseDate":       releaseDate,
 		"network":           envStr(env, prefix+"NETWORK", "mainnet"),
-		"restartPending":    restartPending,
+		"restartPending":    len(restartPending) > 0,
+		"restartPendingFor": restartPending, // e.g. ["prune"]: for the page's wording
 		"prune":             envStr(env, prefix+"PRUNE", "550") != "0",
 		"prune_size_mb":     pruneSizeMb,
 		"pruneSize":         pruneSizeMb,
@@ -2976,8 +2983,9 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 	// compared with the new ones, so turning prune on never counted.)
 	nodeSettingsChanged := envStr(env, prefix+"PRUNE", "0") != oldPrune ||
 		envStr(env, prefix+"NETWORK", "mainnet") != oldNetwork
+	pending := nodeRestartPending(coinID, prefix, env)
 	writeJSON(w, map[string]interface{}{"success": true, "restartNeeded": nodeSettingsChanged,
-		"restartPending": nodeRestartPending(coinID, prefix, env)})
+		"restartPending": len(pending) > 0, "restartPendingFor": pending})
 }
 
 // ── /api/apps/{coin}/rpc-credentials POST ────────────────────────────────────
