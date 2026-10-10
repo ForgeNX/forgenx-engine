@@ -2272,28 +2272,50 @@ func (c *CoinAPI) HandleBlocks(w http.ResponseWriter, r *http.Request, symbol st
 
 // ── /api/apps/{coin}/logs ─────────────────────────────────────────────────────
 
-// restartContainer restarts a Docker container via the Docker socket API.
-func restartContainer(container string) error {
+// containerEnv: the environment a container was created with (its settings
+// as the app's .env said then), or nil when it can't be read.
+func containerEnv(container string) map[string]string {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
 		},
 	}
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	url := fmt.Sprintf("http://localhost/containers/%s/restart?t=10", container)
-	req, err := http.NewRequest("POST", url, nil)
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	resp, err := client.Get("http://localhost/containers/" + container + "/json")
 	if err != nil {
-		return fmt.Errorf("restart request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("docker socket: %w", err)
+		return nil
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 204 {
-		return fmt.Errorf("docker restart returned %d", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		return nil
 	}
-	return nil
+	var info struct {
+		Config struct {
+			Env []string `json:"Env"`
+		} `json:"Config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil
+	}
+	env := make(map[string]string, len(info.Config.Env))
+	for _, kv := range info.Config.Env {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			env[kv[:i]] = kv[i+1:]
+		}
+	}
+	return env
+}
+
+// nodeRestartPending: whether the coin's node is still running with prune or
+// network settings other than the saved ones (it's waiting for a restart of
+// the app to use them). False when that can't be told.
+func nodeRestartPending(coinID, prefix string, env map[string]string) bool {
+	running := containerEnv(coinID + "-node")
+	if running == nil {
+		return false
+	}
+	return envStr(running, prefix+"PRUNE", "0") != envStr(env, prefix+"PRUNE", "0") ||
+		envStr(running, prefix+"NETWORK", "mainnet") != envStr(env, prefix+"NETWORK", "mainnet")
 }
 
 // HandleEngineLogs fetches logs for the engine container itself.
@@ -2539,6 +2561,9 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 	}
 
 	pruneSizeMb := envInt(env, prefix+"PRUNE", 550)
+	// Saved prune or network settings the node isn't using yet (it needs the
+	// app restarted): the page says so.
+	restartPending := nodeRestartPending(coinID, prefix, env)
 
 	writeJSON(w, map[string]interface{}{
 		"appVersion":        appVersion,
@@ -2546,6 +2571,7 @@ func (c *CoinAPI) HandleSettingsGet(w http.ResponseWriter, r *http.Request, coin
 		"uiImageTag":        uiImageTag,
 		"releaseDate":       releaseDate,
 		"network":           envStr(env, prefix+"NETWORK", "mainnet"),
+		"restartPending":    restartPending,
 		"prune":             envStr(env, prefix+"PRUNE", "550") != "0",
 		"prune_size_mb":     pruneSizeMb,
 		"pruneSize":         pruneSizeMb,
@@ -2753,6 +2779,10 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 
 	// ── 1. Update .env ────────────────────────────────────────────────────────
 	env := readEnvFile(envPath)
+	// The node's own settings as they were before this save, to tell whether
+	// it changed them (see nodeSettingsChanged below).
+	oldPrune := envStr(env, prefix+"PRUNE", "0")
+	oldNetwork := envStr(env, prefix+"NETWORK", "mainnet")
 
 	if v, ok := body["network"].(string); ok {
 		env[prefix+"NETWORK"] = v
@@ -2937,20 +2967,17 @@ func (c *CoinAPI) HandleSettingsPost(w http.ResponseWriter, r *http.Request, coi
 		return
 	}
 
-	// Check if node settings changed (prune, network) — restart node container if so
-	// Only restart node if prune/network values actually changed
-	newPrune, pruneInBody := body["prune"]
-	newPruneSz, pruneSzInBody := body["pruneSize"]
-	newNetwork, networkInBody := body["network"]
-	pruneEnabled := envStr(env, prefix+"PRUNE", "0") != "0"
-	pruneChanged := pruneInBody && newPrune.(bool) != pruneEnabled
-	pruneSzChanged := pruneSzInBody && int(newPruneSz.(float64)) != envInt(env, prefix+"PRUNE", 0)
-	networkChanged := networkInBody && fmt.Sprintf("%v", newNetwork) != envStr(env, prefix+"NETWORK", "mainnet")
-	needsNodeRestart := pruneChanged || pruneSzChanged || networkChanged
-	if needsNodeRestart {
-		go func() { restartContainer(coinID + "-node") }()
-	}
-	writeJSON(w, map[string]interface{}{"success": true, "nodeRestart": needsNodeRestart})
+	// The node's prune and network settings reach it only when its container
+	// is made again (ForgeNX's Restart for the app, or Stop and Start): a
+	// container keeps the settings it was created with, so restarting it here
+	// (as before) never applied them, and it gave the node only 10 seconds to
+	// close before killing it. The page says a restart is needed instead.
+	// (Compared with the values from before this save; before, they were
+	// compared with the new ones, so turning prune on never counted.)
+	nodeSettingsChanged := envStr(env, prefix+"PRUNE", "0") != oldPrune ||
+		envStr(env, prefix+"NETWORK", "mainnet") != oldNetwork
+	writeJSON(w, map[string]interface{}{"success": true, "restartNeeded": nodeSettingsChanged,
+		"restartPending": nodeRestartPending(coinID, prefix, env)})
 }
 
 // ── /api/apps/{coin}/rpc-credentials POST ────────────────────────────────────
@@ -3211,7 +3238,8 @@ func (c *CoinAPI) HandleAction(w http.ResponseWriter, r *http.Request, coinID, a
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
 		},
 	}
-	client := &http.Client{Transport: transport, Timeout: 120 * time.Second}
+	// A node can take minutes to save its data and stop (ForgeDGB allows 15.5).
+	client := &http.Client{Transport: transport, Timeout: 20 * time.Minute}
 
 	// List containers belonging to this compose project
 	listURL := fmt.Sprintf(
@@ -3262,9 +3290,12 @@ func (c *CoinAPI) HandleAction(w http.ResponseWriter, r *http.Request, coinID, a
 		case "start":
 			url = "http://localhost/containers/" + id + "/start"
 		case "stop":
-			url = "http://localhost/containers/" + id + "/stop?t=10"
+			// No t: each container gets the stop timeout its app set
+			// (stop_grace_period). t=10 killed a node 10 seconds in, before it
+			// had saved its data.
+			url = "http://localhost/containers/" + id + "/stop"
 		case "restart":
-			url = "http://localhost/containers/" + id + "/restart?t=10"
+			url = "http://localhost/containers/" + id + "/restart"
 		}
 		req, _ := http.NewRequest("POST", url, bytes.NewReader(nil))
 		res, err := client.Do(req)
